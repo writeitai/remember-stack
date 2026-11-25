@@ -35,8 +35,10 @@ from rememberstack.model import KnowledgePageKind
 from rememberstack.model import KnowledgePendingCycle
 from rememberstack.model import KnowledgePendingPlanDecision
 from rememberstack.model import KnowledgeRetirePageProposal
+from rememberstack.model import KRevision
 from rememberstack.ports import KGitRemotePort
 from rememberstack.spine.knowledge import KnowledgeControlPlane
+from rememberstack.workers.forget import compiled_paths
 from rememberstack.workers.knowledge_authored import KnowledgeAuthoredSynchronizer
 
 KNOWLEDGE_DRIVER_VERSION: Final = "k-driver-2026.07"
@@ -57,6 +59,14 @@ class KnowledgePageCompiler(Protocol):
         self, *, request: KnowledgePageCompileRequest
     ) -> KnowledgePageCompileOutput:
         """Return one structured page without publishing or mutating another page."""
+        ...
+
+
+class KnowledgeRedactionSync(Protocol):
+    """The K sync's check of forgets waiting for authored redaction (D159 §3.4)."""
+
+    def sync_redactions(self, *, deployment_id: UUID, worktree: Path) -> None:
+        """Finish waiting forgets whose listed files no longer cite the document."""
         ...
 
 
@@ -105,7 +115,12 @@ class KnowledgeRoutingDriver:
 
 
 class KnowledgeCommitDriver:
-    """Compile a dependency-ordered batch and publish it through one git writer."""
+    """Compile a dependency-ordered batch and publish it through one git writer.
+
+    The K lease covers the short checkout bookkeeping and the publication;
+    writers run outside it (D159), and the publication refuses if the
+    repository moved meanwhile.
+    """
 
     def __init__(
         self,
@@ -114,12 +129,14 @@ class KnowledgeCommitDriver:
         git_remote: KGitRemotePort,
         compiler: KnowledgePageCompiler,
         settings: KnowledgeCommitSettings,
+        redactions: KnowledgeRedactionSync,
     ) -> None:
         """Bind the commit loop to its Postgres, git, and page-compiler seams."""
         self._control_plane = control_plane
         self._git_remote = git_remote
         self._compiler = compiler
         self._settings = settings
+        self._redactions = redactions
         self._authored = KnowledgeAuthoredSynchronizer(control_plane=control_plane)
 
     def run_cycle(
@@ -128,108 +145,142 @@ class KnowledgeCommitDriver:
         deployment_id: UUID,
         exclusions_by_artifact: Mapping[UUID, Collection[KnowledgeEvidenceTarget]],
     ) -> KnowledgeCommitCycleResult:
-        """Recover prior work, compile stale pages, publish once, then finalize."""
-        with self._control_plane.commit_lease(deployment_id=deployment_id):
-            with TemporaryDirectory(prefix="rememberstack-k-cycle-") as temporary:
-                worktree = Path(temporary)
-                checkout = self._git_remote.checkout(destination=worktree)
-                recovered = self._recover_pending_cycles(
-                    deployment_id=deployment_id,
-                    worktree=worktree,
-                    git_revision=checkout.root,
-                )
-                authored = self._authored.sync_checkout(
-                    deployment_id=deployment_id,
-                    worktree=worktree,
-                    git_revision=checkout.root,
-                )
-                self._control_plane.materialize_due_dispatches(
-                    deployment_id=deployment_id,
-                    component_version=KNOWLEDGE_DRIVER_VERSION,
-                )
-                pending_decisions = self._control_plane.pending_plan_decisions(
-                    deployment_id=deployment_id
-                )
-                plan_files_changed = _reconcile_plan_files(
-                    decisions=pending_decisions, worktree=worktree
-                )
-                quarantined = self._quarantine_compiled_drift(
-                    deployment_id=deployment_id, worktree=worktree
-                )
-                artifacts = self._control_plane.compile_artifacts(
-                    deployment_id=deployment_id
-                )
-                schedule = knowledge_compile_order(artifacts=artifacts)
-                if not schedule:
-                    revision = checkout.root
-                    if plan_files_changed:
-                        revision = self._git_remote.publish(worktree=worktree).root
-                    stamped = self._control_plane.stamp_ready_plan_decisions(
-                        deployment_id=deployment_id,
-                        git_commit=revision,
-                        present_paths=_present_paths(worktree=worktree),
-                    )
-                    return KnowledgeCommitCycleResult(
-                        checkout_revision=checkout.root,
-                        published_revision=(
-                            revision if revision != checkout.root else None
-                        ),
-                        recovered_cycle_ids=recovered,
-                        quarantined_artifact_ids=quarantined,
-                        stamped_plan_decision_ids=stamped,
-                        registered_authored_artifact_ids=(
-                            authored.registered_artifact_ids
-                        ),
-                        synced_authored_artifact_ids=authored.synced_artifact_ids,
-                        authored_lint_flag_artifact_ids=(
-                            authored.lint_flag_artifact_ids
-                        ),
-                    )
+        """Recover prior work, compile stale pages, publish once, then finalize.
 
-                known_paths = self._control_plane.artifact_git_paths(
-                    deployment_id=deployment_id
-                )
-                compiled = self._compile_schedule(
-                    artifacts=artifacts,
-                    schedule=schedule,
-                    known_paths=known_paths,
+        The sync step (pull, authored pages, the forget redaction check) runs
+        whether or not the facts layer compiles anything.
+        """
+        with TemporaryDirectory(prefix="rememberstack-k-cycle-") as temporary:
+            worktree = Path(temporary)
+            try:
+                return self._cycle(
+                    deployment_id=deployment_id,
                     worktree=worktree,
                     exclusions_by_artifact=exclusions_by_artifact,
                 )
-                for artifact, output in compiled:
-                    _write_compiled_page(
-                        worktree=worktree,
-                        git_path=artifact.git_path,
-                        markdown=output.markdown,
+            finally:
+                # Part of the pull: it runs even when authored validation or
+                # compilation failed (a page that still cites a forgotten
+                # document fails validation until its owner redacts it).
+                if (worktree / ".git").is_dir():
+                    self._redactions.sync_redactions(
+                        deployment_id=deployment_id, worktree=worktree
                     )
 
-                cycle_id = uuid4()
-                compilations = tuple(output.compilation for _, output in compiled)
-                self._control_plane.record_pending_compilations(
-                    cycle_id=cycle_id, compilations=compilations
-                )
-                published = self._git_remote.publish(worktree=worktree)
-                self._control_plane.commit_compilations(
-                    compilations=compilations, git_commit=published.root
-                )
+    def _cycle(
+        self,
+        *,
+        deployment_id: UUID,
+        worktree: Path,
+        exclusions_by_artifact: Mapping[UUID, Collection[KnowledgeEvidenceTarget]],
+    ) -> KnowledgeCommitCycleResult:
+        """Bookkeeping under the lease, writers outside it, publication under it."""
+        with self._control_plane.commit_lease(deployment_id=deployment_id):
+            checkout = self._git_remote.checkout(destination=worktree)
+            recovered = self._recover_pending_cycles(
+                deployment_id=deployment_id,
+                worktree=worktree,
+                git_revision=checkout.root,
+            )
+            authored = self._authored.sync_checkout(
+                deployment_id=deployment_id,
+                worktree=worktree,
+                git_revision=checkout.root,
+            )
+            self._control_plane.materialize_due_dispatches(
+                deployment_id=deployment_id, component_version=KNOWLEDGE_DRIVER_VERSION
+            )
+            pending_decisions = self._control_plane.pending_plan_decisions(
+                deployment_id=deployment_id
+            )
+            plan_files_changed = _reconcile_plan_files(
+                decisions=pending_decisions, worktree=worktree
+            )
+            quarantined = self._quarantine_compiled_drift(
+                deployment_id=deployment_id, worktree=worktree
+            )
+            artifacts = self._control_plane.compile_artifacts(
+                deployment_id=deployment_id
+            )
+            schedule = knowledge_compile_order(artifacts=artifacts)
+            if not schedule:
+                revision = checkout.root
+                # A pending decision may change a page's kind: publishing
+                # moves it between the snapshot and the branch.
+                if plan_files_changed or pending_decisions:
+                    revision = self._publish(
+                        deployment_id=deployment_id, worktree=worktree
+                    ).root
                 stamped = self._control_plane.stamp_ready_plan_decisions(
                     deployment_id=deployment_id,
-                    git_commit=published.root,
+                    git_commit=revision,
                     present_paths=_present_paths(worktree=worktree),
                 )
                 return KnowledgeCommitCycleResult(
                     checkout_revision=checkout.root,
-                    published_revision=published.root,
-                    compiled_artifact_ids=tuple(
-                        artifact.artifact_id for artifact, _ in compiled
+                    published_revision=(
+                        revision if revision != checkout.root else None
                     ),
                     recovered_cycle_ids=recovered,
                     quarantined_artifact_ids=quarantined,
                     stamped_plan_decision_ids=stamped,
                     registered_authored_artifact_ids=(authored.registered_artifact_ids),
                     synced_authored_artifact_ids=authored.synced_artifact_ids,
-                    authored_lint_flag_artifact_ids=authored.lint_flag_artifact_ids,
+                    authored_lint_flag_artifact_ids=(authored.lint_flag_artifact_ids),
                 )
+            known_paths = self._control_plane.artifact_git_paths(
+                deployment_id=deployment_id
+            )
+
+        compiled = self._compile_schedule(
+            artifacts=artifacts,
+            schedule=schedule,
+            known_paths=known_paths,
+            worktree=worktree,
+            exclusions_by_artifact=exclusions_by_artifact,
+        )
+        for artifact, output in compiled:
+            _write_compiled_page(
+                worktree=worktree, git_path=artifact.git_path, markdown=output.markdown
+            )
+
+        cycle_id = uuid4()
+        compilations = tuple(output.compilation for _, output in compiled)
+        with self._control_plane.commit_lease(deployment_id=deployment_id):
+            self._control_plane.record_pending_compilations(
+                cycle_id=cycle_id, compilations=compilations
+            )
+            published = self._publish(deployment_id=deployment_id, worktree=worktree)
+            self._control_plane.commit_compilations(
+                compilations=compilations, git_commit=published.root
+            )
+            stamped = self._control_plane.stamp_ready_plan_decisions(
+                deployment_id=deployment_id,
+                git_commit=published.root,
+                present_paths=_present_paths(worktree=worktree),
+            )
+        return KnowledgeCommitCycleResult(
+            checkout_revision=checkout.root,
+            published_revision=published.root,
+            compiled_artifact_ids=tuple(
+                artifact.artifact_id for artifact, _ in compiled
+            ),
+            recovered_cycle_ids=recovered,
+            quarantined_artifact_ids=quarantined,
+            stamped_plan_decision_ids=stamped,
+            registered_authored_artifact_ids=(authored.registered_artifact_ids),
+            synced_authored_artifact_ids=authored.synced_artifact_ids,
+            authored_lint_flag_artifact_ids=authored.lint_flag_artifact_ids,
+        )
+
+    def _publish(self, *, deployment_id: UUID, worktree: Path) -> KRevision:
+        """Publish the checkout: compiled pages as the snapshot, the rest as history."""
+        return self._git_remote.publish(
+            worktree=worktree,
+            compiled=compiled_paths(
+                control_plane=self._control_plane, deployment_id=deployment_id
+            ),
+        )
 
     def _quarantine_compiled_drift(
         self, *, deployment_id: UUID, worktree: Path

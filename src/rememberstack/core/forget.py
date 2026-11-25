@@ -1,4 +1,4 @@
-"""Pure canonical identity helpers for D74 hard-forget guards."""
+"""Pure helpers for D159 forget: the source identity and citation needles."""
 
 import hashlib
 import json
@@ -15,3 +15,14 @@ def source_identity_hash(
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+def cites_forgotten(*, content: bytes, needles: tuple[str, ...]) -> bool:
+    """Whether a file's bytes name any forgotten ID (D159 §3.3 step 4).
+
+    ``needles`` are the record's document, version and collected fact IDs.
+    Matching is case-insensitive, so a citation written by hand in upper case
+    still counts.
+    """
+    lowered = content.lower()
+    return any(needle.lower().encode("utf-8") in lowered for needle in needles)

@@ -974,16 +974,21 @@ class KnowledgeControlPlane:
             content_changed = prior_hash != sync.content_hash
             declaration = sync.declaration
             if declaration.citations is not None:
-                self._validate_citations(
+                citations = self._without_forgotten(
                     connection=connection,
                     deployment_id=sync.deployment_id,
                     citations=declaration.citations,
+                )
+                self._validate_citations(
+                    connection=connection,
+                    deployment_id=sync.deployment_id,
+                    citations=citations,
                 )
                 self._replace_authored_citations(
                     connection=connection,
                     deployment_id=sync.deployment_id,
                     artifact_id=artifact_id,
-                    citations=declaration.citations,
+                    citations=citations,
                 )
             if declaration.watch_rules is not None:
                 self._replace_authored_rules(
@@ -1051,6 +1056,37 @@ class KnowledgeControlPlane:
             content_changed=content_changed,
             lint_flagged=lint_flagged,
         )
+
+    def require_redaction(
+        self, *, deployment_id: UUID, git_paths: Collection[str]
+    ) -> tuple[UUID, ...]:
+        """Flag authored pages a forget waits on: their owner must redact (D159).
+
+        The flag carries no identifier of the forgotten document, only the
+        reason and ``redaction_required``. Paths that are not live authored
+        pages (curation sidecars, other files) are listed on the forget record
+        only. Returns the flagged artifacts.
+        """
+        if not git_paths:
+            return ()
+        payload = KnowledgeAuthoredReviewPayload(
+            reasons=(KnowledgeAuthoredReviewReason.TOMBSTONE,), redaction_required=True
+        )
+        with self._engine.begin() as connection:
+            artifact_ids = tuple(
+                connection.execute(
+                    _SELECT_LIVE_AUTHORED_BY_PATHS,
+                    {"deployment_id": deployment_id, "git_paths": sorted(git_paths)},
+                ).scalars()
+            )
+            for artifact_id in artifact_ids:
+                self._upsert_authored_flag(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    artifact_id=artifact_id,
+                    payload=payload,
+                )
+        return artifact_ids
 
     def register_subscription(
         self, *, subscription: KnowledgeSubscriptionCreate
@@ -3453,6 +3489,42 @@ class KnowledgeControlPlane:
                 artifacts.add(row["artifact_id"])
         return artifacts
 
+    def _without_forgotten(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        citations: tuple[KnowledgeCitation, ...],
+    ) -> tuple[KnowledgeCitation, ...]:
+        """Drop citations of forgotten targets from an authored declaration.
+
+        The page waits for its owner's redaction (D159 §3.4) and keeps its
+        redaction flag; it must not stop the rest of the K cycle meanwhile.
+        """
+        forgotten = set(
+            connection.execute(
+                _SELECT_FORGOTTEN_TARGETS, {"deployment_id": deployment_id}
+            ).scalars()
+        )
+        if not forgotten:
+            return citations
+        kept: list[KnowledgeCitation] = []
+        for citation in citations:
+            target = (
+                citation.claim_lineage_id or citation.relation_id or citation.doc_id
+            )
+            if str(target) in forgotten:
+                try:
+                    self._validate_citations(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        citations=(citation,),
+                    )
+                except KnowledgeCompilationError:
+                    continue
+            kept.append(citation)
+        return tuple(kept)
+
     def _validate_citations(
         self,
         *,
@@ -4041,6 +4113,29 @@ _SELECT_ARTIFACT_PATH_STATES = text(
     FROM knowledge_artifacts
     WHERE deployment_id = :deployment_id AND status <> 'tombstoned'
     ORDER BY git_path
+    """
+)
+
+_SELECT_FORGOTTEN_TARGETS = text(
+    """
+    SELECT CAST(doc_id AS text) FROM forgets WHERE deployment_id = :deployment_id
+    UNION
+    SELECT jsonb_array_elements_text(collected -> 'fact_ids')
+    FROM forgets
+    WHERE deployment_id = :deployment_id
+      AND jsonb_typeof(collected -> 'fact_ids') = 'array'
+    """
+)
+
+_SELECT_LIVE_AUTHORED_BY_PATHS = text(
+    """
+    SELECT artifact_id
+    FROM knowledge_artifacts
+    WHERE deployment_id = :deployment_id
+      AND git_path = ANY(CAST(:git_paths AS text[]))
+      AND page_kind = 'authored'
+      AND status <> 'tombstoned'
+    ORDER BY artifact_id
     """
 )
 

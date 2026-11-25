@@ -5,6 +5,7 @@ the PostgreSQL step are scripted (the PostgreSQL leg is proven against real
 PostgreSQL in ``tests/spine/test_forget_catalog.py``).
 """
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
@@ -25,6 +26,7 @@ from rememberstack.model import ClaimedWork
 from rememberstack.model import EnqueueWork
 from rememberstack.model import Forget
 from rememberstack.model import ForgetStatus
+from rememberstack.model import KnowledgeErasure
 from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
@@ -41,6 +43,7 @@ _DOC_ID = UUID("55500000-0000-0000-0000-000000000002")
 _FORGET_ID = UUID("55500000-0000-0000-0000-000000000004")
 _ARTIFACT_ID = UUID("55500000-0000-0000-0000-000000000005")
 _HASH = "e" * 64
+_COMPILED_PATHS = {"K1/compiled.md": _ARTIFACT_ID}
 _TOKEN = "S55_REAL_UNIQUE_FORGOTTEN_TOKEN"
 _CONTROL = "S55_REAL_INDEPENDENT_CONTROL"
 # An ingest_stored original (D147 locator) and the document's own prefix.
@@ -76,7 +79,6 @@ class _Catalog:
             removed=False,
             object_keys=(_UPLOAD_KEY, _OWN_KEY),
             compiled_artifact_ids=(),
-            blocking_k_paths=(),
             profile_entity_ids=(),
         )
 
@@ -86,20 +88,14 @@ class _Catalog:
     def hashes_in_use(self, **_: object) -> frozenset[str]:
         return frozenset()
 
-    def collected_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
-        return (_ARTIFACT_ID,)
-
-    def still_blocking(self, **_: object) -> tuple[str, ...]:
-        return ()
-
-    def authored_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
-        return ()
-
     def current_series(self, **_: object) -> str:
         return ""
 
-    def mark_stale(self, **_: object) -> None:
-        return None
+    def collected_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
+        return (_ARTIFACT_ID,)
+
+    def mark_stale(self, **_: object) -> tuple[UUID, ...]:
+        return (_ARTIFACT_ID,)
 
     def clear_k_pending(self, **_: object) -> None:
         return None
@@ -120,16 +116,31 @@ class _Service:
         return None
 
 
-class _Paths:
-    def k_paths_for_artifacts(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> tuple[str, ...]:
-        return ("K1/affected.md",) if artifact_ids == (_ARTIFACT_ID,) else ()
+class _Knowledge:
+    """The K step over a real repository; the paths stand in for the catalog."""
 
+    def __init__(self, *, repository: Path) -> None:
+        self.repository = LocalGitRepository(
+            repository=repository,
+            author_name="RememberStack",
+            author_email="rememberstack@example.test",
+        )
 
-class _Rebuild:
-    def recompile_without_lineage(self, **_: object) -> None:
-        return None
+    def erase(
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...], first: bool
+    ) -> KnowledgeErasure:
+        return self.repository.erase(
+            needles=(str(forget.doc_id),),
+            page_needles=(str(forget.doc_id),),
+            dropped=lambda ids: None,
+            compiled=_COMPILED_PATHS,
+            drop=frozenset(drop_artifact_ids),
+            accepted=lambda ids: dict.fromkeys(ids),
+            lease=nullcontext(),
+        )
+
+    def flag(self, **_: object) -> None:
+        raise AssertionError("nothing current cites the document in this drill")
 
 
 @dataclass
@@ -145,17 +156,29 @@ class _Sessions:
 
 
 def _seed_git(*, repository: Path) -> Path:
+    """The K repository before the forget, and a mirror backup of it.
+
+    A compiled page in the snapshot carries the token; an authored page cited
+    the document (and quoted the token) in an older revision.
+    """
     _git("init", "--quiet", "-b", "main", str(repository))
     _git("-C", str(repository), "config", "user.name", "Fixture")
     _git("-C", str(repository), "config", "user.email", "fixture@example.test")
-    affected = repository / "K1/affected.md"
+    notes = repository / "K1/notes.md"
     control = repository / "K1/control.md"
-    affected.parent.mkdir(parents=True)
-    affected.write_text(f"{_TOKEN}\n", encoding="utf-8")
+    notes.parent.mkdir(parents=True)
+    notes.write_text(f"{_TOKEN}, see doc:{_DOC_ID}\n", encoding="utf-8")
     control.write_text(f"{_CONTROL}\n", encoding="utf-8")
-    _commit(repository=repository, message="compiled before the forget")
-    affected.write_text("rebuilt without the document\n", encoding="utf-8")
-    _commit(repository=repository, message="rebuilt")
+    _commit(repository=repository, message="authored before the forget")
+    notes.write_text("redacted by the owner\n", encoding="utf-8")
+    _commit(repository=repository, message="owner redacts")
+    adapter = LocalGitRepository(
+        repository=repository, author_name="Fixture", author_email="f@example.test"
+    )
+    checkout = repository.parent / "seed-checkout"
+    adapter.checkout(destination=checkout)
+    (checkout / "K1/compiled.md").write_text(f"# {_TOKEN}\n", encoding="utf-8")
+    adapter.publish(worktree=checkout, compiled=_COMPILED_PATHS)
     backup = repository.parent / "knowledge-backup.git"
     _git("clone", "--quiet", "--mirror", str(repository), str(backup))
     return backup
@@ -224,13 +247,7 @@ def test_forget_reapply_erases_a_restored_store(tmp_path: Path) -> None:
             object_purger=corpus,
             caches=_Sessions(root=mount_root),
         ),
-        knowledge_rebuilder=_Rebuild(),
-        k_git=LocalGitRepository(
-            repository=repository,
-            path_catalog=_Paths(),
-            author_name="RememberStack",
-            author_email="rememberstack@example.test",
-        ),
+        knowledge=_Knowledge(repository=repository),
         quiet_period_s=0,
     )
 
@@ -251,11 +268,21 @@ def test_forget_reapply_erases_a_restored_store(tmp_path: Path) -> None:
         assert not _contains(root=tmp_path / "corpus", token=_TOKEN)
         assert _contains(root=tmp_path / "corpus", token=_CONTROL)
         assert not _contains(root=mount_root, token=_TOKEN)
-        assert (
-            _output("-C", str(repository), "log", "--all", "-S", _TOKEN, "--format=%H")
-            == ""
-        )
+        everything = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(repository),
+                "cat-file",
+                "--batch-all-objects",
+                "--batch",
+            ),
+            check=True,
+            capture_output=True,
+        ).stdout
+        assert _TOKEN.encode() not in everything
         assert _CONTROL in (repository / "K1/control.md").read_text()
+        assert (repository / "K1/notes.md").read_text() == "redacted by the owner\n"
 
     def restore_objects() -> None:
         _seed_objects(raw=raw, corpus=corpus)
@@ -272,17 +299,10 @@ def test_forget_reapply_erases_a_restored_store(tmp_path: Path) -> None:
             "--force",
             str(backup),
             "refs/heads/main:refs/rememberstack/restore",
+            "refs/rememberstack/compiled:refs/rememberstack/compiled",
         )
         _git("-C", str(repository), "reset", "--hard", "refs/rememberstack/restore")
         _git("-C", str(repository), "update-ref", "-d", "refs/rememberstack/restore")
-        for ref in _output(
-            "-C",
-            str(repository),
-            "for-each-ref",
-            "--format=%(refname)",
-            "refs/rememberstack/forget/",
-        ).splitlines():
-            _git("-C", str(repository), "update-ref", "-d", ref)
 
     restore_objects()
     reapply()

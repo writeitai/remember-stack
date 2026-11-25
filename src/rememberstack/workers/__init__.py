@@ -37,9 +37,8 @@ from rememberstack.workers.e3 import NormalizeRelationsHandler
 from rememberstack.workers.e3 import OBS_FLUSH_VERSION
 from rememberstack.workers.fact_window_review import FactWindowReviewHandler
 from rememberstack.workers.forget import ForgetHandler
-from rememberstack.workers.forget import ForgetKnowledgeRebuilder
+from rememberstack.workers.forget import ForgetKnowledgeEraser
 from rememberstack.workers.forget import ForgetService
-from rememberstack.workers.forget import KnowledgeCycleForgetRebuilder
 from rememberstack.workers.knowledge_authored import KnowledgeAuthoredSynchronizer
 from rememberstack.workers.knowledge_authored import KnowledgeDispatchHandler
 from rememberstack.workers.knowledge_authored import KnowledgeWorkflowDispatcher
@@ -132,10 +131,9 @@ __all__ = (
     "E0_SUMMARY_VERSION",
     "HandlerOutcome",
     "HandlerRegistry",
-    "ForgetKnowledgeRebuilder",
+    "ForgetKnowledgeEraser",
     "ForgetHandler",
     "ForgetService",
-    "KnowledgeCycleForgetRebuilder",
     "RunResult",
     "StageHandler",
     "CycleFinalizer",

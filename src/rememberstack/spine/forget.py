@@ -61,9 +61,7 @@ class SweepFindings:
     object_keys: tuple[ObjectKey, ...]
     """Opaque original keys to purge (retired raw originals, D147 locators)."""
     compiled_artifact_ids: tuple[UUID, ...]
-    """Compiled K pages whose citations to the document this step removed."""
-    blocking_k_paths: tuple[str, ...]
-    """Authored pages and curation sidecars whose current file still cites it."""
+    """Compiled K pages marked for deletion and rebuild, until step 4 drops them."""
     profile_entity_ids: tuple[UUID, ...]
     """Surviving entities whose profile this step cleared, for a refresh."""
     fixture_keys: tuple[ObjectKey, ...] = ()
@@ -284,40 +282,20 @@ class ForgetCatalog:
         with self._engine.begin() as connection:
             return _Sweep(connection=connection, forget=forget).run()
 
-    def k_paths_for_artifacts(
-        self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
-    ) -> tuple[str, ...]:
-        """Exact body and curation paths of K artifacts, for history erasure."""
-        if not artifact_ids:
-            return ()
+    def accepted_hashes(
+        self, *, deployment_id: UUID, artifact_ids: frozenset[UUID]
+    ) -> dict[UUID, str | None]:
+        """Each compiled page's accepted body hash (None while it awaits a rebuild)."""
         with self._engine.connect() as connection:
-            values = connection.execute(
-                _K_PATHS_FOR_ARTIFACTS,
-                {"deployment_id": deployment_id, "artifact_ids": list(artifact_ids)},
-            ).scalars()
-            return tuple(sorted({str(value) for value in values if value is not None}))
-
-    def still_blocking(self, *, forget: Forget) -> tuple[str, ...]:
-        """The listed authored paths whose current file still cites the document."""
-        with self._engine.connect() as connection:
-            collected = _collected(
-                connection=connection,
-                deployment_id=forget.deployment_id,
-                forget_id=forget.forget_id,
-            )
-            return _blocking_paths(
-                connection=connection, forget=forget, collected=collected
-            )
-
-    def authored_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
-        """The authored artifacts collected as citing the document."""
-        with self._engine.connect() as connection:
-            collected = _collected(
-                connection=connection,
-                deployment_id=forget.deployment_id,
-                forget_id=forget.forget_id,
-            )
-        return tuple(sorted((UUID(key) for key in collected["authored"]), key=str))
+            return {
+                row.artifact_id: row.content_hash
+                for row in connection.execute(
+                    text("""SELECT artifact_id, content_hash FROM knowledge_artifacts
+                    WHERE deployment_id = :d
+                      AND artifact_id = ANY(CAST(:ids AS uuid[]))"""),
+                    {"d": deployment_id, "ids": sorted(artifact_ids, key=str)},
+                )
+            }
 
     def finish(
         self, *, forget: Forget, blocking_k_paths: tuple[str, ...], series: str
@@ -382,15 +360,35 @@ class ForgetCatalog:
             ]
             _store_collected(connection=connection, forget=forget, collected=collected)
 
-    def mark_stale(self, *, forget: Forget, artifact_ids: tuple[UUID, ...]) -> None:
-        """Reapply: recorded compiled pages are rebuilt, never kept as edited."""
+    def mark_stale(
+        self, *, forget: Forget, artifact_ids: tuple[UUID, ...]
+    ) -> tuple[UUID, ...]:
+        """Reapply: recorded pages that are still compiled are rebuilt.
+
+        Returns the pages it marked; a retired page stays retired (its
+        restored copy is still dropped). A page adopted as authored since
+        keeps its body and history: only its owner edits it.
+        """
         with self._engine.begin() as connection:
-            connection.execute(
-                _COMPILED_ARTIFACT_STATEMENTS[1],
-                {
-                    "deployment_id": forget.deployment_id,
-                    "compiled_artifact_ids": list(artifact_ids),
-                },
+            return tuple(
+                sorted(
+                    connection.execute(
+                        text("""UPDATE knowledge_artifacts
+                        SET page_summary=NULL, content_hash=NULL, inputs_hash=NULL,
+                            last_compiled_at=NULL,
+                            status=CASE WHEN status='tombstoned' THEN status
+                                        ELSE 'stale' END
+                        WHERE deployment_id=:deployment_id
+                          AND artifact_id=ANY(CAST(:ids AS uuid[]))
+                          AND page_kind='compiled'
+                        RETURNING artifact_id"""),
+                        {
+                            "deployment_id": forget.deployment_id,
+                            "ids": list(artifact_ids),
+                        },
+                    ).scalars(),
+                    key=str,
+                )
             )
 
     def hashes_in_use(
@@ -426,6 +424,122 @@ class ForgetCatalog:
                 forget_id=forget.forget_id,
             )
         return tuple(UUID(value) for value in collected["k_artifact_ids"])
+
+    def needles(self, *, forget: Forget) -> tuple[str, ...]:
+        """The IDs whose presence in a K file means it still cites the document.
+
+        The document, its versions and every collected fact: citations name
+        a document (claim citations carry its lineage) or a fact. Each ID in
+        both spellings a citation may use: hyphenated and 32 hex digits.
+        """
+        with self._engine.connect() as connection:
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+            )
+        ids = {
+            forget.doc_id,
+            *forget.version_ids,
+            *(UUID(value) for value in collected["fact_ids"]),
+        }
+        return tuple(sorted({*map(str, ids), *(value.hex for value in ids)}))
+
+    def page_needles(self, *, forget: Forget) -> tuple[str, ...]:
+        """The needles of IDs that no longer exist: the document, its versions
+        and its exclusive facts. A compiled page naming one is forgotten text;
+        a shared fact a rebuilt page renders is not."""
+        with self._engine.connect() as connection:
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+            )
+            surviving = {
+                str(value)
+                for value in connection.execute(
+                    text("""SELECT relation_id FROM relations
+                    WHERE deployment_id = :d AND relation_id = ANY(CAST(:ids AS uuid[]))
+                    UNION ALL SELECT observation_id FROM observations
+                    WHERE deployment_id = :d
+                      AND observation_id = ANY(CAST(:ids AS uuid[]))"""),
+                    {"d": forget.deployment_id, "ids": collected["fact_ids"]},
+                ).scalars()
+            }
+        ids = {
+            forget.doc_id,
+            *forget.version_ids,
+            *(UUID(value) for value in collected["fact_ids"] if value not in surviving),
+        }
+        return tuple(sorted({*map(str, ids), *(value.hex for value in ids)}))
+
+    def pages_dropped(self, *, forget: Forget, artifact_ids: frozenset[UUID]) -> None:
+        """Compiled pages the K step dropped because their body named the document.
+
+        They are marked stale at once (called under the K lease) and the next
+        sweep's PostgreSQL step treats them as collected pages (summaries and
+        transcripts erased).
+        """
+        with self._engine.begin() as connection:
+            connection.execute(
+                _COMPILED_ARTIFACT_STATEMENTS[1],
+                {
+                    "deployment_id": forget.deployment_id,
+                    "compiled_artifact_ids": sorted(artifact_ids, key=str),
+                },
+            )
+            collected = _collected(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+                lock=True,
+            )
+            collected["k_dropped"] = sorted(
+                {*collected["k_dropped"], *map(str, artifact_ids)}
+            )
+            _store_collected(connection=connection, forget=forget, collected=collected)
+
+    def waiting(self, *, deployment_id: UUID) -> tuple[Forget, ...]:
+        """Records waiting for an owner to redact authored pages or sidecars."""
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    _SELECT
+                    + " WHERE deployment_id = :d"
+                    + " AND status = 'waiting_for_redaction'"
+                    + " ORDER BY requested_at, forget_id"
+                ),
+                {"d": deployment_id},
+            ).mappings()
+            return tuple(_forget(row=row) for row in rows)
+
+    def redaction_progress(
+        self, *, forget: Forget, blocking_k_paths: tuple[str, ...]
+    ) -> ForgetStatus:
+        """The K sync's check of a waiting record: complete once nothing cites.
+
+        A record a ``forget-reapply`` re-armed meanwhile is left to its sweeps.
+        """
+        status = (
+            ForgetStatus.WAITING_FOR_REDACTION
+            if blocking_k_paths
+            else ForgetStatus.COMPLETE
+        )
+        with self._engine.begin() as connection:
+            connection.execute(
+                text("""UPDATE forgets SET status = CAST(:status AS forget_status),
+                blocking_k_paths = CAST(:paths AS text[]), last_error = NULL,
+                completed_at = CASE WHEN :status = 'complete' THEN now() END
+                WHERE deployment_id = :d AND forget_id = :f
+                  AND status = 'waiting_for_redaction'"""),
+                {
+                    "d": forget.deployment_id,
+                    "f": forget.forget_id,
+                    "status": status.value,
+                    "paths": sorted(blocking_k_paths),
+                },
+            )
+        return status
 
     def schedule(self, *, work: EnqueueWork) -> None:
         """Enqueue one sweep outside a handler's completion transaction."""
@@ -688,9 +802,6 @@ class _Sweep:
             compiled_artifact_ids=tuple(
                 UUID(value) for value in collected["k_pending"]
             ),
-            blocking_k_paths=_blocking_paths(
-                connection=self._c, forget=forget, collected=collected
-            ),
             profile_entity_ids=profile_entities,
             fixture_keys=tuple(ObjectKey(key) for key in collected["fixture_keys"]),
         )
@@ -786,25 +897,34 @@ class _Sweep:
             + " AND a.page_kind = 'compiled'",
             p,
         )
-        authored = self._ids(
-            _CITING_ARTIFACTS.format(facts="fact_ids")
-            + " AND a.page_kind = 'authored'",
-            p,
+        # A cycle that published a page but has not finalized it yet holds
+        # the page's citations only in its pending compilation.
+        compiled = sorted(set(compiled) | set(self._ids(_PENDING_CITING, p)), key=str)
+        # Superseded compilations of pages that no longer cite the document
+        # still hold its summary and writer transcript.
+        collected["object_keys"] = sorted(
+            {
+                *collected["object_keys"],
+                *(
+                    str(key)
+                    for key in self._c.execute(
+                        _HISTORICAL_CITING_TRANSCRIPTS, p
+                    ).scalars()
+                    if key
+                ),
+            }
         )
+        self._exec(_CLEAR_HISTORICAL_CITING, p)
+        # Pages the last K step dropped for naming the document: once.
+        compiled = sorted(
+            set(compiled) | {UUID(value) for value in collected["k_dropped"]}, key=str
+        )
+        collected["k_dropped"] = []
         if p["linked_fact_ids"]:
             # A fact sheet renders facts without recording citations; it is
             # deterministic and cheap to rebuild, so every one is rebuilt.
             compiled = sorted(set(compiled) | set(self._ids(_FACT_SHEETS, p)), key=str)
         p["compiled_artifact_ids"] = compiled
-        for artifact_id in authored:
-            if str(artifact_id) not in collected["authored"]:
-                collected["authored"][str(artifact_id)] = self._c.execute(
-                    text(
-                        "SELECT content_hash FROM knowledge_artifacts"
-                        " WHERE deployment_id=:deployment_id AND artifact_id=:a"
-                    ),
-                    {**p, "a": artifact_id},
-                ).scalar_one_or_none()
         p["k_artifact_ids"] = sorted(
             set(compiled) | {UUID(value) for value in collected["k_artifact_ids"]},
             key=str,
@@ -925,12 +1045,16 @@ class _Sweep:
     def _mark_compiled(
         self, *, ids: list[UUID], p: dict[str, Any], collected: dict[str, Any]
     ) -> None:
-        """Mark compiled pages for a rebuild; they stay pending until it succeeds.
+        """Mark compiled pages stale; they stay pending until step 4 drops them.
 
         The pending list lives on the record, so a sweep interrupted after this
-        transaction still rebuilds them (step 4) before the forget completes.
+        transaction still deletes their files (step 4) before the forget
+        completes; ordinary K work rebuilds them.
         """
         if not ids:
+            # Review flags and dispatches that name the document go anyway.
+            for statement in _COMPILED_ARTIFACT_STATEMENTS[2:]:
+                self._exec(statement, {**p, "compiled_artifact_ids": []})
             return
         params = {**p, "compiled_artifact_ids": ids}
         transcripts = self._c.execute(_TRANSCRIPTS, params).scalars()
@@ -1057,11 +1181,11 @@ def _collected(
         "chunk_ids",
         "k_artifact_ids",
         "k_pending",
+        "k_dropped",
         "object_keys",
         "fixture_keys",
     ):
         collected[key] = sorted(collected.get(key) or ())
-    collected["authored"] = dict(collected.get("authored") or {})
     return collected
 
 
@@ -1077,44 +1201,6 @@ def _store_collected(
             "collected": json.dumps(collected, sort_keys=True),
         },
     )
-
-
-def _blocking_paths(
-    *, connection: Connection, forget: Forget, collected: dict[str, Any]
-) -> tuple[str, ...]:
-    """Collected authored pages whose current file still cites the document.
-
-    A page still cites while a synced citation names the document, or while
-    its content is unchanged since it was collected (its citation of an
-    erased fact went with the fact, but the owner has not edited it yet).
-    Compiled-page curation sidecars are not inspected here.
-    """
-    authored = collected["authored"]
-    if not authored:
-        return ()
-    rows = connection.execute(
-        text("""SELECT a.artifact_id, a.git_path, a.content_hash,
-               EXISTS (SELECT 1 FROM knowledge_artifact_evidence e
-                       WHERE e.deployment_id = a.deployment_id
-                         AND e.artifact_id = a.artifact_id
-                         AND (e.doc_id = :doc OR e.claim_lineage_id = :doc
-                              OR e.relation_id = ANY(CAST(:facts AS uuid[]))))
-                 AS cites
-        FROM knowledge_artifacts a
-        WHERE a.deployment_id = :d AND a.artifact_id = ANY(CAST(:ids AS uuid[]))"""),
-        {
-            "d": forget.deployment_id,
-            "doc": forget.doc_id,
-            "facts": collected["fact_ids"],
-            "ids": sorted(authored),
-        },
-    ).mappings()
-    paths: set[str] = set()
-    for row in rows:
-        unchanged = row["content_hash"] == authored.get(str(row["artifact_id"]))
-        if row["cites"] or unchanged:
-            paths.add(str(row["git_path"]))
-    return tuple(sorted(paths))
 
 
 def _forget(*, row: RowMapping) -> Forget:
@@ -1191,13 +1277,37 @@ _RELEASE_FORGOTTEN = text(
     """
 )
 
-# Page bodies only: a compiled page's curation sidecar is owner text, never
-# rewritten by a forget of the page it curates.
-_K_PATHS_FOR_ARTIFACTS = text(
-    """
-    SELECT git_path FROM knowledge_artifacts
-    WHERE deployment_id = :deployment_id AND artifact_id = ANY(:artifact_ids)
-    """
+_PENDING_CITING = """
+    SELECT DISTINCT c.artifact_id FROM knowledge_compilations c
+    CROSS JOIN LATERAL jsonb_array_elements(c.citations) citation
+    WHERE c.deployment_id=:deployment_id AND c.git_commit IS NULL
+      AND c.failed_at IS NULL AND jsonb_typeof(c.citations) = 'array'
+      AND (citation->>'doc_id' = CAST(:doc_id AS text)
+           OR citation->>'claim_lineage_id' = CAST(:doc_id AS text)
+           OR citation->>'relation_id'
+              = ANY(CAST(CAST(:linked_fact_ids AS uuid[]) AS text[])))
+"""
+
+_CITES_FORGOTTEN = """
+    jsonb_typeof(c.citations) = 'array' AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(c.citations) citation
+      WHERE citation->>'doc_id' = CAST(:doc_id AS text)
+         OR citation->>'claim_lineage_id' = CAST(:doc_id AS text)
+         OR citation->>'relation_id'
+            = ANY(CAST(CAST(:linked_fact_ids AS uuid[]) AS text[])))
+"""
+
+_HISTORICAL_CITING_TRANSCRIPTS = text(
+    "SELECT c.session_transcript_uri FROM knowledge_compilations c"
+    " WHERE c.deployment_id=:deployment_id AND " + _CITES_FORGOTTEN
+)
+
+_CLEAR_HISTORICAL_CITING = text(
+    "UPDATE knowledge_compilations c SET page_summary=NULL,"
+    " suggestions='[]'::jsonb"
+    " WHERE c.deployment_id=:deployment_id"
+    " AND (c.page_summary IS NOT NULL OR c.suggestions <> '[]'::jsonb)"
+    " AND " + _CITES_FORGOTTEN
 )
 
 _FACT_SHEETS = """
@@ -1349,8 +1459,8 @@ _EXCLUSIVE_ENTITIES = """
 """
 
 # K pages citing the document's evidence or a fact it touched. Compiled pages
-# are rebuilt when a sweep finds such a link; authored pages are listed for
-# their owner when they cite the document or any collected fact.
+# are deleted and rebuilt when a sweep finds such a link; authored pages and
+# sidecars are inspected in the K repository itself (step 4).
 _CITING_ARTIFACTS = """
     SELECT DISTINCT a.artifact_id FROM knowledge_artifacts a
     JOIN knowledge_artifact_evidence e
