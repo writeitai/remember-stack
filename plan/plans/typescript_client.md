@@ -21,11 +21,14 @@
    to any required new terms acceptance or human-only sign-in. Follow D5 for
    any managed-service claims. Publish the bootstrap version from reviewed main
    with provenance, then remove and revoke any temporary credential. Prepare
-   the next version on main before configuring npm to trust
-   `typescript-client-publish.yml` in the `npm-publish` environment. Allow
-   direct publish and complete the first token-free run within two days of setup.
-   Verify registry provenance and run the typed docs example and a controlled
-   failure from a clean npm install before switching the docs to npm.
+   the next version on main and wait for its TypeScript client checks before
+   configuring npm to trust `typescript-client-publish.yml` in the
+   `npm-publish` environment. Enable `npm publish` in the trusted publisher's
+   Allowed actions and complete the first token-free run within two days.
+   Verify registry provenance, then set the package's publishing access to
+   "Require two-factor authentication and disallow tokens". Run the typed docs
+   example and a controlled failure from a clean npm install before switching
+   the docs to npm.
 7. CLI and MCP: each receives its own complete binding design and Opus review,
    implementation/behavior tests and release approval. Their library boundaries
    are decided; their implementation is not part of the client PR. CLI uses

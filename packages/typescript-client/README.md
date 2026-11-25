@@ -146,10 +146,9 @@ OpenAPI 3.0 document. Python source changes, schema changes and unimplemented
 cross-field validators fail checks until fixtures/code/contracts are updated
 and reviewed. CI does not author committed generated artifacts.
 
-The first npm release follows [the delivery plan](../../plan/plans/typescript_client.md#typescript-client-delivery).
-Verify organization control, terms acceptance and publisher configuration before
-release. Successive releases use the GitHub-hosted `typescript-client-publish.yml`
-workflow and the `npm-publish` environment for npm trusted publishing.
+Registry releases follow the [delivery plan](https://github.com/writeitai/remember-stack/blob/main/plan/plans/typescript_client.md)
+and use `typescript-client-publish.yml` in the `npm-publish` environment for
+npm trusted publishing.
 
 Timeouts and poll intervals must be finite, greater than zero and at most
 2,147,483,647 milliseconds (Node's timer limit). Invalid values raise

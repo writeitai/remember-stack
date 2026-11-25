@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      actions: read
       contents: read
     defaults:
       run:
@@ -45,6 +46,16 @@ jobs:
           assert.equal(name, '@rememberdev/client');
           assert.equal(version, process.env.RELEASE_VERSION);
           NODE
+      - name: Require passing SDK checks on the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passing_runs=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/typescript-client.yml/runs" \
+            -f branch=main -f event=push -f head_sha="$GITHUB_SHA" -f status=success -F per_page=1 --jq .total_count)
+          if ! test "$passing_runs" -gt 0; then
+            echo '::error::The TypeScript client workflow must pass for this exact main commit before publishing.'
+            exit 1
+          fi
       - run: npm ci --ignore-scripts
       - run: npm run check:package
       - name: Pack the npm artifact and record its inputs

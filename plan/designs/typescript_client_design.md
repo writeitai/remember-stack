@@ -477,8 +477,10 @@ publishes `@rememberdev/client` to npm under Autoboard D53. Any bootstrap
 credential is restricted to the initial release and revoked afterward. The
 standing publisher is the GitHub-hosted `typescript-client-publish.yml`
 workflow, dispatched from `main`, with the `npm-publish` environment restricted
-to `main`. It publishes the packed artifact with provenance through npm trusted
-publishing. Build and pack run without access to the publish identity.
+to `main`. It requires a successful TypeScript client workflow run on the
+exact main commit before packing the artifact. It publishes that artifact
+with provenance through npm trusted publishing. Build and pack run without
+access to the publish identity.
 The [delivery plan](../plans/typescript_client.md) gives the release order and
 verification steps. Public docs advertise the npm install once the registry
 version and clean-project example have been verified.
