@@ -3405,6 +3405,97 @@
       "title": "FactSupport",
       "type": "string"
     },
+    "Forget": {
+      "additionalProperties": false,
+      "description": "One forget record (D159 \u00a73.5): IDs and progress, never content.\n\nFrom the request on, the document is gone from every read; ``status``\nsays how far erasing what was derived from it has come.\n``blocking_k_paths`` lists the authored knowledge pages whose owner must\nremove their citation of the document before the forget completes, and\n``last_error`` the code of the last failed sweep, which is retried.",
+      "properties": {
+        "blocking_k_paths": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Blocking K Paths",
+          "type": "array"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "forget_id": {
+          "format": "uuid",
+          "title": "Forget Id",
+          "type": "string"
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Error"
+        },
+        "requested_at": {
+          "format": "date-time",
+          "title": "Requested At",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "erasing",
+            "waiting_for_redaction",
+            "complete"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "forget_id",
+        "doc_id",
+        "status",
+        "requested_at"
+      ],
+      "title": "Forget",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ForgetList": {
+      "additionalProperties": false,
+      "description": "The deployment's forget records, oldest first.",
+      "properties": {
+        "forgets": {
+          "items": {
+            "$ref": "#/$defs/Forget"
+          },
+          "title": "Forgets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "forgets"
+      ],
+      "title": "ForgetList",
+      "type": "object",
+      "x-extra": "forbid"
+    },
     "Freshness": {
       "additionalProperties": false,
       "properties": {

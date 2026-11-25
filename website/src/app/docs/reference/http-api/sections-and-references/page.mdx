@@ -136,7 +136,7 @@ to read the section.
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
 | `422` | validation list | A malformed key, a missing `at`, `from` or `to` for its mode, `to` before `from`, a timestamp without a time zone, or `k` out of range. |
 
 ### Example
@@ -293,8 +293,8 @@ instant window has `from` equal to `until` and `until_inclusive: true`.
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
-| `404` | `chunk_not_found` | No such passage, or a hard forget removed its document. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
+| `404` | `chunk_not_found` | No such passage, or its document is forgotten. |
 | `422` | validation list | Both or neither of `chunk_id` and `doc_id`, `section_key` without `doc_id`, an unknown kind, a bad `time`, `k` out of range, or an unknown field. |
 
 ### Example

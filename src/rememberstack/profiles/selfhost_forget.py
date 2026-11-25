@@ -6,6 +6,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.models import Forget as ForgetAnswer
+from remember.models import ForgetList
 from rememberstack.adapters.selfhost import SelfHostProjectionPurger
 from rememberstack.model import Forget
 from rememberstack.model import KnowledgeErasure
@@ -99,6 +101,56 @@ class SelfHostForget:
         return self._service.request(
             deployment_id=deployment_id, doc_id=doc_id, forget_id=forget_id
         )
+
+
+class SelfHostForgetRequests:
+    """Serve forget and its records on the public surfaces (D159 §3.10).
+
+    Only the hide runs in the request, so this needs the spine alone; the
+    worker's ``forget`` handler sweeps the stores.
+    """
+
+    def __init__(self, *, engine: Engine) -> None:
+        """Bind the hide and the record catalog to the spine database."""
+        self._catalog = ForgetCatalog(engine=engine)
+        self._service = ForgetService(engine=engine, catalog=self._catalog)
+
+    def forget_document(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> tuple[ForgetAnswer, bool]:
+        """Hide one lineage and start its sweeps; a repeat returns the record."""
+        forget, created = self._service.request(
+            deployment_id=deployment_id, doc_id=doc_id
+        )
+        return _answer(forget), created
+
+    def list_forgets(self, *, deployment_id: UUID) -> ForgetList:
+        """Every record of the deployment, oldest first."""
+        return ForgetList(
+            forgets=tuple(
+                _answer(forget)
+                for forget in self._catalog.records(deployment_id=deployment_id)
+            )
+        )
+
+    def get_forget(self, *, deployment_id: UUID, forget_id: UUID) -> ForgetAnswer:
+        """One record, or ``ForgetNotFoundError``."""
+        return _answer(
+            self._catalog.record(deployment_id=deployment_id, forget_id=forget_id)
+        )
+
+
+def _answer(forget: Forget) -> ForgetAnswer:
+    """The public view of a record: its identity and progress."""
+    return ForgetAnswer(
+        forget_id=forget.forget_id,
+        doc_id=forget.doc_id,
+        status=forget.status.value,
+        requested_at=forget.requested_at,
+        completed_at=forget.completed_at,
+        blocking_k_paths=forget.blocking_k_paths,
+        last_error=forget.last_error,
+    )
 
 
 class _NoKnowledgeStore:

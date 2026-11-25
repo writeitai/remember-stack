@@ -190,6 +190,39 @@ class DocumentUnarchive(BaseModel):
     facts_reopened: int = Field(ge=0)
 
 
+ForgetStatus = Literal["erasing", "waiting_for_redaction", "complete"]
+"""A forget's progress (D159 §3.4): ``erasing`` while sweeps run,
+``waiting_for_redaction`` while authored knowledge pages still cite the
+document, ``complete`` when nothing is left."""
+
+
+class Forget(BaseModel):
+    """One forget record (D159 §3.5): IDs and progress, never content.
+
+    From the request on, the document is gone from every read; ``status``
+    says how far erasing what was derived from it has come.
+    ``blocking_k_paths`` lists the authored knowledge pages whose owner must
+    remove their citation of the document before the forget completes, and
+    ``last_error`` the code of the last failed sweep, which is retried.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    forget_id: UUID
+    doc_id: UUID
+    status: ForgetStatus
+    requested_at: datetime
+    completed_at: datetime | None = None
+    blocking_k_paths: tuple[str, ...] = ()
+    last_error: str | None = None
+
+
+class ForgetList(BaseModel):
+    """The deployment's forget records, oldest first."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    forgets: tuple[Forget, ...]
+
+
 # ---------------------------------------------------------------------------
 # Document tags (D156)
 # ---------------------------------------------------------------------------

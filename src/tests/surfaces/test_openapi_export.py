@@ -151,6 +151,10 @@ _SURFACE: frozenset[tuple[str, str]] = frozenset(
         ("PATCH", "/tags/{tag_id}"),
         ("DELETE", "/tags/{tag_id}"),
         ("POST", "/documents/{doc_id}/tags"),
+        # D159: forget and its records.
+        ("POST", "/documents/{doc_id}/forget"),
+        ("GET", "/forgets"),
+        ("GET", "/forgets/{forget_id}"),
     )
 )
 
@@ -180,6 +184,7 @@ _CAPABILITY_PORTS = frozenset(
         "references",
         "document_references",
         "archive",
+        "forget",
         "effective_time",
         "tags",
         "graph",

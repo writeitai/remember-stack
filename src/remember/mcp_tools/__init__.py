@@ -17,6 +17,7 @@ from remember.mcp_tools._definitions import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools._definitions import ARCHIVE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools._definitions import DOCUMENT_REFERENCES_TOOL_NAME
+from remember.mcp_tools._definitions import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import memory_tools
 from remember.mcp_tools._definitions import MEMORY_WRITE_TOOL_NAMES
@@ -43,7 +44,9 @@ from remember.mcp_tools._errors import map_error
 from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._errors import ToolError
 from remember.mcp_tools._memory import DocumentArchiveBackend
+from remember.mcp_tools._memory import DocumentForgetBackend
 from remember.mcp_tools._memory import handle_archive_tool
+from remember.mcp_tools._memory import handle_forget_document_tool
 from remember.mcp_tools._memory import handle_memory_write_tool
 from remember.mcp_tools._memory import McpMemorySettings
 from remember.mcp_tools._memory import MemoryWriteBackend
@@ -62,6 +65,7 @@ __all__ = (
     "ARCHIVE_TOOL_NAMES",
     "UNARCHIVE_DOCUMENT_TOOL_NAME",
     "DOCUMENT_REFERENCES_TOOL_NAME",
+    "FORGET_DOCUMENT_TOOL_NAME",
     "DocumentReferencesBackend",
     "INGEST_TOOL_NAME",
     "MEMORY_WRITE_TOOL_NAMES",
@@ -76,6 +80,7 @@ __all__ = (
     "TAG_TOOL_NAMES",
     "TAG_WRITE_TOOL_NAMES",
     "TagBackend",
+    "DocumentForgetBackend",
     "DocumentSearchBackend",
     "McpMemorySettings",
     "MemoryWriteBackend",
@@ -86,6 +91,7 @@ __all__ = (
     "error_result",
     "DocumentArchiveBackend",
     "handle_archive_tool",
+    "handle_forget_document_tool",
     "handle_document_references_tool",
     "invalid_arguments",
     "layer_unavailable",

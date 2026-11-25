@@ -256,6 +256,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "versioning_mode": "living",
                 "source_version_ref": "etag-2",
                 "source_path": "/upstream/fixture.md",
+                "allow_forgotten": True,
             },
         ),
         (
@@ -400,6 +401,9 @@ def scenarios() -> list[dict[str, Any]]:
         ("clear_effective_time", {"doc_id": ID}, {"doc_id": OTHER_ID}),
         ("archive_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
         ("unarchive_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
+        ("forget_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
+        ("list_forgets", {}, {}),
+        ("get_forget", {"forget_id": ID}, {"forget_id": OTHER_ID}),
         ("list_tags", {}, {"query": "Fixture"}),
         (
             "create_tag",
@@ -722,6 +726,13 @@ def responses() -> dict[str, Any]:
         item_count=2,
         created_at=now,
     )
+    forget = models.Forget(
+        forget_id=UUID(OTHER_ID),
+        doc_id=UUID(ID),
+        status="waiting_for_redaction",
+        requested_at=now,
+        blocking_k_paths=("pages/fixture.md",),
+    )
     tag = models.Tag(
         tag_id=UUID(ID),
         name="project:fixture",
@@ -818,6 +829,8 @@ def responses() -> dict[str, Any]:
         "unarchive": models.DocumentUnarchive(
             doc_id=UUID(ID), claims_restored=0, facts_reopened=0
         ).model_dump(mode="json"),
+        "forget": forget.model_dump(mode="json"),
+        "forget_list": models.ForgetList(forgets=(forget,)).model_dump(mode="json"),
         "deployment": models.DeploymentBuildInfo().model_dump(mode="json"),
         "processing_layers": models.ProcessingLayerStates(
             claims="backfilling", facts="disabled"
@@ -894,6 +907,12 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
         return fixtures["archive"]
     if path.startswith("/documents/") and path.endswith("/unarchive"):
         return fixtures["unarchive"]
+    if path.startswith("/documents/") and path.endswith("/forget"):
+        return fixtures["forget"]
+    if path == "/forgets":
+        return fixtures["forget_list"]
+    if path.startswith("/forgets/"):
+        return fixtures["forget"]
     if path == "/connectors" and request.method == "GET":
         return []
     if path.startswith("/connectors"):
@@ -1109,6 +1128,9 @@ def failure_fixtures() -> list[dict[str, Any]]:
         ("clear_effective_time", {"doc_id": ID}, {}),
         ("archive_document", {"doc_id": ID}, {}),
         ("unarchive_document", {"doc_id": ID}, {}),
+        ("forget_document", {"doc_id": ID}, {}),
+        ("list_forgets", {}, {}),
+        ("get_forget", {"forget_id": ID}, {}),
         ("connectors", {}, [{}]),
         ("list_tags", {}, {}),
         ("create_tag", {"name": "project:fixture", "description": ""}, {}),
@@ -1245,6 +1267,24 @@ def failure_fixtures() -> list[dict[str, Any]]:
                 "status": status,
                 "body": {"detail": detail},
                 "variant": "tag-refusal",
+            }
+        )
+    # D159: an ingest a forget record refuses keeps its code.
+    for detail in [
+        {"code": "document_forgotten", "forget_id": ID, "forgotten_at": STAMP},
+        {"code": "forget_not_complete", "forget_id": ID},
+    ]:
+        cases.append(
+            {
+                "method": "ingest",
+                "options": {
+                    "content": {"base64": "bm90ZQ=="},
+                    "filename": "fixture.md",
+                    "allow_forgotten": detail["code"] == "forget_not_complete",
+                },
+                "status": 409,
+                "body": {"detail": detail},
+                "variant": "forget-refusal",
             }
         )
     cases.append(
@@ -1497,6 +1537,8 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
                     "effective_from": STAMP,
                     "effective_until": STAMP,
                 },
+                # D159: a string is not the per-request flag; nothing is sent.
+                {"allow_forgotten": "false"},
             )
         ]
     )
@@ -1583,6 +1625,7 @@ def tool_fixtures() -> list[dict[str, Any]]:
         "pipeline_readiness": {"version_ids": [ID], "require": REQUIRE},
         "archive_document": {"doc_id": ID},
         "unarchive_document": {"doc_id": ID},
+        "forget_document": {"doc_id": ID, "confirm": True},
         "search_documents": {
             "language": "en",
             "authors": ["alice"],
@@ -1663,6 +1706,34 @@ def tool_fixtures() -> list[dict[str, Any]]:
                     "filename": "note.md",
                     "version_key": "edition-2",
                 },
+            },
+            {
+                "name": "ingest",
+                "variant": "allow-forgotten",
+                "arguments": {
+                    "text": "note",
+                    "filename": "note.md",
+                    "allow_forgotten": True,
+                },
+            },
+            {
+                "name": "ingest",
+                "variant": "allow-forgotten-not-boolean",
+                "arguments": {
+                    "text": "note",
+                    "filename": "note.md",
+                    "allow_forgotten": "yes",
+                },
+            },
+            {
+                "name": "forget_document",
+                "variant": "unconfirmed",
+                "arguments": {"doc_id": ID},
+            },
+            {
+                "name": "forget_document",
+                "variant": "confirm-false",
+                "arguments": {"doc_id": ID, "confirm": False},
             },
             {
                 "name": "section_history",

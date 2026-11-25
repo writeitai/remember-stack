@@ -54,6 +54,8 @@ export type { OutputEvidenceTotal as EvidenceTotal, EvidenceTotal as EvidenceTot
 export type { OutputFactEvidence as FactEvidence, FactEvidence as FactEvidenceInput } from './generated';
 export type { OutputFactResult as FactResult, FactResult as FactResultInput } from './generated';
 export type { OutputFactSupport as FactSupport, FactSupport as FactSupportInput } from './generated';
+export type { OutputForget as Forget, Forget as ForgetInput } from './generated';
+export type { OutputForgetList as ForgetList, ForgetList as ForgetListInput } from './generated';
 export type { OutputFreshness as Freshness, Freshness as FreshnessInput } from './generated';
 export type { OutputGrain as Grain, Grain as GrainInput } from './generated';
 export type { OutputGraphEdge as GraphEdge, GraphEdge as GraphEdgeInput } from './generated';

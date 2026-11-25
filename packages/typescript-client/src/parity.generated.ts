@@ -36,7 +36,7 @@ export default {
         "returns": "Self"
       },
       "ingest_file": {
-        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None, tags: Sequence[str] | None=None",
+        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None, tags: Sequence[str] | None=None, allow_forgotten: bool=False",
         "property": false,
         "returns": "IngestedVersion"
       }
@@ -148,6 +148,16 @@ export default {
         "property": false,
         "returns": "Envelope"
       },
+      "forget_document": {
+        "arguments": "self, *, doc_id: UUID | str",
+        "property": false,
+        "returns": "Forget"
+      },
+      "get_forget": {
+        "arguments": "self, *, forget_id: UUID | str",
+        "property": false,
+        "returns": "Forget"
+      },
       "graph_citation_path": {
         "arguments": "self, *, from_doc_id: UUID, to_doc_id: UUID, max_hops: int=6",
         "property": false,
@@ -169,7 +179,7 @@ export default {
         "returns": "Envelope"
       },
       "ingest": {
-        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None, tags: Sequence[str] | None=None",
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None, tags: Sequence[str] | None=None, allow_forgotten: bool=False",
         "property": false,
         "returns": "IngestedVersion"
       },
@@ -177,6 +187,11 @@ export default {
         "arguments": "self, *, limit: int=50, cursor: str | None=None, status: DocumentStatusFilter | None=None, include_archived: bool=False",
         "property": false,
         "returns": "DocumentPage"
+      },
+      "list_forgets": {
+        "arguments": "self",
+        "property": false,
+        "returns": "ForgetList"
       },
       "list_operations": {
         "arguments": "self",
@@ -360,6 +375,8 @@ export default {
     "EffectivePeriodsSet",
     "EffectiveTimeCleared",
     "Envelope",
+    "Forget",
+    "ForgetList",
     "IngestedVersion",
     "LayerUnavailable",
     "MatchingEdition",
@@ -570,11 +587,18 @@ export default {
         "DocumentArchiveBackend": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
+        "DocumentForgetBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
         "DocumentReferencesBackend": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "DocumentSearchBackend": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "FORGET_DOCUMENT_TOOL_NAME": {
+          "disposition": "public client support export",
+          "typescript": "FORGET_DOCUMENT_TOOL_NAME"
         },
         "INGEST_TOOL_NAME": {
           "disposition": "public client support export",
@@ -660,6 +684,9 @@ export default {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "handle_document_references_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_forget_document_tool": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "handle_memory_write_tool": {

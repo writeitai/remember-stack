@@ -421,7 +421,11 @@ An ingest answered `409` with
 `{"code": "document_forgotten", "forget_id": "...", "forgotten_at": "..."}`:
 the same bytes, or the same `source_kind` and `source_ref`, belong to a
 document this deployment forgot. Connectors skip such a file and log
-`sync.item_forgotten`. The refusal is deliberate; do not retry. See
+`sync.item_forgotten`. The refusal is deliberate; do not retry. To add the
+content back on purpose, send the ingest again with `allow_forgotten=true`
+(`remember ingest --allow-forgotten`); while that forget is still `erasing`
+the answer is `409` `forget_not_complete`, so wait until
+`remember forget status FORGET_ID` shows another status. See
 [Forgetting a document](/docs/self-hosting/operating#forgetting-a-document).
 
 ## setup refuses an existing database

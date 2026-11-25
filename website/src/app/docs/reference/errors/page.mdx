@@ -57,7 +57,8 @@ their code in `code`. `wait_for_readiness` raises
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
 | `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `POST /documents/{doc_id}/archive`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
-| `404` | `document_not_found` | `POST /documents/{doc_id}/archive` or `/unarchive` for a document that does not exist, or a period, reference or section route for a document that does not exist or that a hard forget removed. | Do not retry; check the id with `GET /documents`. |
+| `404` | `document_not_found` | `POST /documents/{doc_id}/archive` or `/unarchive` for a document that does not exist, or a period, reference or section route for a document that does not exist or is forgotten; `POST /documents/{doc_id}/forget` for a document that never existed (forgetting a forgotten document again answers `200` with its record). | Do not retry; check the id with `GET /documents`. |
+| `404` | `forget_not_found` | `GET /forgets/{forget_id}` for a forget record that does not exist. | Check the id with `GET /forgets`. |
 | `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
 | `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |
 | `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `PATCH` or `DELETE /tags/{tag_id}` for a tag id that is not registered, or was deleted. | Check the id with `GET /tags`. |
@@ -65,7 +66,8 @@ their code in `code`. `wait_for_readiness` raises
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
 | `409` | `{"code": "layer_unavailable", …}` | A read needs a [processing layer](/docs/concepts/pipeline#processing-layers) (`layer`) the deployment does not process. | Use a read of a served layer, or ask the operator to switch the layer on. |
-| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that belongs to a forgotten document. | Do not retry; the deployment does not take forgotten content back. |
+| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that belongs to a forgotten document. | Do not retry. To add the content back on purpose, send the ingest again with `allow_forgotten=true`. |
+| `409` | `{"code": "forget_not_complete", "forget_id": …}` | `POST /ingest` with `allow_forgotten=true` while the matching forget is still `erasing`. Nothing was stored. | Retry once `GET /forgets/{forget_id}` no longer shows `erasing`. |
 | `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
 | `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
 | `409` | `{"code": "conflict", "message": …}` | `POST /tags` or `PATCH /tags/{tag_id}` with a name another tag already has, in any letter case. | Use the existing tag, or choose another name. |
@@ -177,7 +179,7 @@ timeouts, store codes).
 
 The MCP server returns a tool failure as a normal tool result with
 `"isError": true` and one JSON text block. Every tool — `ingest`,
-`pipeline_readiness`, `archive_document`, `unarchive_document`, the assured operations and the SQL
+`pipeline_readiness`, `archive_document`, `unarchive_document`, `forget_document`, the assured operations and the SQL
 query tools — returns the same object:
 
 ```json
@@ -211,7 +213,9 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_not_regular_file` | `null` | no | Point path at a regular file, or send text/content_base64. |
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
-| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`: Do not retry. Check the doc_id with the user. (`section_history`, `update_document_tags`: Do not retry. Check the doc_id.) |
+| `confirmation_required` | `null` | no | Ask the user to confirm that this document is to be forgotten for good, then call again with confirm=true. (`forget_document` without `confirm: true`; nothing was forgotten.) |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`, `forget_document`: Do not retry. Check the doc_id with the user. (`section_history`, `update_document_tags`: Do not retry. Check the doc_id.) |
+| `document_forgotten`, `forget_not_complete` | 409 | no | Read the detail; fix the call. Do not retry it unchanged. (`ingest` of forgotten content; see [Adding forgotten content back](/docs/reference/http-api/ingest#adding-forgotten-content-back).) |
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
@@ -316,7 +320,7 @@ The routes themselves are in [remember.dev API](/docs/reference/cloud-api).
 | `structuring` | Being split into sections. |
 | `ready` | Converted and structured. Extraction may still be running; use readiness. |
 | `failed` | Conversion or structuring failed; `error` says why. |
-| `deleted` | Removed by a hard forget. Not listed by `GET /documents`. |
+| `deleted` | Removed by a forget. Not listed by `GET /documents`. |
 
 ### Pipeline stage status
 

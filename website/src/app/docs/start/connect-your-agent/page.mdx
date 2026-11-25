@@ -122,6 +122,7 @@ The `remember mcp` server gives the agent these tools:
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
 | `archive_document` | Tell the memory a document no longer holds, when the user says so. It stays readable as history. |
 | `unarchive_document` | Undo an archive when the user says the document holds again. |
+| `forget_document` | Erase a document for good when the user asks and confirms. |
 | `search_documents` | Find a file by its name, title, path, authors, dates or text. |
 | `section_history` | Follow one section of a document across its versions. |
 | `document_references` | See what a passage, section or document points to, and what points to it, at a given time. |
@@ -129,8 +130,8 @@ The `remember mcp` server gives the agent these tools:
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
-tools that change memory (`ingest`, `archive_document`, `unarchive_document`
-and the tag tools that change tags).
+tools that change memory (`ingest`, `archive_document`, `unarchive_document`,
+`forget_document` and the tag tools that change tags).
 
 <Cloud>
 

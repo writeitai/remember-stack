@@ -1,6 +1,7 @@
 """Argument parsing and execution of the memory write tools.
 
-``ingest``, ``pipeline_readiness`` and the archive tools share one parser
+``ingest``, ``pipeline_readiness``, the archive tools and ``forget_document``
+share one parser
 each and one structured error envelope (:mod:`._errors`), whichever host runs
 them.
 
@@ -48,6 +49,7 @@ from pydantic_settings import SettingsConfigDict
 from remember.mcp_tools._definitions import ARCHIVE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools._definitions import FILENAME_MAX_LEN
+from remember.mcp_tools._definitions import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools._definitions import MIME_MAX_LEN
@@ -68,6 +70,7 @@ from remember.mime import infer_upload_mime
 from remember.models import check_tag_ref
 from remember.models import DocumentArchive
 from remember.models import DocumentUnarchive
+from remember.models import Forget
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -143,6 +146,7 @@ class MemoryWriteBackend(Protocol):
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
         tags: tuple[str, ...] = (),
+        allow_forgotten: bool = False,
     ) -> IngestedVersion:
         """Accept one document body into E0 and return the version identity."""
         ...
@@ -172,6 +176,14 @@ class DocumentArchiveBackend(Protocol):
 
     def unarchive_document(self, *, doc_id: UUID) -> DocumentUnarchive:
         """Unarchive the document or raise a 404-shaped ``document_not_found``."""
+        ...
+
+
+class DocumentForgetBackend(Protocol):
+    """Authority that forgets one document for one MCP composition (D159)."""
+
+    def forget_document(self, *, doc_id: UUID) -> Forget:
+        """Forget the document or raise a 404-shaped ``document_not_found``."""
         ...
 
 
@@ -296,6 +308,80 @@ def handle_archive_tool(
     }
 
 
+def handle_forget_document_tool(
+    *, arguments: Mapping[str, object], backend: DocumentForgetBackend | None
+) -> dict[str, object]:
+    """Dispatch ``forget_document`` to a success or structured error result."""
+    if backend is None:
+        return error_result(
+            ToolError(
+                code="tool_not_composed",
+                detail=(
+                    f"MCP tool {FORGET_DOCUMENT_TOOL_NAME!r} is not composed on this"
+                    " server (read-only, or no forget port)."
+                ),
+                status_code=None,
+                retryable=False,
+                agent_action=(
+                    "Tell the user forgetting is not available on this server; do"
+                    " not retry."
+                ),
+            )
+        )
+    try:
+        doc_id = parse_forget_document_arguments(arguments=arguments)
+        forget = backend.forget_document(doc_id=doc_id)
+    except ToolArgumentError as error:
+        return error_result(error.error)
+    except Exception as error:  # noqa: BLE001 — mapped at the MCP wire boundary
+        if (
+            getattr(error, "status_code", None) == 404
+            and getattr(error, "detail", None) == "document_not_found"
+        ):
+            return error_result(
+                ToolError(
+                    code="document_not_found",
+                    detail=(
+                        f"No document {arguments.get('doc_id')}: the id is unknown."
+                    ),
+                    status_code=404,
+                    retryable=False,
+                    agent_action="Do not retry. Check the doc_id with the user.",
+                )
+            )
+        mapped = map_error(error)
+        if mapped.code in {"internal_error", "local_backend_error"}:
+            logger.exception(
+                "MCP tool %s failed with %s", FORGET_DOCUMENT_TOOL_NAME, mapped.code
+            )
+        return error_result(mapped)
+    return {
+        "content": [{"type": "text", "text": forget.model_dump_json()}],
+        "isError": False,
+    }
+
+
+def parse_forget_document_arguments(*, arguments: Mapping[str, object]) -> UUID:
+    """Validate ``forget_document`` arguments: a doc_id and ``confirm: true``."""
+    reject_unknown_keys(arguments=arguments, allowed={"doc_id", "confirm"})
+    if arguments.get("confirm") is not True:
+        raise ToolArgumentError(
+            error=ToolError(
+                code="confirmation_required",
+                detail="forget_document needs confirm=true; nothing was forgotten.",
+                status_code=None,
+                retryable=False,
+                agent_action=(
+                    "Ask the user to confirm that this document is to be forgotten"
+                    " for good, then call again with confirm=true."
+                ),
+            )
+        )
+    return parse_doc_id_arguments(
+        arguments={key: value for key, value in arguments.items() if key != "confirm"}
+    )
+
+
 def parse_doc_id_arguments(*, arguments: Mapping[str, object]) -> UUID:
     """Validate ``{"doc_id": ...}`` arguments and return the document id."""
     reject_unknown_keys(arguments=arguments, allowed={"doc_id"})
@@ -335,6 +421,7 @@ def _run_ingest(
             ("effective_from", parsed.effective_from),
             ("effective_until", parsed.effective_until),
             ("tags", parsed.tags or None),
+            ("allow_forgotten", parsed.allow_forgotten or None),
         )
         if value is not None
     }
@@ -410,6 +497,7 @@ class ParsedIngest:
     effective_from: datetime | None = None
     effective_until: datetime | None = None
     tags: tuple[str, ...] = ()
+    allow_forgotten: bool = False
 
 
 def parse_ingest_arguments(
@@ -442,6 +530,7 @@ def parse_ingest_arguments(
             "effective_from",
             "effective_until",
             "tags",
+            "allow_forgotten",
         },
     )
     path = _optional_nonempty_string(arguments, key="path", max_length=None)
@@ -507,6 +596,11 @@ def parse_ingest_arguments(
         arguments.get("effective_until"), key="effective_until"
     )
     tags = parse_tag_list(arguments, key="tags") or ()
+    allow_forgotten = arguments.get("allow_forgotten", False)
+    if not isinstance(allow_forgotten, bool):
+        raise ToolArgumentError(
+            error=invalid_arguments(detail="allow_forgotten must be a boolean.")
+        )
 
     if (source_kind is None) != (source_ref is None):
         raise ToolArgumentError(
@@ -630,6 +724,7 @@ def parse_ingest_arguments(
         effective_from=effective_from,
         effective_until=effective_until,
         tags=tags,
+        allow_forgotten=allow_forgotten,
     )
 
 

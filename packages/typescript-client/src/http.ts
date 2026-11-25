@@ -205,6 +205,9 @@ export async function checkedResponse({ response, path }: { response: Response; 
       } else if ((detailObject.code === 'conflict' || detailObject.code === 'tag_limit_exceeded') && typeof detailObject.message === 'string') {
         // D156 refusals keep their code: a duplicate tag name and a tag limit.
         code = detailObject.code; detail = detailObject.message;
+      } else if (detailObject.code === 'document_forgotten' || detailObject.code === 'forget_not_complete') {
+        // D159: an ingest a forget record refuses keeps its code; the detail keeps the forget_id.
+        code = detailObject.code; detail = JSON.stringify(detailObject);
       } else if (detailObject.code === 'invalid_parameter' && typeof detailObject.message === 'string') {
         // The structured 422 of operation arguments and of a D143 layers selection keeps its code.
         code = 'invalid_parameter'; detail = detailObject.message;

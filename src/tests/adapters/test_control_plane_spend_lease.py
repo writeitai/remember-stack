@@ -879,6 +879,11 @@ def test_every_published_route_is_gated_or_named_ungated() -> None:
         ("PATCH", "/tags/{tag_id}"),
         ("DELETE", "/tags/{tag_id}"),
         ("POST", "/documents/{doc_id}/tags"),
+        # D159: forget is not spend-gated; its sweeps are metered as ordinary
+        # work, and the records are metadata reads.
+        ("POST", "/documents/{doc_id}/forget"),
+        ("GET", "/forgets"),
+        ("GET", "/forgets/{forget_id}"),
     }
     schema = json.loads(
         (Path(__file__).parents[3] / "openapi.json").read_text(encoding="utf-8")

@@ -4,7 +4,9 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 from typing import cast
+from uuid import NAMESPACE_URL
 from uuid import UUID
+from uuid import uuid5
 
 from pydantic import ValidationError
 import pytest
@@ -28,12 +30,19 @@ class DenyingAdmission:
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        allow_forgotten: bool = False,
     ) -> None:
         """Raise the typed re-ingest guard result."""
         raise DocumentForgottenError(
             forget_id=UUID(int=1),
             forgotten_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
+
+    def lineage_doc_id(
+        self, *, deployment_id: UUID, source_kind: str, source_ref: str
+    ) -> UUID:
+        """Never reached: the guard refuses first."""
+        raise AssertionError("the guard must refuse before a lineage is derived")
 
 
 class AllowingAdmission:
@@ -46,8 +55,17 @@ class AllowingAdmission:
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        allow_forgotten: bool = False,
     ) -> None:
         """Permit the attempted observation."""
+
+    def lineage_doc_id(
+        self, *, deployment_id: UUID, source_kind: str, source_ref: str
+    ) -> UUID:
+        """The base derivation: no lineage of this identity was forgotten."""
+        return uuid5(
+            NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
+        )
 
 
 class RecordingStore:

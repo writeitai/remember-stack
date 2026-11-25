@@ -11,6 +11,8 @@ optional ``tags`` query parameter on ``POST /ingest``, the tag schemas and a
 ``tags`` field on document inventory and search results, and the ``tags``
 selector of the document search filter; D156 step 3 adds the filtered fact
 read's optional ``in_documents_filter`` marks and matching evidence total.
+D159 adds the forget routes, their record schemas and the optional
+``allow_forgotten`` query parameter on ``POST /ingest``.
 Those are stripped too.
 """
 
@@ -45,7 +47,16 @@ _PRE_D143_VERSION: Final = "0.17.2"
 """``info.version`` in that document; a release bump is not a D143 change."""
 
 _ADDED_ROUTES: Final = frozenset(
-    {"/processing-layers", "/tags", "/tags/{tag_id}", "/documents/{doc_id}/tags"}
+    {
+        "/processing-layers",
+        "/tags",
+        "/tags/{tag_id}",
+        "/documents/{doc_id}/tags",
+        # D159
+        "/documents/{doc_id}/forget",
+        "/forgets",
+        "/forgets/{forget_id}",
+    }
 )
 _ADDED_SCHEMAS: Final = frozenset(
     {
@@ -61,6 +72,9 @@ _ADDED_SCHEMAS: Final = frozenset(
         "TagUpdate",
         # D156 step 2: the document filter's tag selector
         "DocumentTagFilter",
+        # D159
+        "Forget",
+        "ForgetList",
     }
 )
 _D156_TAGGED_SCHEMAS: Final = (
@@ -94,7 +108,7 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
             kept = [
                 p
                 for p in operation["parameters"]
-                if p.get("name") != "layers"
+                if p.get("name") not in {"layers", "allow_forgotten"}
                 and not (p.get("name") == "tags" and p.get("in") == "query")
             ]
             if kept:

@@ -83,6 +83,7 @@ def _ports() -> dict[str, Any]:
         "ingest": MagicMock(),
         "pipeline_readiness": MagicMock(),
         "archive": MagicMock(),
+        "forget": MagicMock(),
         "document_search": MagicMock(),
         "section_history": MagicMock(),
         "document_references": MagicMock(),

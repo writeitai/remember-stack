@@ -69,6 +69,14 @@ class AllowIngest:
         """Accept the already bounded synthetic fixture."""
         del kwargs
 
+    def lineage_doc_id(
+        self, *, deployment_id: UUID, source_kind: str, source_ref: str
+    ) -> UUID:
+        """The base derivation: no lineage of this identity was forgotten."""
+        return uuid5(
+            NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class FakeStage:

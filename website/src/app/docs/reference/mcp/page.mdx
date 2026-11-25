@@ -43,8 +43,8 @@ writes</Cloud>. See [CLI: How the CLI finds your deployment](/docs/reference/cli
 [Over HTTP](#over-http).
 
 `--read-only` leaves out the tools that change memory (`ingest`,
-`archive_document`, `unarchive_document` and the four tag tools that change
-tags), and refuses calls to them with the error `read_only`.
+`archive_document`, `unarchive_document`, `forget_document` and the four tag
+tools that change tags), and refuses calls to them with the error `read_only`.
 `pipeline_readiness` and `search_documents` only read, so they stay.
 
 ### Protocol
@@ -77,7 +77,7 @@ Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
 1. `ingest`, `pipeline_readiness`, `archive_document`, `unarchive_document`,
-   `search_documents`,
+   `forget_document`, `search_documents`,
    `section_history`, `document_references`, and the five tag tools
    `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
    `update_document_tags` (with `--read-only`, only `pipeline_readiness`,
@@ -103,10 +103,10 @@ needs a missing layer fails with `layer_unavailable`.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
-`ingest`, `archive_document`, `unarchive_document` and the four tag tools
-that change tags, and `destructiveHint` is `true` only for `delete_tag`.
-Archiving is not destructive: the document stays as history and
-`unarchive_document` undoes it.
+`ingest`, `archive_document`, `unarchive_document`, `forget_document` and the
+four tag tools that change tags, and `destructiveHint` is `true` only for
+`forget_document` and `delete_tag`. Archiving is not destructive: the document
+stays as history and `unarchive_document` undoes it.
 
 The server serves one deployment, so no tool takes a `project` argument; a
 call that passes one is refused with `project_routing_unavailable`. A call to
@@ -190,8 +190,9 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
 | `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
 | `tags` | array of strings | no | At most 64, no repeats, each 1–128 characters after Unicode NFC. Registered tags, by name (any letter case) or `tag_id`, to add to the document. Ingest never removes a tag. An unregistered tag refuses the whole call with `unknown_tag` before anything is stored. See [`list_tags`](#list_tags). |
+| `allow_forgotten` | boolean | no | Default `false`. Add back content of a [forgotten](#forget_document) document. Without it such content is refused with `document_forgotten`; with it, it is refused with `forget_not_complete` while that forget is still erasing, and otherwise comes back under a new `doc_id`. The tool description tells the agent to set it only after the user confirms. |
 
-`ingest` is at tool version 3; the `tags` argument raised it from 2.
+`ingest` is at tool version 4; the `allow_forgotten` argument raised it from 3.
 Unknown keys are refused. What a key and a period do:
 [Versions in force](/docs/reference/http-api/ingest#versions-in-force). The input schema enforces the one-body rule with
 `oneOf`.
@@ -326,6 +327,31 @@ archived returns zero counts. The tool description tells the agent to use it
 only when the user says an archived document holds again. The token needs
 `write` scope. See
 [`POST /documents/{doc_id}/unarchive`](/docs/reference/http-api/ingest#post-documentsdoc_idunarchive).
+
+### `forget_document`
+
+Erases one document, every version of it, and everything derived only from
+it, for good. The document leaves every read at once and its `doc_id` answers
+as unknown; what was derived from it is erased in the background. Facts other
+documents also support stay, reworded from what survives. There is no undo:
+the content can only be ingested again with `allow_forgotten`.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID, as `ingest` returned it or a result cites it. |
+| `confirm` | `true` | yes | Must be `true`. Without it the call is refused with `confirmation_required` and nothing is forgotten. No other arguments are accepted. |
+
+The result is the [`Forget`](/docs/reference/result-types#forget) record:
+`forget_id`, `doc_id`, `status` (`erasing`, then `waiting_for_redaction`
+while an authored knowledge page still cites the document, then `complete`),
+`requested_at`, `completed_at`, `blocking_k_paths` and `last_error`. A repeat
+returns the same record.
+
+The tool description tells the agent to forget only when the user asks to
+forget or erase a specific document, to confirm with the user first, naming
+the document, and only then to pass `confirm: true`; never to tidy up or to
+correct a fact. See
+[`POST /documents/{doc_id}/forget`](/docs/reference/http-api/ingest#post-documentsdoc_idforget).
 
 ### `search_documents`
 
@@ -660,7 +686,10 @@ them. Every tool returns the same JSON:
 | `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
-| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`: no such document. `section_history`, `document_references`, `update_document_tags`: no such document, or a hard forget removed it. |
+| `confirmation_required` | `null` | no | `forget_document` without `confirm: true`. Nothing was forgotten. |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`, `forget_document`: no such document (forgetting a forgotten document again returns its existing record). `section_history`, `document_references`, `update_document_tags`: no such document, or it is forgotten. |
+| `document_forgotten` | 409 | no | `ingest` of content that belongs to a forgotten document, without `allow_forgotten`. |
+| `forget_not_complete` | 409 | no | `ingest` with `allow_forgotten` while the matching forget is still erasing. |
 | `unknown_tag` | 422, or 404 for `update_tag` and `delete_tag` | no | A tag the call names is not registered. `detail` names every one. |
 | `conflict` | 409 | no | `create_tag` or `update_tag`: a tag with that name, in any letter case, is already registered. |
 | `tag_limit_exceeded` | 409 | no | The deployment would have more than 10,000 tags, or the document more than 64. Nothing changed. |

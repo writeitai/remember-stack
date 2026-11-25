@@ -35,6 +35,11 @@ export default {
       }
     ],
     "properties": {
+      "allow_forgotten": {
+        "default": false,
+        "description": "Add back content of a forgotten document. Set it only after the user confirms; without it such content is refused with document_forgotten.",
+        "type": "boolean"
+      },
       "content_base64": {
         "description": "Standard base64-encoded bytes (no data: URL prefix). Mutually exclusive with path and text. Requires filename. Use for binary; for plain text prefer text.",
         "minLength": 1,
@@ -135,7 +140,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host \u2014 with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
+      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host \u2014 with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. A document_forgotten error means this content belongs to a document that was forgotten on purpose: tell the user and do not retry. Set allow_forgotten=true only after the user confirms they want that content added back; it is then stored under a new doc_id. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
       "destructive": false,
       "http_route": "POST /ingest",
       "input_schema": {
@@ -202,6 +207,11 @@ export default {
           }
         ],
         "properties": {
+          "allow_forgotten": {
+            "default": false,
+            "description": "Add back content of a forgotten document. Set it only after the user confirms; without it such content is refused with document_forgotten.",
+            "type": "boolean"
+          },
           "content_base64": {
             "description": "Standard base64-encoded bytes (no data: URL prefix). Mutually exclusive with path and text. Requires filename. Use for binary; for plain text prefer text.",
             "minLength": 1,
@@ -297,7 +307,7 @@ export default {
       },
       "name": "ingest",
       "permission": "memory:write",
-      "tool_version": 3
+      "tool_version": 4
     },
     {
       "annotations": {
@@ -405,6 +415,37 @@ export default {
         "type": "object"
       },
       "name": "unarchive_document",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Forget one document: erase it and everything derived only from it, for good. Use only when the user asks to forget or erase a specific document (it should never have been stored, or must not be kept). Before calling, confirm with the user, naming the document; then pass confirm=true. Never use it to tidy up or to correct a fact (ingest a correcting document instead). Takes the doc_id that ingest returned or that a claim or source cites. The effect is immediate: the document leaves every search, fact, list and SQL result and its doc_id answers as unknown. Copies derived from it are then erased in the background; facts other documents also support stay, reworded from what survives. There is no undo. Returns the forget record: forget_id, doc_id, status (erasing, waiting_for_redaction while an authored knowledge page still cites it, then complete) and requested_at; forgetting the same document again returns the same record. A document_not_found error means the id is unknown: do not retry it.",
+      "destructive": true,
+      "http_route": "POST /documents/{doc_id}/forget",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "const": true,
+            "description": "Must be true: set it only after the user confirmed that this document is to be forgotten."
+          },
+          "doc_id": {
+            "description": "The document's UUID (doc_id), as ingest returned it.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "confirm"
+        ],
+        "type": "object"
+      },
+      "name": "forget_document",
       "permission": "memory:write",
       "tool_version": 1
     },

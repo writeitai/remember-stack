@@ -3055,6 +3055,93 @@
         "title": "FactSupport",
         "type": "string"
       },
+      "Forget": {
+        "additionalProperties": false,
+        "description": "One forget record (D159 \u00a73.5): IDs and progress, never content.\n\nFrom the request on, the document is gone from every read; ``status``\nsays how far erasing what was derived from it has come.\n``blocking_k_paths`` lists the authored knowledge pages whose owner must\nremove their citation of the document before the forget completes, and\n``last_error`` the code of the last failed sweep, which is retried.",
+        "properties": {
+          "blocking_k_paths": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocking K Paths",
+            "type": "array"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "forget_id": {
+            "format": "uuid",
+            "title": "Forget Id",
+            "type": "string"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "erasing",
+              "waiting_for_redaction",
+              "complete"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "forget_id",
+          "doc_id",
+          "status",
+          "requested_at"
+        ],
+        "title": "Forget",
+        "type": "object"
+      },
+      "ForgetList": {
+        "additionalProperties": false,
+        "description": "The deployment's forget records, oldest first.",
+        "properties": {
+          "forgets": {
+            "items": {
+              "$ref": "#/components/schemas/Forget"
+            },
+            "title": "Forgets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "forgets"
+        ],
+        "title": "ForgetList",
+        "type": "object"
+      },
       "Freshness": {
         "additionalProperties": false,
         "description": "Per-source freshness stamps (S42): what lag the answer could carry.\n\nEach contributing channel also exposes its **`believed_at` horizon**: the\noldest system-time a query can reach before the channel can no longer\nanswer. Whenever a horizon is finite, a `believed_at` before it must return\na `boundary` (retrieval \u00a73), never a silent truncation. The live graph has\nno separate freshness stamp because it reads the same PostgreSQL snapshot.",
@@ -6553,6 +6640,65 @@
         "summary": "Clear Effective Time"
       }
     },
+    "/documents/{doc_id}/forget": {
+      "post": {
+        "description": "Forget one document: erase it and everything derived only from it.\n\nFrom the answer on, the document, its versions, passages and claims are\ngone from every read, and its ID answers as one that never existed.\nA background job then erases every copy derived from it and repeats\nuntil nothing is left; follow it with `GET /forgets/{forget_id}`.\nFacts and entities another document supports stay, reworded from what\nsurvives. There is no undo: the content can only be added again,\ndeliberately, with `allow_forgotten` on an ingest.\n\nThe first call answers 202 with the new record; a repeat answers 200\nwith the same record. An unknown `doc_id` is 404.",
+        "operationId": "forget_document_documents__doc_id__forget_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Forget"
+                }
+              }
+            },
+            "description": "A repeat: the existing record."
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Forget"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Forget Document"
+      }
+    },
     "/documents/{doc_id}/sections/{section_key}/history": {
       "get": {
         "description": "One section key across the document's versions.\n\nOne row per version the time scope selects (``mode``, default\n``history``; ``at`` for ``mode=at``, ``from``/``to`` for\n``mode=overlap``): the version, its in-force intervals, and the\nsection it holds under the key with ``changed``/``own_changed``\nagainst the previous row that held it \u2014 or ``absent``,\n``not_indexed`` or ``processing``. Ordered by effective start for a\nperiodised document, else by version number; ``limit`` / ``cursor``\npage and pin the evaluation and belief instants (``next_cursor`` out).",
@@ -6995,6 +7141,79 @@
         "summary": "Set References"
       }
     },
+    "/forgets": {
+      "get": {
+        "description": "Every forget record of the deployment, oldest first.\n\nA record holds IDs and progress only, never content.",
+        "operationId": "list_forgets_forgets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgetList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Forgets"
+      }
+    },
+    "/forgets/{forget_id}": {
+      "get": {
+        "description": "One forget record: its status, and what it still waits for.",
+        "operationId": "get_forget_forgets__forget_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "forget_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Forget Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Forget"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "forget_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Forget"
+      }
+    },
     "/graph/citation-path": {
       "post": {
         "description": "Return bounded directed citation paths between two documents.",
@@ -7392,6 +7611,18 @@
               ],
               "description": "Registered tags (name or tag_id; repeat the parameter) added to the document's tags. Ingest never removes a tag, and tags never decide whether a version is created. Any unregistered tag refuses the ingest with 422 unknown_tag before anything is stored.",
               "title": "Tags"
+            }
+          },
+          {
+            "description": "Add back content of a forgotten document, for this request only. Without it such content is refused with 409 document_forgotten. Accepted once that forget is no longer erasing (409 forget_not_complete until then); the document comes back under a new doc_id.",
+            "in": "query",
+            "name": "allow_forgotten",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Add back content of a forgotten document, for this request only. Without it such content is refused with 409 document_forgotten. Accepted once that forget is no longer erasing (409 forget_not_complete until then); the document comes back under a new doc_id.",
+              "title": "Allow Forgotten",
+              "type": "boolean"
             }
           },
           {

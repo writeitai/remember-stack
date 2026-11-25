@@ -2081,6 +2081,7 @@ def test_d159_upgrade_turns_d74_manifests_into_forget_records() -> None:
 def test_d159_upgrade_guards_a_preparing_named_upload() -> None:
     """§5 test 13: a migrated `preparing` upload named plan.md refuses changed bytes."""
     from rememberstack.model import DocumentForgottenError
+    from rememberstack.model import ForgetNotCompleteError
     from rememberstack.spine import ForgetCatalog
 
     database_url = _database_url()
@@ -2138,6 +2139,15 @@ def test_d159_upgrade_guards_a_preparing_named_upload() -> None:
                 source_kind="upload",
                 source_ref="plan.md",
                 content_hash="b" * 64,
+            )
+        # A deliberate re-add waits until the upgraded forget leaves erasing.
+        with pytest.raises(ForgetNotCompleteError):
+            ForgetCatalog(engine=engine).guard_ingest(
+                deployment_id=deployment_id,
+                source_kind="upload",
+                source_ref="plan.md",
+                content_hash="b" * 64,
+                allow_forgotten=True,
             )
         with engine.connect() as connection:
             assert connection.execute(

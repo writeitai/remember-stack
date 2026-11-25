@@ -455,6 +455,68 @@ export default {
       }
     }
   },
+  "GET /forgets": {
+    "method": "GET",
+    "operationId": "list_forgets_forgets_get",
+    "parameters": [],
+    "path": "/forgets",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ForgetList"
+            }
+          }
+        },
+        "description": "Successful Response"
+      }
+    }
+  },
+  "GET /forgets/{forget_id}": {
+    "method": "GET",
+    "operationId": "get_forget_forgets__forget_id__get",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "forget_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Forget Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/forgets/{forget_id}",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Forget"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "forget_not_found"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
   "GET /hydrate/relation/{relation_id}": {
     "method": "GET",
     "operationId": "hydrate_relation_hydrate_relation__relation_id__get",
@@ -1543,6 +1605,59 @@ export default {
       }
     }
   },
+  "POST /documents/{doc_id}/forget": {
+    "method": "POST",
+    "operationId": "forget_document_documents__doc_id__forget_post",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/forget",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Forget"
+            }
+          }
+        },
+        "description": "A repeat: the existing record."
+      },
+      "202": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Forget"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "document_not_found"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
   "POST /documents/{doc_id}/tags": {
     "method": "POST",
     "operationId": "update_document_tags_documents__doc_id__tags_post",
@@ -1966,6 +2081,18 @@ export default {
           ],
           "description": "Registered tags (name or tag_id; repeat the parameter) added to the document's tags. Ingest never removes a tag, and tags never decide whether a version is created. Any unregistered tag refuses the ingest with 422 unknown_tag before anything is stored.",
           "title": "Tags"
+        }
+      },
+      {
+        "description": "Add back content of a forgotten document, for this request only. Without it such content is refused with 409 document_forgotten. Accepted once that forget is no longer erasing (409 forget_not_complete until then); the document comes back under a new doc_id.",
+        "in": "query",
+        "name": "allow_forgotten",
+        "required": false,
+        "schema": {
+          "default": false,
+          "description": "Add back content of a forgotten document, for this request only. Without it such content is refused with 409 document_forgotten. Accepted once that forget is no longer erasing (409 forget_not_complete until then); the document comes back under a new doc_id.",
+          "title": "Allow Forgotten",
+          "type": "boolean"
         }
       },
       {

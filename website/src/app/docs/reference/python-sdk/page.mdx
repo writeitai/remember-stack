@@ -81,6 +81,8 @@ The client is synchronous. There is no async client yet
 | `EffectivePeriodsSet` | model | [Models](#models) |
 | `EffectiveTimeCleared` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
+| `Forget` | model | [Models](#models) |
+| `ForgetList` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
 | `MatchingEdition` | model | [Models](#models) |
 | `NamedReferenceTarget` | model | [Models](#models) |
@@ -300,6 +302,7 @@ Client.ingest_file(
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
     tags: Sequence[str] | None = None,
+    allow_forgotten: bool = False,
 ) -> IngestedVersion
 ```
 
@@ -345,6 +348,9 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`archive_document`](#archive_document) | `POST /documents/{doc_id}/archive` | `DocumentArchive` |
 | [`unarchive_document`](#unarchive_document) | `POST /documents/{doc_id}/unarchive` | `DocumentUnarchive` |
+| [`forget_document`](#forget_document) | `POST /documents/{doc_id}/forget` | `Forget` |
+| [`list_forgets`](#list_forgets) | `GET /forgets` | `ForgetList` |
+| [`get_forget`](#get_forget) | `GET /forgets/{forget_id}` | `Forget` |
 | [`list_tags`](#list_tags) | `GET /tags` | `TagList` |
 | [`create_tag`](#create_tag) | `POST /tags` | `Tag` |
 | [`update_tag`](#update_tag) | `PATCH /tags/{tag_id}` | `Tag` |
@@ -415,6 +421,7 @@ MemoryClient.ingest(
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
     tags: Sequence[str] | None = None,
+    allow_forgotten: bool = False,
 ) -> IngestedVersion
 ```
 
@@ -439,6 +446,7 @@ results.
 | `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
 | `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
 | `tags` | Registered tags, each a name (any letter case) or `tag_id`, added to the document's tags; at most 64. Ingest only adds tags and they never decide whether a version is created. See [Tags](/docs/reference/http-api/ingest#tags). |
+| `allow_forgotten` | Add back content of a [forgotten](#forget_document) document, for this call only. Without it such content raises `MemoryApiError` 409 with `code` `"document_forgotten"`; while that forget is still erasing, 409 with `code` `"forget_not_complete"`. The content comes back under a new `doc_id`. See [Adding forgotten content back](/docs/reference/http-api/ingest#adding-forgotten-content-back). |
 
 Raises `ValueError` when:
 
@@ -721,6 +729,52 @@ credential, and raises like `archive_document`. See
 restored = memory.unarchive_document(doc_id=version.doc_id)
 print(restored.claims_restored, restored.facts_reopened)
 ```
+
+
+#### `forget_document`
+
+```python
+MemoryClient.forget_document(*, doc_id: UUID | str) -> Forget
+```
+
+Erases one document, every version of it, and everything derived only from
+it, for good, and returns its [`Forget`](/docs/reference/result-types#forget)
+record. From the answer on, the document is gone from every read and its
+`doc_id` answers as unknown; what was derived from it is erased in the
+background, which [`get_forget`](#get_forget) follows through `status`. Facts
+other documents also support stay. There is no undo: the content can only be
+ingested again with `allow_forgotten=True`. A repeat returns the same record.
+See [`POST /documents/{doc_id}/forget`](/docs/reference/http-api/ingest#post-documentsdoc_idforget).
+
+Raises `ValueError` before sending anything when `doc_id` is not a UUID, and
+`MemoryApiError` with `status_code` 404 and `detail` `"document_not_found"`
+when the document does not exist. Forgetting the same document again returns
+its existing record, also after the forget completed.
+
+```python
+forget = memory.forget_document(doc_id=version.doc_id)
+print(forget.forget_id, forget.status)  # ... "erasing"
+```
+
+#### `list_forgets`
+
+```python
+MemoryClient.list_forgets() -> ForgetList
+```
+
+Every forget record of the deployment, oldest first, as a
+[`ForgetList`](/docs/reference/result-types#forgetlist).
+
+#### `get_forget`
+
+```python
+MemoryClient.get_forget(*, forget_id: UUID | str) -> Forget
+```
+
+One forget record. `status` is `erasing`, `waiting_for_redaction` (authored
+knowledge pages listed in `blocking_k_paths` still cite the document) or
+`complete`. Raises `MemoryApiError` with `status_code` 404 for an unknown
+`forget_id`.
 
 ### Tags
 
@@ -1642,6 +1696,7 @@ models below are Pydantic models (frozen) unless noted.
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
 | `DocumentArchive` | The result of `archive_document`: `doc_id`, `archived_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
 | `DocumentUnarchive` | The result of `unarchive_document`: `doc_id`, `claims_restored`, `facts_reopened`. |
+| `Forget`, `ForgetList` | One forget record (`forget_id`, `doc_id`, `status`, `requested_at`, `completed_at`, `blocking_k_paths`, `last_error`), and the result of `list_forgets` (`forgets`). |
 | `Tag`, `TagList`, `DocumentTags` | One registered tag (`tag_id`, `name`, `description`, `created_at`, `updated_at`), the result of `list_tags` (`tags`), and the result of `update_document_tags` (`doc_id`, `tags`). |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |

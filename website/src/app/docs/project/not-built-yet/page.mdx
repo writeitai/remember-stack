@@ -25,12 +25,6 @@ absent from the current release; nothing here has a date.
 
 ## Documents
 
-- **Forgetting a document from a client.** The engine can forget (erase) a
-  document, but no HTTP route, SDK method, CLI command or MCP tool requests a
-  forget yet, and `GET /forgets` does not exist. Archiving a document stops the
-  memory believing it but keeps the document, its claims and its stored
-  original as history; there is no delete. A forgotten document's content
-  cannot be ingested again: there is no `allow_forgotten` option yet.
 - **Archiving one version.** You can archive a whole document, not a single
   version of it.
 - **Document filters on fact lookups and SQL functions.** Claim and chunk

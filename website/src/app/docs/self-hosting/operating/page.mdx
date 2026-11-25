@@ -169,10 +169,12 @@ It also checks the versions of `pgvector`,
 
 ## Forgetting a document
 
-A forget erases one document and everything derived only from it. It is not
-yet exposed on the HTTP API, SDK, CLI or MCP surfaces (see
-[not built yet](/docs/project/not-built-yet)); in this release it is requested
-inside the engine. Nothing else in the deployment stops while a forget runs.
+A forget erases one document and everything derived only from it. Request it
+with `remember documents forget DOC_ID` (or
+[`POST /documents/{doc_id}/forget`](/docs/reference/http-api/ingest#post-documentsdoc_idforget),
+the SDKs, or the `forget_document` MCP tool), and follow it with
+`remember forget list` and `remember forget status FORGET_ID`. Nothing else in
+the deployment stops while a forget runs.
 
 - **The hide.** In one database transaction the document, its versions,
   passages and testimony disappear from every read, and its queued or running
@@ -202,7 +204,10 @@ inside the engine. Nothing else in the deployment stops while a forget runs.
   repository must fetch it again.
 - **Re-ingest.** Ingesting the same bytes or the same source (`source_kind` and
   `source_ref`) again is refused with `409 document_forgotten`; connectors skip
-  the file.
+  the file. To add the content back on purpose, ingest it with
+  `allow_forgotten` (`remember ingest --allow-forgotten`) once the record is no
+  longer `erasing`; it comes back under a new `doc_id`. The flag applies to
+  that one request; there is no setting that turns the refusal off.
 
 ### After restoring a backup
 

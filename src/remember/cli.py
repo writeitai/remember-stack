@@ -119,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             "query": _run_query,
             "ingest": _run_ingest,
             "documents": _run_documents,
+            "forget": _run_forget,
             "tags": _run_tags,
             "connectors": _run_connectors,
             "mcp": _run_mcp,
@@ -675,6 +676,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 effective_from=args.effective_from,
                 effective_until=args.effective_until,
                 tags=args.tag,
+                allow_forgotten=args.allow_forgotten,
             )
     except OSError as error:
         print(f"error: could not read {args.file}: {error}", file=sys.stderr)
@@ -694,7 +696,15 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 
 def _run_documents(args: argparse.Namespace) -> int:
-    """List, search, tag, archive or unarchive the deployment's documents."""
+    """List, search, tag, archive, unarchive or forget the deployment's documents."""
+    if args.documents_command == "forget" and not (
+        args.yes or _confirmed_forget(doc_id=args.doc_id)
+    ):
+        print(
+            "error: not confirmed; nothing was forgotten (--yes skips the question)",
+            file=sys.stderr,
+        )
+        return 1
     if (
         args.documents_command == "search"
         and args.query is not None
@@ -770,11 +780,34 @@ def _run_documents(args: argparse.Namespace) -> int:
             )
             print(tags.model_dump_json())
             return 0
+        if args.documents_command == "forget":
+            print(client.forget_document(doc_id=args.doc_id).model_dump_json())
+            return 0
         if args.documents_command == "archive":
             result = client.archive_document(doc_id=args.doc_id)
         else:
             result = client.unarchive_document(doc_id=args.doc_id)
     print(result.model_dump_json())
+    return 0
+
+
+def _confirmed_forget(*, doc_id: UUID) -> bool:
+    """Ask on the terminal before forgetting; no answer is a refusal."""
+    sys.stderr.write(
+        f"Forget document {doc_id}? It and everything derived only from it are"
+        " erased for good; there is no undo. [y/N] "
+    )
+    sys.stderr.flush()
+    return sys.stdin.readline().strip().lower() in {"y", "yes"}
+
+
+def _run_forget(args: argparse.Namespace) -> int:
+    """List the deployment's forget records or show one (D159)."""
+    with _cli_memory_client(args) as client:
+        if args.forget_command == "list":
+            print(client.list_forgets().model_dump_json())
+            return 0
+        print(client.get_forget(forget_id=args.forget_id).model_dump_json())
     return 0
 
 
@@ -1374,9 +1407,17 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         default=[],
         help="a registered tag (name or id) to add to the document (repeatable)",
     )
+    ingest.add_argument(
+        "--allow-forgotten",
+        action="store_true",
+        help=(
+            "add back content of a forgotten document (once its forget is no"
+            " longer erasing); it returns under a new doc_id"
+        ),
+    )
 
     documents = commands.add_parser(
-        "documents", help="list, search, delete or tag documents"
+        "documents", help="list, search, tag, archive, unarchive or forget documents"
     )
     documents_commands = documents.add_subparsers(
         dest="documents_command", required=True
@@ -1472,6 +1513,18 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         ),
     )
     unarchive_document.add_argument("doc_id", type=UUID)
+    forget_document = documents_commands.add_parser(
+        "forget",
+        parents=[client_flags],
+        help=(
+            "erase a document and everything derived only from it, for good;"
+            " prints the forget record"
+        ),
+    )
+    forget_document.add_argument("doc_id", type=UUID)
+    forget_document.add_argument(
+        "--yes", action="store_true", help="do not ask for confirmation"
+    )
     tag_document = documents_commands.add_parser(
         "tag",
         parents=[client_flags],
@@ -1495,6 +1548,16 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
             " --remove. --set '' clears the tags"
         ),
     )
+
+    forget = commands.add_parser("forget", help="follow document forgets")
+    forget_commands = forget.add_subparsers(dest="forget_command", required=True)
+    forget_commands.add_parser(
+        "list", parents=[client_flags], help="every forget record, oldest first"
+    )
+    forget_status = forget_commands.add_parser(
+        "status", parents=[client_flags], help="one forget record and its progress"
+    )
+    forget_status.add_argument("forget_id", type=UUID)
 
     tags = commands.add_parser("tags", help="list, create, update or delete tags")
     tags_commands = tags.add_subparsers(dest="tags_command", required=True)

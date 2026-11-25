@@ -190,6 +190,7 @@ from rememberstack.model.evaluation import SuiteReport
 from rememberstack.model.forget import DocumentForgottenError
 from rememberstack.model.forget import Forget
 from rememberstack.model.forget import ForgetError
+from rememberstack.model.forget import ForgetNotCompleteError
 from rememberstack.model.forget import ForgetNotFoundError
 from rememberstack.model.forget import ForgetStatus
 from rememberstack.model.forget import KnowledgeErasure
@@ -514,6 +515,7 @@ __all__ = (
     "FallbackStructureResponse",
     "Forget",
     "ForgetError",
+    "ForgetNotCompleteError",
     "ForgetNotFoundError",
     "ForgetStatus",
     "ReadEmbeddingCost",

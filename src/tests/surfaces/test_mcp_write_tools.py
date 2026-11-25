@@ -91,10 +91,12 @@ class _RecordingWriteBackend:
         effective_from: datetime | None = None,
         effective_until: datetime | None = None,
         tags: tuple[str, ...] = (),
+        allow_forgotten: bool = False,
     ) -> IngestedVersion:
         if self.fail is not None:
             raise self.fail
         self.last_ingest = {
+            "allow_forgotten": allow_forgotten,
             "tags": tags,
             "version_key": version_key,
             "effective_from": effective_from,

@@ -74,6 +74,7 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         "pipeline_readiness",
         "archive_document",
         "unarchive_document",
+        "forget_document",
         "search_documents",
         "section_history",
         "document_references",
@@ -147,12 +148,12 @@ def test_rendering_never_shares_the_catalogue_schema() -> None:
 
 
 def test_annotations_follow_permission() -> None:
-    """Read tools are read-only; only delete_tag is destructive (archive is not)."""
+    """Read tools are read-only; only forget and delete_tag are destructive."""
     for name, entry in _render().items():
         definition = tool(name)
         assert entry["annotations"] == {
             "readOnlyHint": definition.permission == "memory:read",
-            "destructiveHint": name == "delete_tag",
+            "destructiveHint": name in {"forget_document", "delete_tag"},
         }
 
 
@@ -307,6 +308,7 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         ingest=MagicMock(),
         pipeline_readiness=MagicMock(),
         archive=MagicMock(),
+        forget=MagicMock(),
         document_search=MagicMock(),
         section_history=MagicMock(),
         document_references=MagicMock(),

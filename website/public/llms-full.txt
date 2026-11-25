@@ -576,6 +576,7 @@ The `remember mcp` server gives the agent these tools:
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
 | `archive_document` | Tell the memory a document no longer holds, when the user says so. It stays readable as history. |
 | `unarchive_document` | Undo an archive when the user says the document holds again. |
+| `forget_document` | Erase a document for good when the user asks and confirms. |
 | `search_documents` | Find a file by its name, title, path, authors, dates or text. |
 | `section_history` | Follow one section of a document across its versions. |
 | `document_references` | See what a passage, section or document points to, and what points to it, at a given time. |
@@ -583,8 +584,8 @@ The `remember mcp` server gives the agent these tools:
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
-tools that change memory (`ingest`, `archive_document`, `unarchive_document`
-and the tag tools that change tags).
+tools that change memory (`ingest`, `archive_document`, `unarchive_document`,
+`forget_document` and the tag tools that change tags).
 
 ## Teach the agent the order
 
@@ -745,7 +746,7 @@ version's date and is read afresh.
 The rule only ever looks back to earlier dates. If you ingest the 2026
 edition of a document first and the identical 2024 edition later, the 2024
 passages take 2024 and are read afresh; nothing already stamped is re-dated.
-Passages of versions a hard forget removed are never drawn on, and the date is recorded
+Passages of forgotten versions are never drawn on, and the date is recorded
 once and never changes. `chunks_live.text_origin_at` in the
 [query space](https://remember.dev/docs/reference/query-space#chunks_live) shows it. Passages
 written by an earlier release have no recorded origin, so the first new
@@ -885,6 +886,7 @@ the facts it closed stay in the deployment as history. Reads that pass
 and passages as archived; those claims never count as current support. A read
 of belief as of a time before the archive sees the closed facts as they were.
 In SQL queries, `documents_live` lists the draft with `archived_at` set.
+To erase a document instead, [forget](#forgetting-a-document) it.
 
 An archive takes effect when you call it. To say that an edition applied only
 for a period, use [effective periods](#editions-in-force) instead.
@@ -910,6 +912,29 @@ that archive is undone; a changed file is a new version.
 Details and errors:
 [`POST /documents/{doc_id}/archive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
 
+## Forgetting a document
+
+Forgetting a document erases it, every version of it, and everything derived
+only from it, for good (`POST /documents/{doc_id}/forget`,
+`MemoryClient.forget_document`, `remember documents forget`, or the
+`forget_document` MCP tool). Use it for a document that should never have
+been stored, not to change what the memory believes.
+
+At once the document, its passages and claims are gone from every read, and
+its `doc_id` answers like one the deployment never held. A background job then
+erases its stored files, corpus folders and the compiled knowledge pages that
+cited it, which are rebuilt without it. A fact that only the document
+supported is deleted; a fact other documents also support stays, reworded
+from what survives. The forget record (IDs and progress, never text) follows
+the job: `erasing`, then `complete`, or `waiting_for_redaction` while a
+knowledge page someone wrote still cites the document.
+
+There is no undo. Sending the same bytes, or the same `source_kind` and
+`source_ref`, again is refused with `409` `document_forgotten`, and connectors
+skip the file. To add the content back on purpose, ingest it with
+`allow_forgotten`; it comes back as a new document with a new `doc_id`. See
+[`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idforget).
+
 ## Document statuses
 
 Each version carries a processing status for its early stages:
@@ -921,7 +946,7 @@ Each version carries a processing status for its early stages:
 | `structuring` | Converted; sections are being detected. |
 | `ready` | Converted and structured. |
 | `failed` | Conversion or structuring failed; the version's `error` says why. |
-| `deleted` | Removed by an operator's hard forget. |
+| `deleted` | Removed by a forget. |
 
 **Warning:**
 
@@ -9218,10 +9243,12 @@ It also checks the versions of `pgvector`,
 
 ## Forgetting a document
 
-A forget erases one document and everything derived only from it. It is not
-yet exposed on the HTTP API, SDK, CLI or MCP surfaces (see
-[not built yet](https://remember.dev/docs/project/not-built-yet)); in this release it is requested
-inside the engine. Nothing else in the deployment stops while a forget runs.
+A forget erases one document and everything derived only from it. Request it
+with `remember documents forget DOC_ID` (or
+[`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idforget),
+the SDKs, or the `forget_document` MCP tool), and follow it with
+`remember forget list` and `remember forget status FORGET_ID`. Nothing else in
+the deployment stops while a forget runs.
 
 - **The hide.** In one database transaction the document, its versions,
   passages and testimony disappear from every read, and its queued or running
@@ -9251,7 +9278,10 @@ inside the engine. Nothing else in the deployment stops while a forget runs.
   repository must fetch it again.
 - **Re-ingest.** Ingesting the same bytes or the same source (`source_kind` and
   `source_ref`) again is refused with `409 document_forgotten`; connectors skip
-  the file.
+  the file. To add the content back on purpose, ingest it with
+  `allow_forgotten` (`remember ingest --allow-forgotten`) once the record is no
+  longer `erasing`; it comes back under a new `doc_id`. The flag applies to
+  that one request; there is no setting that turns the refusal off.
 
 ### After restoring a backup
 
@@ -9690,7 +9720,11 @@ An ingest answered `409` with
 `{"code": "document_forgotten", "forget_id": "...", "forgotten_at": "..."}`:
 the same bytes, or the same `source_kind` and `source_ref`, belong to a
 document this deployment forgot. Connectors skip such a file and log
-`sync.item_forgotten`. The refusal is deliberate; do not retry. See
+`sync.item_forgotten`. The refusal is deliberate; do not retry. To add the
+content back on purpose, send the ingest again with `allow_forgotten=true`
+(`remember ingest --allow-forgotten`); while that forget is still `erasing`
+the answer is `409` `forget_not_complete`, so wait until
+`remember forget status FORGET_ID` shows another status. See
 [Forgetting a document](https://remember.dev/docs/self-hosting/operating#forgetting-a-document).
 
 ## setup refuses an existing database
@@ -10575,7 +10609,7 @@ The API has 40 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `POST /documents/{doc_id}/archive`, `POST /documents/{doc_id}/unarchive`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
+| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `POST /documents/{doc_id}/archive`, `POST /documents/{doc_id}/unarchive`, `POST /documents/{doc_id}/forget`, `GET /forgets`, `GET /forgets/{forget_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
 | Sections and references | [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references) | `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` |
 | Assured operations | [Operations](https://remember.dev/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](https://remember.dev/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
@@ -10748,7 +10782,7 @@ A failed request returns a non-2xx status and a JSON body with a single
 | Form | Example | Where |
 |---|---|---|
 | Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph. |
-| Object with `code` | `{"detail": {"code": "document_forgotten", "forget_id": "…", "forgotten_at": "…"}}` | `409` when an ingest names forgotten content. |
+| Object with `code` | `{"detail": {"code": "document_forgotten", "forget_id": "…", "forgotten_at": "…"}}` | `409` when an ingest names forgotten content (`document_forgotten`, `forget_not_complete`). |
 | Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
 | List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |
 
@@ -10837,7 +10871,8 @@ or references, so repeating one with the same body changes nothing.
 `DELETE /documents/{doc_id}/effective-periods` repeated finds nothing left
 to withdraw. `POST /documents/{doc_id}/tags` repeated with the same body
 leaves the same tags, and `PATCH /tags/{tag_id}` repeated leaves the same
-tag. `POST /tags` repeated is refused with `409` `conflict`, and
+tag. `POST /documents/{doc_id}/forget` repeated answers `200` with the same
+forget record. `POST /tags` repeated is refused with `409` `conflict`, and
 `DELETE /tags/{tag_id}` repeated with `404` `unknown_tag`: in both cases the
 first call already did the work. `POST /documents/{doc_id}/archive`
 repeated answers the same `archived_at` with zero counts, and
@@ -10969,7 +11004,8 @@ enough to query. `GET /documents` lists what the deployment holds, newest
 document first. `POST /documents/search` finds documents by name, metadata
 and text. `POST /documents/{doc_id}/archive` tells the memory a document no
 longer holds, keeping it as history, and `POST /documents/{doc_id}/unarchive`
-undoes that.
+undoes that. `POST /documents/{doc_id}/forget` erases a document for good, and
+`GET /forgets` and `GET /forgets/{forget_id}` follow the erasure.
 
 Four more routes describe versions after ingest.
 `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` declares
@@ -11015,6 +11051,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | `effective_from` | query | date-time | no | | UTC only. The start (included) of the period during which this version's text is in force. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
 | `effective_until` | query | date-time | no | | UTC only. The end (excluded) of that period. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
 | `tags` | query | string, repeatable | no | | At most 64. Registered tags, each by name (any letter case) or `tag_id`, added to the document's tags. Repeat the parameter for several: `tags=project:billing-migration&tags=kind:decision`. See [Tags](#tags). |
+| `allow_forgotten` | query | boolean | no | `false` | Add back content of a forgotten document, for this request only. See [Adding forgotten content back](#adding-forgotten-content-back). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -11151,6 +11188,22 @@ bytes or any record are stored. A document carries at most 64 tags; an
 ingest that would pass that is refused with `409` `tag_limit_exceeded`, also
 before anything is stored.
 
+### Adding forgotten content back
+
+Bytes, or a `source_kind` and `source_ref`, that belong to a
+[forgotten](#post-documentsdoc_idforget) document are refused with `409`
+`document_forgotten`; connectors skip such a file. To add the content back on
+purpose, send the ingest with `allow_forgotten=true`. It is accepted once that
+forget is no longer `erasing` (until then `409` `forget_not_complete`), and is
+ingested like any new content: the document comes back under a new `doc_id`,
+never the forgotten one.
+
+The flag applies to that one request and releases, on the forgotten document
+being added back, only what the request matched: these bytes, and this
+`source_kind` and `source_ref` when you send them. Other forgotten versions of
+the same document stay refused, and so do the same bytes of any other
+forgotten document. There is no setting that turns the refusal off.
+
 ### Attribution
 
 `X-Ingest-Principal-Kind` and `X-Ingest-Principal-Ref` record who added the
@@ -11199,7 +11252,8 @@ for it; it will not become ready on its own.
 |---|---|---|
 | `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
 | `413` | `body_too_large` | The body is over the deployment's cap. |
-| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | These bytes, or this `source_kind` and `source_ref`, belong to a document this deployment forgot. Checked before any byte is stored and again when the version is registered. Do not retry. |
+| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | These bytes, or this `source_kind` and `source_ref`, belong to a document this deployment forgot. Checked before any byte is stored and again when the version is registered. Do not retry; to add the content back on purpose, see [Adding forgotten content back](#adding-forgotten-content-back). |
+| `409` | `{"code": "forget_not_complete", "forget_id": …}` | `allow_forgotten=true`, but the matching forget is still `erasing`. Nothing was stored. Retry after [`GET /forgets/{forget_id}`](#get-forgetsforget_id) shows another status. |
 | `409` | `{"code": "version_key_conflict", "message": …, "version_id": …, "version_key": …}` | The `version_key` already names another version of this document (`version_id`), or names the latest version but the bytes differ. Nothing was stored. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version of this document (`version_id`) already declares this `effective_from`. Nothing was stored. |
 | `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing was stored. |
@@ -11842,7 +11896,6 @@ Unarchiving a document that is not archived answers `200` with zero counts.
 | `404` | `document_not_found` | No such document. Do not retry. |
 | `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
 | `422` | validation list | `doc_id` is not a UUID. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Nothing changed; retry later. |
 
 ### Example
 
@@ -11861,6 +11914,141 @@ print(restored.claims_restored, restored.facts_reopened)
 
 `remember documents unarchive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b` prints the
 same result as JSON.
+
+## POST /documents/{doc_id}/forget
+
+Erase one document, every version of it, and everything derived only from it,
+for good.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | The `doc_id` that `POST /ingest` returned, or that a claim, chunk or `GET /documents` names. |
+
+There is no body.
+
+### What forgetting does
+
+When the call returns, the document, its versions, passages and claims are
+gone from every read: `GET /documents`, search, the context operations,
+facts, the graph and SQL queries. Its `doc_id` answers like an id the
+deployment never held, and processing that was still running for it stops.
+
+A background job then erases everything derived from the document: its rows,
+its stored originals and processed files, its corpus folders and the
+navigation that listed it, and the compiled knowledge pages that cited it,
+which are rebuilt without it. Facts and entities another document also
+supports stay, with any wording that came from the forgotten document
+recomputed from what survives; a fact only this document supported is
+deleted. The job looks again after a quiet period and repeats until a pass
+finds nothing left, so something a slow worker wrote in the meantime is
+erased too. Nothing else in the deployment waits for it.
+
+What remains is the forget record: IDs, content hashes and progress, never
+text.
+
+Knowledge pages a person or an agent wrote are never rewritten. While such a
+page still cites the document, the record stays `waiting_for_redaction` and
+lists the page in `blocking_k_paths`; once its owner removes the citation (and
+any quoted text), the forget completes.
+
+There is no undo. The same content can only be ingested again on purpose,
+with [`allow_forgotten`](#adding-forgotten-content-back).
+
+The route starts no pipeline work. The
+background job's model calls (entity profile refreshes and rebuilt compiled
+pages) are recorded as ordinary work.
+
+### Response
+
+`202` with the new [`Forget`](https://remember.dev/docs/reference/result-types#forget) record:
+
+```json
+{
+  "forget_id": "6c1d2e3f-4a5b-4c3d-9e8f-7a6b5c4d3e2f",
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "status": "erasing",
+  "requested_at": "2026-11-24T10:41:07.318Z",
+  "completed_at": null,
+  "blocking_k_paths": [],
+  "last_error": null
+}
+```
+
+A repeat for the same document answers `200` with the same record, also after
+the forget completed, so retrying after a timeout is safe.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document. Do not retry. (Forgetting a document again answers `200` with its record, also after the forget completed.) |
+| `422` | validation list | `doc_id` is not a UUID. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b/forget" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client
+
+memory = Client()
+forget = memory.forget_document(doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b")
+print(forget.forget_id, forget.status)
+```
+
+## GET /forgets
+
+Every forget record of the deployment, oldest first.
+
+### Response
+
+`200` with a [`ForgetList`](https://remember.dev/docs/reference/result-types#forgetlist):
+`{"forgets": [...]}`, each item a [`Forget`](https://remember.dev/docs/reference/result-types#forget).
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/forgets" -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+## GET /forgets/{forget_id}
+
+One forget record and its progress.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `forget_id` | path | UUID | yes | The `forget_id` that `POST /documents/{doc_id}/forget` returned. |
+
+### Response
+
+`200` with a [`Forget`](https://remember.dev/docs/reference/result-types#forget). `status` is:
+
+| Value | Meaning |
+|---|---|
+| `erasing` | The background job is erasing what was derived from the document. A failed pass is retried with backoff for as long as it takes; `last_error` holds the code of the last failure. |
+| `waiting_for_redaction` | Everything is erased except authored knowledge pages that still cite the document; `blocking_k_paths` lists them. |
+| `complete` | Nothing derived only from the document is left; `completed_at` says when. |
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `forget_not_found` | No such forget record. |
+| `422` | validation list | `forget_id` is not a UUID. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/forgets/6c1d2e3f-4a5b-4c3d-9e8f-7a6b5c4d3e2f" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
 
 ## PUT /documents/{doc_id}/versions/{version_id}/effective-periods
 
@@ -11933,7 +12121,7 @@ with a cursor keeps seeing the periods as they were when it started.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
 | `404` | `version_not_found` | The version is not a live version of this document. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version (`version_id`) already declares that start. |
 | `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | The document is `living`. |
@@ -12004,7 +12192,7 @@ paged read that started earlier still sees the periods it started with.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
 | `422` | validation list | `doc_id` is not a UUID. |
 
 ### Example
@@ -12137,7 +12325,7 @@ and read references with
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
 | `404` | `version_not_found` | The version is not a live version of this document. |
 | `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | The body is over 64 MiB. |
 | `422` | `{"code": "invalid_reference_set", "line": 3, "message": "…"}` | A line is not a JSON object, or not a valid reference: a missing or unknown field, a pinned reference without `target.version_key`, an `amends` without `change_date_known`, or a date on another kind. `line` is the first failing line. Nothing was recorded. |
@@ -12208,7 +12396,7 @@ release finds none ([What is not built yet](https://remember.dev/docs/project/no
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
 | `404` | `version_not_found` | The version is not a live version of this document. |
 
 ### Example
@@ -12455,7 +12643,7 @@ document's tags after the change, ordered by name ignoring letter case.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
 | `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing changed. |
 | `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": […]}` | A tag in `add`, `remove` or `set` is not registered; `tags` lists every one. Nothing changed. |
 | `422` | validation list | `set` together with `add` or `remove`, a list over 64 items, an empty or over-long tag, an unknown field, or `doc_id` not a UUID. |
@@ -12611,7 +12799,7 @@ to read the section.
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
 | `422` | validation list | A malformed key, a missing `at`, `from` or `to` for its mode, `to` before `from`, a timestamp without a time zone, or `k` out of range. |
 
 ### Example
@@ -12768,8 +12956,8 @@ instant window has `from` equal to `until` and `until_inclusive: true`.
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
-| `404` | `document_not_found` | No such document, or a hard forget removed it. |
-| `404` | `chunk_not_found` | No such passage, or a hard forget removed its document. |
+| `404` | `document_not_found` | No such document, or it is forgotten. |
+| `404` | `chunk_not_found` | No such passage, or its document is forgotten. |
 | `422` | validation list | Both or neither of `chunk_id` and `doc_id`, `section_key` without `doc_id`, an unknown kind, a bad `time`, `k` out of range, or an unknown field. |
 
 ### Example
@@ -14393,6 +14581,7 @@ None.
     "pipeline_readiness": 1,
     "archive_document": 1,
     "unarchive_document": 1,
+    "forget_document": 1,
     "search_documents": 5,
     "section_history": 1,
     "document_references": 1,
@@ -14411,7 +14600,7 @@ None.
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
 | `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`, plus `openrouter_embedding_provider_only` when the embedding host allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) is set. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
-| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `archive_document` and `unarchive_document` only when archiving is, `search_documents`
+| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `archive_document` and `unarchive_document` only when archiving is, `forget_document` only when forget is, `search_documents`
 only when document search is, and `section_history` and
 `document_references` only when their routes are. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
@@ -15947,6 +16136,31 @@ restored. A document that is not archived answers zero counts.
 | `doc_id` | UUID | The document. |
 | `claims_restored` | integer | Claims whose testimony the archive ended that count as evidence again. |
 | `facts_reopened` | integer | Facts the archive closed that reopened because they have support again. |
+
+### Forget
+
+One forget record, as
+[`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idforget)
+and [`GET /forgets/{forget_id}`](https://remember.dev/docs/reference/http-api/ingest#get-forgetsforget_id)
+return it. It holds IDs and progress only, never content.
+
+| Field | Type | Contents |
+|---|---|---|
+| `forget_id` | UUID | The record's identity. |
+| `doc_id` | UUID | The forgotten document. |
+| `status` | string | `erasing`, `waiting_for_redaction` or `complete`; see [`GET /forgets/{forget_id}`](https://remember.dev/docs/reference/http-api/ingest#get-forgetsforget_id). |
+| `requested_at` | date-time | When the document was forgotten. |
+| `completed_at` | date-time \| null | When nothing derived only from the document was left; `null` until then. |
+| `blocking_k_paths` | array of string | Authored knowledge pages that still cite the document; their owner removes the citation. Empty once none do. |
+| `last_error` | string \| null | The code of the last failed erasure pass, which is retried; `null` after a pass succeeds. |
+
+### ForgetList
+
+What [`GET /forgets`](https://remember.dev/docs/reference/http-api/ingest#get-forgets) returns.
+
+| Field | Type | Contents |
+|---|---|---|
+| `forgets` | array of [`Forget`](#forget) | Every forget record of the deployment, oldest first. |
 
 ## Tags
 
@@ -17840,6 +18054,8 @@ The client is synchronous. There is no async client yet
 | `EffectivePeriodsSet` | model | [Models](#models) |
 | `EffectiveTimeCleared` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
+| `Forget` | model | [Models](#models) |
+| `ForgetList` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
 | `MatchingEdition` | model | [Models](#models) |
 | `NamedReferenceTarget` | model | [Models](#models) |
@@ -17988,6 +18204,7 @@ Client.ingest_file(
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
     tags: Sequence[str] | None = None,
+    allow_forgotten: bool = False,
 ) -> IngestedVersion
 ```
 
@@ -18033,6 +18250,9 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`archive_document`](#archive_document) | `POST /documents/{doc_id}/archive` | `DocumentArchive` |
 | [`unarchive_document`](#unarchive_document) | `POST /documents/{doc_id}/unarchive` | `DocumentUnarchive` |
+| [`forget_document`](#forget_document) | `POST /documents/{doc_id}/forget` | `Forget` |
+| [`list_forgets`](#list_forgets) | `GET /forgets` | `ForgetList` |
+| [`get_forget`](#get_forget) | `GET /forgets/{forget_id}` | `Forget` |
 | [`list_tags`](#list_tags) | `GET /tags` | `TagList` |
 | [`create_tag`](#create_tag) | `POST /tags` | `Tag` |
 | [`update_tag`](#update_tag) | `PATCH /tags/{tag_id}` | `Tag` |
@@ -18103,6 +18323,7 @@ MemoryClient.ingest(
     effective_from: datetime | None = None,
     effective_until: datetime | None = None,
     tags: Sequence[str] | None = None,
+    allow_forgotten: bool = False,
 ) -> IngestedVersion
 ```
 
@@ -18127,6 +18348,7 @@ results.
 | `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
 | `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
 | `tags` | Registered tags, each a name (any letter case) or `tag_id`, added to the document's tags; at most 64. Ingest only adds tags and they never decide whether a version is created. See [Tags](https://remember.dev/docs/reference/http-api/ingest#tags). |
+| `allow_forgotten` | Add back content of a [forgotten](#forget_document) document, for this call only. Without it such content raises `MemoryApiError` 409 with `code` `"document_forgotten"`; while that forget is still erasing, 409 with `code` `"forget_not_complete"`. The content comes back under a new `doc_id`. See [Adding forgotten content back](https://remember.dev/docs/reference/http-api/ingest#adding-forgotten-content-back). |
 
 Raises `ValueError` when:
 
@@ -18409,6 +18631,51 @@ credential, and raises like `archive_document`. See
 restored = memory.unarchive_document(doc_id=version.doc_id)
 print(restored.claims_restored, restored.facts_reopened)
 ```
+
+#### `forget_document`
+
+```python
+MemoryClient.forget_document(*, doc_id: UUID | str) -> Forget
+```
+
+Erases one document, every version of it, and everything derived only from
+it, for good, and returns its [`Forget`](https://remember.dev/docs/reference/result-types#forget)
+record. From the answer on, the document is gone from every read and its
+`doc_id` answers as unknown; what was derived from it is erased in the
+background, which [`get_forget`](#get_forget) follows through `status`. Facts
+other documents also support stay. There is no undo: the content can only be
+ingested again with `allow_forgotten=True`. A repeat returns the same record.
+See [`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idforget).
+
+Raises `ValueError` before sending anything when `doc_id` is not a UUID, and
+`MemoryApiError` with `status_code` 404 and `detail` `"document_not_found"`
+when the document does not exist. Forgetting the same document again returns
+its existing record, also after the forget completed.
+
+```python
+forget = memory.forget_document(doc_id=version.doc_id)
+print(forget.forget_id, forget.status)  # ... "erasing"
+```
+
+#### `list_forgets`
+
+```python
+MemoryClient.list_forgets() -> ForgetList
+```
+
+Every forget record of the deployment, oldest first, as a
+[`ForgetList`](https://remember.dev/docs/reference/result-types#forgetlist).
+
+#### `get_forget`
+
+```python
+MemoryClient.get_forget(*, forget_id: UUID | str) -> Forget
+```
+
+One forget record. `status` is `erasing`, `waiting_for_redaction` (authored
+knowledge pages listed in `blocking_k_paths` still cite the document) or
+`complete`. Raises `MemoryApiError` with `status_code` 404 for an unknown
+`forget_id`.
 
 ### Tags
 
@@ -19305,6 +19572,7 @@ models below are Pydantic models (frozen) unless noted.
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
 | `DocumentArchive` | The result of `archive_document`: `doc_id`, `archived_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
 | `DocumentUnarchive` | The result of `unarchive_document`: `doc_id`, `claims_restored`, `facts_reopened`. |
+| `Forget`, `ForgetList` | One forget record (`forget_id`, `doc_id`, `status`, `requested_at`, `completed_at`, `blocking_k_paths`, `last_error`), and the result of `list_forgets` (`forgets`). |
 | `Tag`, `TagList`, `DocumentTags` | One registered tag (`tag_id`, `name`, `description`, `created_at`, `updated_at`), the result of `list_tags` (`tags`), and the result of `update_document_tags` (`doc_id`, `tags`). |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
@@ -19488,6 +19756,8 @@ objects and arrays, with validated defaults.
 | `clearEffectiveTime` | `EffectiveTimeCleared` |
 | `archiveDocument` | `DocumentArchive` |
 | `unarchiveDocument` | `DocumentUnarchive` |
+| `forgetDocument`, `getForget` | `Forget` |
+| `listForgets` | `ForgetList` |
 | `listTags` | `TagList` |
 | `createTag`, `updateTag`, `deleteTag` | `Tag` |
 | `updateDocumentTags` | `DocumentTags` |
@@ -19502,7 +19772,7 @@ transport is never closed by the SDK.
 
 The complete schema-derived model and support-type vocabulary is:
 
-`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentArchive`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTagFilter`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentUnarchive`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentArchive`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTagFilter`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentUnarchive`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Forget`, `ForgetList`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
 Schema-owned public models have `Input` variants for inputs; connection and issuer
 types expose the SDK support contracts. CLI credential-response types are data
 contracts only and do not add login or key-writing operations to this package.
@@ -19519,6 +19789,15 @@ is the immutable caller name for an edition. `effectiveFrom` and optional
 use `setEffectivePeriods` to replace declarations or `clearEffectiveTime` to
 leave declared effective time. An empty period set retracts that version's
 periods while retaining the document's declared effective-time mode.
+`allowForgotten: true` adds back content of a forgotten document for that one
+call (see [Adding forgotten content back](https://remember.dev/docs/reference/http-api/ingest#adding-forgotten-content-back));
+without it such content is refused with `MemoryApiError` code
+`document_forgotten`, and while that forget is still erasing with
+`forget_not_complete`.
+
+`forgetDocument({docId})` erases a document for good and returns its `Forget`
+record; `listForgets()` and `getForget({forgetId})` follow the erasure. See
+[`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idforget).
 
 Readiness polling starts immediately, including after `created: false` receipts.
 Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
@@ -19780,7 +20059,8 @@ standalone tool; `uvx remember …` runs it without installing.
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
-| | [`documents`](#remember-documents) | List and search documents, archive or unarchive one, or change its tags. |
+| | [`documents`](#remember-documents) | List and search documents, archive, unarchive or forget one, or change its tags. |
+| | [`forget`](#remember-forget) | List forget records, or show one. |
 | | [`tags`](#remember-tags) | List, register, change and delete document tags. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
@@ -19858,7 +20138,7 @@ remember ingest FILE [--filename NAME] [--mime MIME] [--title TITLE]
                      [--source-version-ref REF]
                      [--version-key KEY]
                      [--effective-from ISO8601 [--effective-until ISO8601]]
-                     [--tag TAG]...
+                     [--tag TAG]... [--allow-forgotten]
                      [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
@@ -19885,6 +20165,7 @@ document; nothing is processed again.
 | `--effective-from` | none | When this version's text comes into force (included), as an ISO 8601 timestamp with a UTC offset of zero. Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
 | `--effective-until` | none | When it stops being in force (excluded), later than `--effective-from`. Omitted: until the next declared start. |
 | `--tag` | none | A registered tag, by name or id, to add to the document. Repeat it for several. Ingest only adds tags; see [Tags](https://remember.dev/docs/reference/http-api/ingest#tags). |
+| `--allow-forgotten` | off | Add back content of a [forgotten](#remember-forget) document. Without it such a file is refused (`error: API 409: …document_forgotten…`); with it, it is accepted once that forget is no longer erasing and comes back under a new `doc_id`. See [Adding forgotten content back](https://remember.dev/docs/reference/http-api/ingest#adding-forgotten-content-back). |
 
 What a key and a period do: [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force).
 
@@ -19933,6 +20214,7 @@ remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS
                           [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents archive DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents unarchive DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents forget DOC_ID [--yes] [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID [--add TAG]... [--remove TAG]...
                               [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID --set TAG [--set TAG]...
@@ -19998,6 +20280,28 @@ remember documents archive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
 remember documents unarchive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
 ```
 
+`forget` erases one document, every version of it, and everything derived
+only from it, for good. It first asks for confirmation on the terminal; any
+answer but `y` or `yes` forgets nothing and exits with status 1, and `--yes`
+skips the question. It prints the forget record, in the shape of
+[`Forget`](https://remember.dev/docs/reference/result-types#forget):
+
+```json
+{"forget_id":"…","doc_id":"…","status":"erasing","requested_at":"2026-11-24T10:41:07.318000Z","completed_at":null,"blocking_k_paths":[],"last_error":null}
+```
+
+The document is gone from every read at once; what was derived from it is
+erased in the background, which [`remember forget status`](#remember-forget)
+follows. There is no undo: the content can only be ingested again with
+`remember ingest --allow-forgotten`. Forgetting the same document again prints
+its existing record. A document that does not exist prints
+`error: API 404: document_not_found` and exits with status 1. See
+[`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idforget).
+
+```bash
+remember documents forget a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --yes
+```
+
 `tag` changes the tags of one document in one step and prints its tags
 afterwards, in the shape of
 [`DocumentTags`](https://remember.dev/docs/reference/result-types#documenttags). `--add` and
@@ -20014,6 +20318,24 @@ remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --add kind:decision 
 ```
 ```json
 {"doc_id":"a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b","tags":["kind:decision","project:billing-migration"]}
+```
+
+### `remember forget`
+
+```text
+remember forget list [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember forget status FORGET_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+```
+
+`list` prints every forget record of the deployment, oldest first, as a
+[`ForgetList`](https://remember.dev/docs/reference/result-types#forgetlist). `status` prints one
+[`Forget`](https://remember.dev/docs/reference/result-types#forget) record: `status` is `erasing`,
+`waiting_for_redaction` (the authored knowledge pages in `blocking_k_paths`
+still cite the document) or `complete`. An unknown `FORGET_ID` prints
+`error: API 404: forget_not_found` and exits with status 1.
+
+```bash
+remember forget status 6c1d2e3f-4a5b-4c3d-9e8f-7a6b5c4d3e2f | jq -r .status
 ```
 
 ### `remember tags`
@@ -20174,7 +20496,7 @@ command.
 `--transport http` serves the same tools over HTTP at
 `http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
 `--read-only` removes the tools that change memory: `ingest`,
-`archive_document`, `unarchive_document` and the tag tools that change tags. `--layers` narrows every read of the session to those
+`archive_document`, `unarchive_document`, `forget_document` and the tag tools that change tags. `--layers` narrows every read of the session to those
 [processing layers](https://remember.dev/docs/concepts/retrieval#narrowing-a-read-to-layers) and
 leaves out the tools that read only other layers.
 
@@ -20414,8 +20736,8 @@ then environment variables, then the credential file. See [CLI: How the CLI find
 [Over HTTP](#over-http).
 
 `--read-only` leaves out the tools that change memory (`ingest`,
-`archive_document`, `unarchive_document` and the four tag tools that change
-tags), and refuses calls to them with the error `read_only`.
+`archive_document`, `unarchive_document`, `forget_document` and the four tag
+tools that change tags), and refuses calls to them with the error `read_only`.
 `pipeline_readiness` and `search_documents` only read, so they stay.
 
 ### Protocol
@@ -20448,7 +20770,7 @@ Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
 1. `ingest`, `pipeline_readiness`, `archive_document`, `unarchive_document`,
-   `search_documents`,
+   `forget_document`, `search_documents`,
    `section_history`, `document_references`, and the five tag tools
    `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
    `update_document_tags` (with `--read-only`, only `pipeline_readiness`,
@@ -20474,10 +20796,10 @@ needs a missing layer fails with `layer_unavailable`.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
-`ingest`, `archive_document`, `unarchive_document` and the four tag tools
-that change tags, and `destructiveHint` is `true` only for `delete_tag`.
-Archiving is not destructive: the document stays as history and
-`unarchive_document` undoes it.
+`ingest`, `archive_document`, `unarchive_document`, `forget_document` and the
+four tag tools that change tags, and `destructiveHint` is `true` only for
+`forget_document` and `delete_tag`. Archiving is not destructive: the document
+stays as history and `unarchive_document` undoes it.
 
 The server serves one deployment, so no tool takes a `project` argument; a
 call that passes one is refused with `project_routing_unavailable`. A call to
@@ -20561,8 +20883,9 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
 | `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
 | `tags` | array of strings | no | At most 64, no repeats, each 1–128 characters after Unicode NFC. Registered tags, by name (any letter case) or `tag_id`, to add to the document. Ingest never removes a tag. An unregistered tag refuses the whole call with `unknown_tag` before anything is stored. See [`list_tags`](#list_tags). |
+| `allow_forgotten` | boolean | no | Default `false`. Add back content of a [forgotten](#forget_document) document. Without it such content is refused with `document_forgotten`; with it, it is refused with `forget_not_complete` while that forget is still erasing, and otherwise comes back under a new `doc_id`. The tool description tells the agent to set it only after the user confirms. |
 
-`ingest` is at tool version 3; the `tags` argument raised it from 2.
+`ingest` is at tool version 4; the `allow_forgotten` argument raised it from 3.
 Unknown keys are refused. What a key and a period do:
 [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force). The input schema enforces the one-body rule with
 `oneOf`.
@@ -20696,6 +21019,31 @@ archived returns zero counts. The tool description tells the agent to use it
 only when the user says an archived document holds again. The token needs
 `write` scope. See
 [`POST /documents/{doc_id}/unarchive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idunarchive).
+
+### `forget_document`
+
+Erases one document, every version of it, and everything derived only from
+it, for good. The document leaves every read at once and its `doc_id` answers
+as unknown; what was derived from it is erased in the background. Facts other
+documents also support stay, reworded from what survives. There is no undo:
+the content can only be ingested again with `allow_forgotten`.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID, as `ingest` returned it or a result cites it. |
+| `confirm` | `true` | yes | Must be `true`. Without it the call is refused with `confirmation_required` and nothing is forgotten. No other arguments are accepted. |
+
+The result is the [`Forget`](https://remember.dev/docs/reference/result-types#forget) record:
+`forget_id`, `doc_id`, `status` (`erasing`, then `waiting_for_redaction`
+while an authored knowledge page still cites the document, then `complete`),
+`requested_at`, `completed_at`, `blocking_k_paths` and `last_error`. A repeat
+returns the same record.
+
+The tool description tells the agent to forget only when the user asks to
+forget or erase a specific document, to confirm with the user first, naming
+the document, and only then to pass `confirm: true`; never to tidy up or to
+correct a fact. See
+[`POST /documents/{doc_id}/forget`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idforget).
 
 ### `search_documents`
 
@@ -21030,7 +21378,10 @@ them. Every tool returns the same JSON:
 | `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
-| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`: no such document. `section_history`, `document_references`, `update_document_tags`: no such document, or a hard forget removed it. |
+| `confirmation_required` | `null` | no | `forget_document` without `confirm: true`. Nothing was forgotten. |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`, `forget_document`: no such document (forgetting a forgotten document again returns its existing record). `section_history`, `document_references`, `update_document_tags`: no such document, or it is forgotten. |
+| `document_forgotten` | 409 | no | `ingest` of content that belongs to a forgotten document, without `allow_forgotten`. |
+| `forget_not_complete` | 409 | no | `ingest` with `allow_forgotten` while the matching forget is still erasing. |
 | `unknown_tag` | 422, or 404 for `update_tag` and `delete_tag` | no | A tag the call names is not registered. `detail` names every one. |
 | `conflict` | 409 | no | `create_tag` or `update_tag`: a tag with that name, in any letter case, is already registered. |
 | `tag_limit_exceeded` | 409 | no | The deployment would have more than 10,000 tags, or the document more than 64. Nothing changed. |
@@ -21565,7 +21916,8 @@ their code in `code`. `wait_for_readiness` raises
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
 | `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `POST /documents/{doc_id}/archive`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](https://remember.dev/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
-| `404` | `document_not_found` | `POST /documents/{doc_id}/archive` or `/unarchive` for a document that does not exist, or a period, reference or section route for a document that does not exist or that a hard forget removed. | Do not retry; check the id with `GET /documents`. |
+| `404` | `document_not_found` | `POST /documents/{doc_id}/archive` or `/unarchive` for a document that does not exist, or a period, reference or section route for a document that does not exist or is forgotten; `POST /documents/{doc_id}/forget` for a document that never existed (forgetting a forgotten document again answers `200` with its record). | Do not retry; check the id with `GET /documents`. |
+| `404` | `forget_not_found` | `GET /forgets/{forget_id}` for a forget record that does not exist. | Check the id with `GET /forgets`. |
 | `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
 | `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |
 | `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `PATCH` or `DELETE /tags/{tag_id}` for a tag id that is not registered, or was deleted. | Check the id with `GET /tags`. |
@@ -21573,7 +21925,8 @@ their code in `code`. `wait_for_readiness` raises
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
 | `409` | `{"code": "layer_unavailable", …}` | A read needs a [processing layer](https://remember.dev/docs/concepts/pipeline#processing-layers) (`layer`) the deployment does not process. | Use a read of a served layer, or ask the operator to switch the layer on. |
-| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that belongs to a forgotten document. | Do not retry; the deployment does not take forgotten content back. |
+| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that belongs to a forgotten document. | Do not retry. To add the content back on purpose, send the ingest again with `allow_forgotten=true`. |
+| `409` | `{"code": "forget_not_complete", "forget_id": …}` | `POST /ingest` with `allow_forgotten=true` while the matching forget is still `erasing`. Nothing was stored. | Retry once `GET /forgets/{forget_id}` no longer shows `erasing`. |
 | `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
 | `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
 | `409` | `{"code": "conflict", "message": …}` | `POST /tags` or `PATCH /tags/{tag_id}` with a name another tag already has, in any letter case. | Use the existing tag, or choose another name. |
@@ -21656,7 +22009,7 @@ timeouts, store codes).
 
 The MCP server returns a tool failure as a normal tool result with
 `"isError": true` and one JSON text block. Every tool — `ingest`,
-`pipeline_readiness`, `archive_document`, `unarchive_document`, the assured operations and the SQL
+`pipeline_readiness`, `archive_document`, `unarchive_document`, `forget_document`, the assured operations and the SQL
 query tools — returns the same object:
 
 ```json
@@ -21690,7 +22043,9 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_not_regular_file` | `null` | no | Point path at a regular file, or send text/content_base64. |
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
-| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`: Do not retry. Check the doc_id with the user. (`section_history`, `update_document_tags`: Do not retry. Check the doc_id.) |
+| `confirmation_required` | `null` | no | Ask the user to confirm that this document is to be forgotten for good, then call again with confirm=true. (`forget_document` without `confirm: true`; nothing was forgotten.) |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`, `forget_document`: Do not retry. Check the doc_id with the user. (`section_history`, `update_document_tags`: Do not retry. Check the doc_id.) |
+| `document_forgotten`, `forget_not_complete` | 409 | no | Read the detail; fix the call. Do not retry it unchanged. (`ingest` of forgotten content; see [Adding forgotten content back](https://remember.dev/docs/reference/http-api/ingest#adding-forgotten-content-back).) |
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
@@ -21728,7 +22083,7 @@ See [MCP tools](https://remember.dev/docs/reference/mcp).
 | `structuring` | Being split into sections. |
 | `ready` | Converted and structured. Extraction may still be running; use readiness. |
 | `failed` | Conversion or structuring failed; `error` says why. |
-| `deleted` | Removed by a hard forget. Not listed by `GET /documents`. |
+| `deleted` | Removed by a forget. Not listed by `GET /documents`. |
 
 ### Pipeline stage status
 
@@ -22901,12 +23256,6 @@ absent from the current release; nothing here has a date.
 
 ## Documents
 
-- **Forgetting a document from a client.** The engine can forget (erase) a
-  document, but no HTTP route, SDK method, CLI command or MCP tool requests a
-  forget yet, and `GET /forgets` does not exist. Archiving a document stops the
-  memory believing it but keeps the document, its claims and its stored
-  original as history; there is no delete. A forgotten document's content
-  cannot be ingested again: there is no `allow_forgotten` option yet.
 - **Archiving one version.** You can archive a whole document, not a single
   version of it.
 - **Document filters on fact lookups and SQL functions.** Claim and chunk

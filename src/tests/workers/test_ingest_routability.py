@@ -18,8 +18,10 @@ import mmap
 from pathlib import Path
 import tempfile
 from typing import cast
+from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 import zipfile
 
 import pandas as pd
@@ -287,8 +289,17 @@ class _AllowingAdmission:
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        allow_forgotten: bool = False,
     ) -> None:
         """Permit the attempted observation."""
+
+    def lineage_doc_id(
+        self, *, deployment_id: UUID, source_kind: str, source_ref: str
+    ) -> UUID:
+        """The base derivation: no lineage of this identity was forgotten."""
+        return uuid5(
+            NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
+        )
 
 
 class _CountingStore:

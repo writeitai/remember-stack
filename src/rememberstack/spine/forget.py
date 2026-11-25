@@ -15,8 +15,10 @@ import json
 import re
 from typing import Any
 from typing import Final
+from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -28,6 +30,7 @@ from rememberstack.core.fact_label import deterministic_fact_label
 from rememberstack.model import DocumentForgottenError
 from rememberstack.model import EnqueueWork
 from rememberstack.model import Forget
+from rememberstack.model import ForgetNotCompleteError
 from rememberstack.model import ForgetNotFoundError
 from rememberstack.model import ForgetStatus
 from rememberstack.model import ObjectKey
@@ -44,8 +47,9 @@ _CLEARED_RATIONALE: Final = "Rationale cleared by a forget."
 MAX_SWEEP_ATTEMPTS: Final = 32_767
 """A sweep row's attempt ceiling: a crashed worker's sweep is simply retried."""
 
-UPLOAD_SOURCE_KIND: Final = "upload"
-"""A one-shot upload's lineage is its bytes; the content hash guards it."""
+
+_REPLACEMENT_LINEAGE: Final = uuid5(NAMESPACE_URL, "rememberstack:replacement-lineage")
+"""The namespace of re-added lineages' IDs, disjoint from identity base IDs."""
 
 
 @dataclass(frozen=True)
@@ -179,19 +183,13 @@ class ForgetCatalog:
             .mappings()
             .one()
         )
-        # A one-shot upload's lineage is its bytes (source_ref is the content
-        # hash); an upload with an explicit stable source_ref is an identity.
-        one_shot = (
-            document["source_kind"] == UPLOAD_SOURCE_KIND
-            and connection.execute(
-                text("""SELECT EXISTS (SELECT 1 FROM document_versions
-            WHERE deployment_id = :d AND doc_id = :doc AND content_hash = :ref)"""),
-                {"d": deployment_id, "doc": doc_id, "ref": document["source_ref"]},
-            ).scalar_one()
-        )
+        # Every lineage's identity is guarded, a one-shot upload's included
+        # (its source_ref is its content hash): an upload lineage may also
+        # carry versions a caller sent under the same source_ref, and none of
+        # them may come back unguarded (D159 §3.6).
         identity = (
             None
-            if one_shot or document["source_ref"] is None
+            if document["source_ref"] is None
             else source_identity_hash(
                 deployment_id=deployment_id,
                 source_kind=str(document["source_kind"]),
@@ -254,6 +252,7 @@ class ForgetCatalog:
         source_kind: str,
         source_ref: str,
         content_hash: str,
+        allow_forgotten: bool = False,
     ) -> None:
         """Refuse forgotten content before any bytes are written (D159 §3.6)."""
         with self._engine.connect() as connection:
@@ -263,6 +262,19 @@ class ForgetCatalog:
                 source_kind=source_kind,
                 source_ref=source_ref,
                 content_hash=content_hash,
+                allow_forgotten=allow_forgotten,
+            )
+
+    def lineage_doc_id(
+        self, *, deployment_id: UUID, source_kind: str, source_ref: str
+    ) -> UUID:
+        """The ``doc_id`` E0 gives this identity's lineage (D159 §3.6)."""
+        with self._engine.connect() as connection:
+            return lineage_doc_id_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                source_kind=source_kind,
+                source_ref=source_ref,
             )
 
     def sweep_postgres(self, *, forget: Forget) -> SweepFindings:
@@ -551,32 +563,140 @@ def guard_forgotten_on(
     source_kind: str,
     source_ref: str,
     content_hash: str,
-) -> None:
-    """Raise ``DocumentForgottenError`` when a record guards this identity or hash.
+    allow_forgotten: bool = False,
+) -> tuple[UUID, ...]:
+    """Check the forget records that guard this identity or hash (D159 §3.6).
 
     Called before bytes are written and again at registration under the
     lineage row lock. A record's released hash or identity no longer guards
     (a deliberate re-add); the sweep keys never change.
+
+    Without ``allow_forgotten`` a match raises ``DocumentForgottenError``.
+    With it, a match still ``erasing`` raises ``ForgetNotCompleteError``;
+    otherwise the matching records' IDs are returned for
+    :func:`release_forgotten_on`.
     """
-    identity = (
-        None
-        if source_kind == UPLOAD_SOURCE_KIND and source_ref == content_hash
-        else source_identity_hash(
-            deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
-        )
-    )
-    row = (
+    rows = (
         connection.execute(
             _FORGOTTEN_INGEST,
-            {"d": deployment_id, "identity": identity, "content_hash": content_hash},
+            {
+                "d": deployment_id,
+                "identity": _identity(
+                    deployment_id=deployment_id,
+                    source_kind=source_kind,
+                    source_ref=source_ref,
+                ),
+                "content_hash": content_hash,
+            },
         )
         .mappings()
-        .first()
+        .all()
     )
-    if row is not None:
+    if not rows:
+        return ()
+    if not allow_forgotten:
         raise DocumentForgottenError(
-            forget_id=row["forget_id"], forgotten_at=row["requested_at"]
+            forget_id=rows[0]["forget_id"], forgotten_at=rows[0]["requested_at"]
         )
+    for row in rows:
+        if row["status"] == ForgetStatus.ERASING.value:
+            raise ForgetNotCompleteError(forget_id=row["forget_id"])
+    return tuple(row["forget_id"] for row in rows)
+
+
+def release_forgotten_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    forget_ids: tuple[UUID, ...],
+    source_kind: str,
+    source_ref: str,
+    content_hash: str,
+) -> None:
+    """Note what this re-add matched on the records of its own lineage (D159 §3.6).
+
+    Of the matched records, only those of the lineage being added back (the
+    lineages E0 derived for this identity) are touched: the content hash goes
+    into ``released_hashes`` where the record holds it, and
+    ``identity_released`` is set where the identity matched. Another forget
+    that happens to share the bytes keeps its guard. The records' sweep keys
+    (``version_ids``, ``content_hashes``, the identity) never change, so a
+    later sweep or ``forget-reapply`` works as before.
+    """
+    if not forget_ids:
+        return
+    forgotten = _lineage_ids(
+        connection=connection,
+        deployment_id=deployment_id,
+        source_kind=source_kind,
+        source_ref=source_ref,
+    )[:-1]
+    if forgotten:
+        connection.execute(
+            _RELEASE_FORGOTTEN,
+            {
+                "d": deployment_id,
+                "ids": list(forget_ids),
+                "lineages": list(forgotten),
+                "identity": _identity(
+                    deployment_id=deployment_id,
+                    source_kind=source_kind,
+                    source_ref=source_ref,
+                ),
+                "content_hash": content_hash,
+            },
+        )
+
+
+def lineage_doc_id_on(
+    *, connection: Connection, deployment_id: UUID, source_kind: str, source_ref: str
+) -> UUID:
+    """The ``doc_id`` E0 derives for an identity's lineage (D159 §3.6).
+
+    Until a lineage of the identity is forgotten it is the identity's base
+    ID. A replacement lineage's ID is derived from the base ID and the number
+    of forget records of the identity's lineages, in a namespace of its own
+    so it never equals another identity's base ID. It therefore shares
+    nothing keyed by the ID (rows, object prefix, corpus suffix, K
+    citations) with a forgotten lineage. Records are never deleted, so the
+    count, and the ID, are stable.
+    """
+    return _lineage_ids(
+        connection=connection,
+        deployment_id=deployment_id,
+        source_kind=source_kind,
+        source_ref=source_ref,
+    )[-1]
+
+
+def _lineage_ids(
+    *, connection: Connection, deployment_id: UUID, source_kind: str, source_ref: str
+) -> tuple[UUID, ...]:
+    """The identity's forgotten lineage IDs, oldest first, then its current one.
+
+    Each forgotten lineage was itself derived this way, so walking the
+    derivation finds exactly the identity's forget records.
+    """
+    base = uuid5(
+        NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
+    )
+    lineages = [base]
+    while (
+        connection.execute(
+            text("SELECT 1 FROM forgets WHERE deployment_id = :d AND doc_id = :doc"),
+            {"d": deployment_id, "doc": lineages[-1]},
+        ).first()
+        is not None
+    ):
+        lineages.append(uuid5(_REPLACEMENT_LINEAGE, f"{base}:{len(lineages)}"))
+    return tuple(lineages)
+
+
+def _identity(*, deployment_id: UUID, source_kind: str, source_ref: str) -> str:
+    """The request's source-identity hash, a one-shot upload's included."""
+    return source_identity_hash(
+        deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
+    )
 
 
 _LINEAGE_ORIGINAL = re.compile(r"(?P<owner>[0-9a-f-]{36})/(?P<hash>[0-9a-f]{64})/.+")
@@ -1128,7 +1248,7 @@ _INSERT_RECORD = text(
 
 _FORGOTTEN_INGEST = text(
     """
-    SELECT forget_id, requested_at
+    SELECT forget_id, requested_at, status::text AS status
     FROM forgets
     WHERE deployment_id = :d
       AND (
@@ -1138,7 +1258,22 @@ _FORGOTTEN_INGEST = text(
             AND NOT :content_hash = ANY(released_hashes))
       )
     ORDER BY requested_at, forget_id
-    LIMIT 1
+    """
+)
+
+_RELEASE_FORGOTTEN = text(
+    """
+    UPDATE forgets
+    SET released_hashes = CASE
+            WHEN :content_hash = ANY(content_hashes)
+                 AND NOT :content_hash = ANY(released_hashes)
+            THEN array_append(released_hashes, CAST(:content_hash AS text))
+            ELSE released_hashes END,
+        identity_released = identity_released
+            OR (CAST(:identity AS text) IS NOT NULL
+                AND source_identity_hash IS NOT DISTINCT FROM :identity)
+    WHERE deployment_id = :d AND forget_id = ANY(CAST(:ids AS uuid[]))
+      AND doc_id = ANY(CAST(:lineages AS uuid[]))
     """
 )
 

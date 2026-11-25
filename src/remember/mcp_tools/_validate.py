@@ -10,6 +10,7 @@ from uuid import UUID
 from remember.mcp_tools._definitions import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools._definitions import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools._definitions import DOCUMENT_REFERENCES_TOOL_NAME
+from remember.mcp_tools._definitions import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
@@ -23,6 +24,7 @@ from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._memory import load_mcp_memory_settings
 from remember.mcp_tools._memory import McpMemorySettings
 from remember.mcp_tools._memory import parse_doc_id_arguments
+from remember.mcp_tools._memory import parse_forget_document_arguments
 from remember.mcp_tools._memory import parse_ingest_arguments
 from remember.mcp_tools._memory import parse_pipeline_readiness_arguments
 from remember.mcp_tools._memory import reject_unknown_keys
@@ -85,7 +87,8 @@ def validate_arguments(
     ``path`` only when ``path_ingest`` is set and the operator configured
     allowlisted roots — and refuses an empty body or one over
     ``max_body_bytes``. ``pipeline_readiness`` returns ``version_ids`` and a
-    ``require`` model; the archive tools return ``doc_id`` as a UUID;
+    ``require`` model; the archive tools and ``forget_document`` (which
+    also requires ``confirm: true``) return ``doc_id`` as a UUID;
     ``search_documents``, ``section_history`` and ``document_references``
     return their ``request`` model; the tag tools return their parsed
     ``tag``/``doc_id``/``query`` and ``request`` model.
@@ -112,6 +115,8 @@ def validate_arguments(
         return {"version_ids": version_ids, "require": require}
     if name in ARCHIVE_TOOL_NAMES:
         return {"doc_id": parse_doc_id_arguments(arguments=arguments)}
+    if name == FORGET_DOCUMENT_TOOL_NAME:
+        return {"doc_id": parse_forget_document_arguments(arguments=arguments)}
     if name == SEARCH_DOCUMENTS_TOOL_NAME:
         return {"request": parse_search_documents_arguments(arguments=arguments)}
     if name == SECTION_HISTORY_TOOL_NAME:
