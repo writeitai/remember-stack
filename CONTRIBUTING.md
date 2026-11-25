@@ -44,6 +44,40 @@ after installing locked dependencies with `node scripts/npm.mjs ci`. The
 TypeScript client workflow runs `node scripts/npm.mjs run check:generated`
 to check both the engine export and SDK artifacts for drift.
 
+The same workflow runs `uv run --locked python scripts/check_client_api.py`.
+It resolves the tagged engine inventory against recorded Python and TypeScript
+requests, real `remember` commands, and the shared MCP catalogue. CLI and MCP
+cases invoke the normal entry points using offline HTTP success and refusal
+fixtures. The checker validates observed parameters, bodies and successful
+replies against the fresh OpenAPI schemas. `check:parity` regenerates the SDK
+fixtures in memory, and the Node suite replays them against the TypeScript client.
+
+The per-operation fingerprints in `scripts/client_api_contract.json` include
+parameters, request body, success and error responses, security and referenced
+schemas. If a route or shape changes, review the affected clients and extend the
+behavior cases, regenerate the applicable artifacts, then refresh the fingerprints
+with `uv run --locked python scripts/check_client_api.py --write`.
+
+The exclusions are enumerated in `scripts/check_client_api.py`:
+
+- The guarded export covers the supported client API, including client diagnostics.
+  Process liveness, the optional operator connector API and cost export are outside
+  the inventory. The SDK's optional connector methods retain their separate
+  conformance cases.
+- Both SDKs, the CLI and MCP use the GET adjacent-chunks route for bounded windows.
+  The equivalent POST form is available through HTTP.
+- Fine-grained entity, claim, source and graph retrieval has typed SDK methods.
+  CLI and MCP offer assured operations and open query for these workflows.
+- The CLI uses `doctor` for deployment connectivity and version information.
+  Structured layer and per-ingest readiness diagnostics are SDK features. CLI
+  users can query section and reference history through the query space. Typed
+  history and reference requests and effective-period maintenance use the SDK.
+- MCP uses its own `tools/list` for discovery. It provides readiness, document
+  search with filter-only browsing, section history and document references.
+  Host diagnostics, direct list/forget inventory routes, version-specific
+  reference maintenance and effective-period maintenance use CLI or SDK
+  workflows as enumerated in the checker.
+
 ## Object-store integration tests
 
 D155's object operations run the same contract against local files and **real
