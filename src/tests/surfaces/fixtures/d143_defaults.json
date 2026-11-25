@@ -16223,7 +16223,7 @@
     ],
     [
       "adjudicate_observations",
-      "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:d123-context-refs-2:both-lists-1:t4-format-1:nested-fields-1:relation-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1:obs-adjudicator-2026.09d:concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:target-discipline-1:rej-feedback-1"
+      "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:mutable-window-1:assertion-clarity-3:d123-context-refs-2:both-lists-1:t4-format-1:nested-fields-1:relation-adjudicator-2026.09a:jev-choice-match-3:obs-adjudicator-2026.09a:jev-choice-match-3"
     ],
     [
       "adjudicate_supersession",

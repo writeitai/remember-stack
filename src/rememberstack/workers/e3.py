@@ -188,7 +188,7 @@ class E3Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_E3_")
 
-    normalize_model: str = Field(default="openai/gpt-5.6-luna")
+    normalize_model: str = Field(default="openai/gpt-6-luna")
 
 
 class NormalizeRelationsHandler:

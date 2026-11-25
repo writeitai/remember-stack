@@ -263,7 +263,7 @@ def test_exhausted_primary_admission_rejection_uses_one_native_backup(
         return httpx.Response(200, json=_body())
 
     primary = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="primary-test"),
+        settings=TypeSafeSettings(route="typesafe", api_key="primary-test"),
         client=httpx.Client(transport=httpx.MockTransport(primary_request)),
     )
     backup = _native(transport=httpx.MockTransport(backup_request))
@@ -324,7 +324,7 @@ def test_backup_never_masks_uncertainty_configuration_or_accounting(
         pytest.fail("native backup was not authorized by this primary result")
 
     primary = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="primary-test"),
+        settings=TypeSafeSettings(route="typesafe", api_key="primary-test"),
         client=httpx.Client(transport=httpx.MockTransport(primary_request)),
     )
     backup = _native(transport=httpx.MockTransport(forbidden_backup))
@@ -368,10 +368,12 @@ def test_backup_is_opt_in_and_requires_its_own_key(
     """An OpenRouter key or successful Jev configuration cannot imply native access."""
     monkeypatch.delenv("REMEMBERSTACK_OPENAI_DECISIONS_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    assert TypeSafeSettings(api_key="primary").backup == "none"
+    assert TypeSafeSettings(route="typesafe", api_key="primary").backup == "none"
     with pytest.raises(ValueError, match="DECISIONS_API_KEY"):
         build_systemone_provider(
-            settings=TypeSafeSettings(api_key="primary", backup="openai_decisions")
+            settings=TypeSafeSettings(
+                route="typesafe", api_key="primary", backup="openai_decisions"
+            )
         )
 
 
@@ -394,7 +396,7 @@ def test_connection_failure_can_use_backup_but_not_a_read_timeout(
         return httpx.Response(200, json=_body())
 
     primary = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="primary-test"),
+        settings=TypeSafeSettings(route="typesafe", api_key="primary-test"),
         client=httpx.Client(transport=httpx.MockTransport(disconnected)),
     )
     backup = _native(transport=httpx.MockTransport(backup_request))
@@ -473,7 +475,7 @@ def test_ambiguous_primary_attempt_cannot_be_overridden_by_clean_later_failure(
         return httpx.Response(529, json={"error": "overloaded"})
 
     primary = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="primary-test"),
+        settings=TypeSafeSettings(route="typesafe", api_key="primary-test"),
         client=httpx.Client(transport=httpx.MockTransport(primary_request)),
     )
     backup = _native(

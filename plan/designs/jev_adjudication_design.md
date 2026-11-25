@@ -3,8 +3,8 @@
 **Status:** accepted 2026-09-17, binding when merged.
 **Scope:** Fact and observation adjudication in RememberStack (`FactAdjudicator`,
 D118/D121/v38). Providing a dedicated, alternate adjudication engine powered by
-TypeSafe AI's System One model (`jev-latest`) alongside the default generative
-prompt baseline.
+TypeSafe AI's System One model (`jev-latest`), the default engine, alongside the
+generative prompt engine.
 
 ---
 
@@ -47,8 +47,8 @@ at ingestion time, and periodic multi-assertion consolidation.
   They are not a silent partial subset; they are the defined scope boundary for
   streaming placement.
 
-The generative prompt engine remains the default baseline. The engine selection
-is controlled by environment variable `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`
+Jev is the default engine (owner decision, 2026-11-25); the generative prompt
+engine remains selectable. The engine selection is controlled by environment variable `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`
 (or `REMEMBERSTACK_FACT_ENGINE`).
 
 ---
@@ -134,9 +134,9 @@ OpenRouter serves a TypeSafe-compatible System One endpoint,
 (`model`, `state`, `questions`) and returns the same response (`model`,
 `answers`, `usage`). `TypeSafeSettings.route` selects who serves Jev:
 
-- `typesafe` (default) calls TypeSafe's own API with `TypeSafeSettings.api_key`
+- `typesafe` calls TypeSafe's own API with `TypeSafeSettings.api_key`
   and `base_url`, sends no `provider` field, and prices usage locally (§5D).
-- `openrouter` builds the client from the **deployment's** `OpenRouterSettings`
+- `openrouter` (default, so a self-hoster needs only an OpenRouter key) builds the client from the **deployment's** `OpenRouterSettings`
   (the `EngineSettings.model_provider` the profile was built from): its
   `api_key`, `base_url` and `zdr`. `TypeSafeSettings.api_key` and `base_url`
   are ignored. A host running many deployments in one process therefore bills
@@ -207,8 +207,8 @@ sibling `TypeSafeSettings` class:
 
 | Setting | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `model` | `str` | `"openai/gpt-5.6-luna"` | Model identifier for the default generative prompt engine. Env: `REMEMBERSTACK_FACT_MODEL`. |
-| `engine` | `Literal["prompt", "jev"]` | `"prompt"` | Selected adjudication engine. Controlled via `validation_alias=AliasChoices("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "REMEMBERSTACK_FACT_ENGINE", "engine")`. |
+| `model` | `str` | `"openai/gpt-6-luna"` | Model identifier for the generative prompt engine. Env: `REMEMBERSTACK_FACT_MODEL`. |
+| `engine` | `Literal["prompt", "jev"]` | `"jev"` | Selected adjudication engine. Controlled via `validation_alias=AliasChoices("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "REMEMBERSTACK_FACT_ENGINE", "engine")`. |
 | `confidence_floor` | `float` | `0.75` | Minimum confidence score ($0.0$ to $1.0$). Shared across both prompt and Jev engines. Match choices below this floor fail-safe to `NEW`. |
 
 ### `TypeSafeSettings` (`REMEMBERSTACK_TYPESAFE_` prefix, `extra="ignore"`)
@@ -218,7 +218,7 @@ sibling `TypeSafeSettings` class:
 | `api_key` | `str \| None` | `None` | Authentication bearer token. Plain string matching repo conventions (`OpenRouterSettings.api_key`). Required when `engine="jev"` on the `typesafe` route; the `openrouter` route uses the deployment's OpenRouter key. |
 | `model` | `str` | `"jev-latest"` | Model identifier. Note: `jev-latest` is an unpinned floating tag pointing to TypeSafe's flagship System One model. |
 | `base_url` | `str` | `"https://api.typesafe.ai/v1"` | API base URL. Ignored on the `openrouter` route. |
-| `route` | `Literal["typesafe", "openrouter"]` | `"typesafe"` | Who serves System One (see *System One through OpenRouter*). Env: `REMEMBERSTACK_TYPESAFE_ROUTE`. |
+| `route` | `Literal["typesafe", "openrouter"]` | `"openrouter"` | Who serves System One (see *System One through OpenRouter*). Env: `REMEMBERSTACK_TYPESAFE_ROUTE`. |
 | `timeout_s` | `float` | `30.0` | Client HTTP timeout in seconds (matching `timeout_s` convention). |
 | `fallback_to_prompt` | `bool` | `False` | When true, provider transport/network errors (HTTP 5xx, timeouts after retries) fall back to the generative prompt adjudicator. Sub-floor confidence does NOT fall back. |
 

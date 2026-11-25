@@ -25,14 +25,14 @@ unset.
 
 | Seat | Variable | Default | What it does |
 |---|---|---|---|
-| Structure fallback | `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-5.6-luna` | Proposes section anchors when a document's own headings do not give a usable outline. A document whose headings pass the structure checks never reaches this seat. |
-| Skeleton check | `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `z-ai/glm-4.7-flash` | Checks a proposed section outline, independently of the model that proposed it. |
-| Section role | `REMEMBERSTACK_ROLE_MODEL` | `z-ai/glm-4.7-flash` | Classifies what each section is for, from its title. |
-| Section summary | `REMEMBERSTACK_SUMMARY_MODEL` | `z-ai/glm-4.7-flash` | Writes the short summary of each section. |
-| Claim extraction | `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-5.6-luna` | Selects the sentences that state something and turns them into claims. Used by both the `extract_claims` and `ground_claims` workers. |
-| Relation normalisation | `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-5.6-luna` | Turns claims into relations between entities. |
-| Entity resolution | `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-5.6-luna` | Decides between candidate entities when the deterministic name matching cannot. |
-| Fact adjudication | `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-5.6-luna` | Decides whether a new statement confirms, contradicts or replaces a fact the memory holds. |
+| Structure fallback | `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-6-luna` | Proposes section anchors when a document's own headings do not give a usable outline. A document whose headings pass the structure checks never reaches this seat. |
+| Skeleton check | `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `openai/gpt-6-luna` | Checks a proposed section outline in a separate call from the one that proposed it. |
+| Section role | `REMEMBERSTACK_ROLE_MODEL` | `openai/gpt-6-luna` | Classifies what each section is for, from its title. |
+| Section summary | `REMEMBERSTACK_SUMMARY_MODEL` | `openai/gpt-6-luna` | Writes the short summary of each section. |
+| Claim extraction | `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-6-luna` | Selects the sentences that state something and turns them into claims. Used by both the `extract_claims` and `ground_claims` workers. |
+| Relation normalisation | `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-6-luna` | Turns claims into relations between entities. |
+| Entity resolution | `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-6-luna` | Decides between candidate entities when the deterministic name matching cannot. |
+| Fact adjudication (`prompt` engine) | `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-6-luna` | Decides whether a new statement confirms, contradicts or replaces a fact the memory holds, when `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=prompt`. The default `jev` engine uses Jev instead (see below). |
 | Embeddings | `REMEMBERSTACK_P1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Every vector: chunks, claims, facts, entity profiles, and the query text of each search. |
 
 `GET /deployment` reports the models the running deployment is bound to
@@ -49,15 +49,15 @@ settings:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `prompt` | `prompt` asks `REMEMBERSTACK_FACT_MODEL` through OpenRouter. `jev` asks a TypeSafe AI System One model instead. |
+| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `jev` | `jev` asks TypeSafe AI's System One model Jev, through OpenRouter by default. `prompt` asks `REMEMBERSTACK_FACT_MODEL` through OpenRouter instead. |
 | `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | `0.75` | Below this confidence the adjudicator does not replace or contradict anything: the new statement and the existing fact are both kept. |
 
-The `jev` engine needs its own key and settings:
+The `jev` engine has its own settings:
 
 | Variable | Default |
 |---|---|
-| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe`. Set `openrouter` to call Jev through OpenRouter instead (see below). |
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev` on the `typesafe` route; the fact workers refuse to start without it) |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `openrouter`: Jev is called through OpenRouter with your OpenRouter key (see below). Set `typesafe` to call TypeSafe's own API instead. |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required only on the `typesafe` route; the fact workers refuse to start without it there) |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` |
 | `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` |
@@ -66,7 +66,7 @@ The `jev` engine needs its own key and settings:
 ### Jev through OpenRouter
 
 OpenRouter serves a TypeSafe-compatible System One endpoint
-(`POST /api/v1/systemone`). With `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`,
+(`POST /api/v1/systemone`). On the default `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`,
 the `jev` engine calls it with `REMEMBERSTACK_OPENROUTER_API_KEY` and
 `REMEMBERSTACK_OPENROUTER_BASE_URL`, so Jev spend lands on your OpenRouter
 account and no TypeSafe key is needed. `REMEMBERSTACK_TYPESAFE_BASE_URL` and
@@ -79,7 +79,7 @@ With `REMEMBERSTACK_OPENROUTER_ZDR=true`, every Jev call also sends
 it only to endpoints your account or key policy counts as zero data retention:
 TypeSafe's ZDR endpoint, plus Safety Retention endpoints if that policy allows
 them (see below). With ZDR on, the engine
-refuses to start on the default `typesafe` route, because TypeSafe's own API
+refuses to start on the direct `typesafe` route, because TypeSafe's own API
 cannot be held to zero data retention, refuses a
 `REMEMBERSTACK_OPENROUTER_BASE_URL` outside the `https://openrouter.ai` origin
 (the default, `https://openrouter.ai/api/v1`, is fine; `provider.zdr` binds
@@ -110,8 +110,7 @@ The response names `TypeSafe` as the provider for both Jev endpoints, so it
 does not show which one served a call.
 
 ```bash
-REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev
-REMEMBERSTACK_TYPESAFE_ROUTE=openrouter
+# The defaults already select Jev on the openrouter route; ZDR is opt-in.
 REMEMBERSTACK_OPENROUTER_ZDR=true
 ```
 
@@ -172,7 +171,7 @@ documents again.
 
 ## Optional OpenAI Decisions backup for Jev
 
-With `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`, Jev stays primary. Set
+With the `jev` engine, Jev stays primary. Set
 `REMEMBERSTACK_TYPESAFE_BACKUP=openai_decisions` and
 `REMEMBERSTACK_OPENAI_DECISIONS_API_KEY` to permit one native Decisions request
 after exhausted connection-establishment, rate-limit (429), or overload (529)
@@ -256,8 +255,7 @@ guardrail on the API key), which are set per model group: **OpenAI**,
 endpoints count. A Safety Retention endpoint may keep the prompt and response
 of any request, flagged or not, to detect and prevent abuse, and self-serve
 accounts allow it by default. The default OpenAI chat and image-description
-models are in **OpenAI**; Qwen embeddings and the Z.ai chat models are in
-**All other models**; a Google model in any role adds **Google**. No request
+models are in **OpenAI**; Qwen embeddings are in **All other models**; a Google model in any role adds **Google**. No request
 field changes these settings. If you need strict zero retention, set your
 OpenRouter account, or the guardrail on every key the engine uses, to enforce
 ZDR for every group your models fall in, with Safety Retention excluded for
@@ -332,11 +330,10 @@ and the capacity retries above work as before.
 
 Lowering reasoning effort makes extraction faster and cheaper; the comment
 in `.env.example` notes that `none` can reduce adjudication quality and
-that some models reject it. A map lets you turn it off for the small models
-only:
+that some models reject it. A map sets the effort for one model id only:
 
 ```bash
-REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP={"z-ai/glm-4.7-flash":"none","openai/gpt-5.6-luna":"high"}
+REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP={"openai/gpt-6-luna":"high"}
 ```
 
 For debugging, `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR`

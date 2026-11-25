@@ -338,15 +338,14 @@ def test_sentry_environment_defaults_to_deployment_slug(
 def test_compose_forwards_the_dedicated_summary_seat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """D66/D70: Compose and readiness expose the same flash-class binding."""
+    """D66/D70: Compose and readiness expose the same summary binding."""
     compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
     assert (
-        "REMEMBERSTACK_SUMMARY_MODEL:"
-        " ${REMEMBERSTACK_SUMMARY_MODEL:-z-ai/glm-4.7-flash}"
+        "REMEMBERSTACK_SUMMARY_MODEL: ${REMEMBERSTACK_SUMMARY_MODEL:-openai/gpt-6-luna}"
     ) in compose
     monkeypatch.delenv("REMEMBERSTACK_SUMMARY_MODEL", raising=False)
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
-    assert _model_bindings()["section_summary"] == "z-ai/glm-4.7-flash"
+    assert _model_bindings()["section_summary"] == "openai/gpt-6-luna"
 
 
 @pytest.mark.parametrize(
@@ -621,12 +620,13 @@ def test_query_engine_database_budget_does_not_leak_between_instances() -> None:
 
 
 @pytest.mark.parametrize(
-    ("route", "reported"), (("openrouter", "openrouter"), ("", None))
+    ("route", "reported"),
+    (("openrouter", "openrouter"), ("", "openrouter"), ("typesafe", None)),
 )
-def test_model_bindings_report_systemone_route_only_when_opted_in(
+def test_model_bindings_omit_systemone_route_only_on_the_direct_route(
     monkeypatch: pytest.MonkeyPatch, route: str, reported: str | None
 ) -> None:
-    """Direct-TypeSafe deployments keep byte-identical bindings."""
+    """Direct-TypeSafe deployments keep byte-identical bindings; the default is OpenRouter."""
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
     monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "none")

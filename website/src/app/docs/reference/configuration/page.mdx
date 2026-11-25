@@ -220,7 +220,7 @@ transports. Run a small live API check before enabling this default-off backup.
 | `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | Retries of a chat call after HTTP 429, outside the work attempts. |
 | `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | Longest wait before retrying an overloaded provider. |
 | `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | Debug only: keep schema-invalid model answers as files. |
-| `REMEMBERSTACK_TYPESAFE_ROUTE` | `typesafe` | `typesafe`, `openrouter` | Who serves the `jev` fact engine. `openrouter` calls OpenRouter's System One endpoint with the deployment's OpenRouter key, base URL and ZDR setting, and ignores the TypeSafe key and base URL. |
+| `REMEMBERSTACK_TYPESAFE_ROUTE` | `openrouter` | `openrouter`, `typesafe` | Who serves the `jev` fact engine. `openrouter` calls OpenRouter's System One endpoint with the deployment's OpenRouter key, base URL and ZDR setting, and ignores the TypeSafe key and base URL. `typesafe` calls TypeSafe's own API with the TypeSafe key. |
 | `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine on the `typesafe` route. Also read as `TYPESAFE_AI_API_KEY`. |
 | `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | TypeSafe model. |
 | `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | TypeSafe API address. |
@@ -232,19 +232,19 @@ See [Models and providers](/docs/self-hosting/models).
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
-| `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-5.6-luna` | model id | Structure fallback: section anchors when headings are unusable. |
+| `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-6-luna` | model id | Structure fallback: section anchors when headings are unusable. |
 | `REMEMBERSTACK_STRUCTURER_MAX_PROMPT_CHARS` | `200000` | int ≥ 1000 | Largest prompt sent to the structure fallback. |
 | `REMEMBERSTACK_STRUCTURER_MIN_HEADING_DENSITY_PER_10K` | `0.25` | float ≥ 0 | Structure check: minimum headings per 10,000 characters. |
 | `REMEMBERSTACK_STRUCTURER_MAX_OVERSIZED_LEAF_RATIO` | `0.75` | float 0–1 | Structure check: largest share of oversized sections. |
 | `REMEMBERSTACK_STRUCTURER_MIN_BLOCKS_FOR_LLM` | `8` | int ≥ 1 | Accepted for compatibility; not used. |
-| `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `z-ai/glm-4.7-flash` | model id | Checks a proposed section outline. |
-| `REMEMBERSTACK_ROLE_MODEL` | `z-ai/glm-4.7-flash` | model id | Classifies section roles. |
-| `REMEMBERSTACK_SUMMARY_MODEL` | `z-ai/glm-4.7-flash` | model id | Section summaries. |
-| `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-5.6-luna` | model id | Claim selection and extraction. |
-| `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-5.6-luna` | model id | Relation normalisation. |
-| `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | Entity resolution. |
-| `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-5.6-luna` | model id | Fact adjudication with the `prompt` engine. |
-| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `prompt` | `prompt` or `jev` | Fact adjudication engine. Also read as `REMEMBERSTACK_FACT_ENGINE`. |
+| `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `openai/gpt-6-luna` | model id | Checks a proposed section outline. |
+| `REMEMBERSTACK_ROLE_MODEL` | `openai/gpt-6-luna` | model id | Classifies section roles. |
+| `REMEMBERSTACK_SUMMARY_MODEL` | `openai/gpt-6-luna` | model id | Section summaries. |
+| `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-6-luna` | model id | Claim selection and extraction. |
+| `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-6-luna` | model id | Relation normalisation. |
+| `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-6-luna` | model id | Entity resolution. |
+| `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-6-luna` | model id | Fact adjudication with the `prompt` engine. |
+| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `jev` | `jev` or `prompt` | Fact adjudication engine. Also read as `REMEMBERSTACK_FACT_ENGINE`. |
 | `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | Below this, both the new statement and the existing fact are kept. |
 | `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false` | bool | Fall back to `prompt` when a `jev` call fails. Also read as `REMEMBERSTACK_TYPESAFE_FALLBACK_TO_PROMPT`. |
 | `REMEMBERSTACK_P1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id, 1,536-dim output | Every embedding, including search queries. Fixed once anything is embedded. |

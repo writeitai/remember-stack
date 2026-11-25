@@ -906,8 +906,13 @@ def test_runtime_binding_replay_covers_every_readiness_binding(
     from rememberstack.profiles.selfhost import _model_bindings
 
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE")
 
-    assert set(store_backup.MODEL_BINDING_ENVIRONMENT) == set(_model_bindings())
+    # The optional ``systemone_route`` binding is restored through
+    # SYSTEMONE_ROUTE_VARIABLE; it is present on the default OpenRouter route.
+    assert set(store_backup.MODEL_BINDING_ENVIRONMENT) | {"systemone_route"} == set(
+        _model_bindings()
+    )
 
 
 def test_runtime_validation_uses_the_image_revision_stamp(
