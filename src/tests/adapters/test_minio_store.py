@@ -12,6 +12,7 @@ from rememberstack.adapters.selfhost.minio import _GetObjectOutput
 from rememberstack.adapters.selfhost.minio import _HeadObjectOutput
 from rememberstack.adapters.selfhost.minio import _ListObjectsOutput
 from rememberstack.adapters.selfhost.minio import _ListUploadsOutput
+from rememberstack.adapters.selfhost.minio import _ListVersionsOutput
 from rememberstack.adapters.selfhost.minio import _MultipartUpload
 from rememberstack.adapters.selfhost.minio import _UploadedPart
 from rememberstack.core.object_transfer import current_object_transfer
@@ -147,7 +148,7 @@ class _MemoryS3:
         Prefix: str,
         KeyMarker: str = "",
         VersionIdMarker: str = "",
-    ):
+    ) -> _ListVersionsOutput:
         raise AssertionError("unversioned fixture must not enumerate history")
 
     def generate_presigned_url(
@@ -339,6 +340,64 @@ def test_a_folder_marker_that_survives_deletion_fails_the_purge() -> None:
 
     with pytest.raises(RuntimeError, match="doc/"):
         store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),))
+
+
+class _VersionedS3(_MemoryS3):
+    """A versioned bucket: a plain delete leaves the version behind a delete marker."""
+
+    def __init__(self) -> None:
+        """Start with no versions."""
+        super().__init__()
+        self.versions: list[tuple[str, str, bool]] = []
+
+    def get_bucket_versioning(self, *, Bucket: str) -> dict[str, str]:
+        return {"Status": "Enabled"}
+
+    def put_object(self, *, Bucket: str, Key: str, **kwargs: Any) -> object:
+        """Record each write as a version."""
+        self.versions.append((Key, f"v{len(self.versions)}", False))
+        return super().put_object(Bucket=Bucket, Key=Key, **kwargs)
+
+    def delete_object(self, *, Bucket: str, Key: str, VersionId: str = "") -> object:
+        """Delete one version, or hide the key behind a new delete marker."""
+        if VersionId:
+            self.versions = [v for v in self.versions if v[:2] != (Key, VersionId)]
+            return {}
+        self.versions.append((Key, f"m{len(self.versions)}", True))
+        return super().delete_object(Bucket=Bucket, Key=Key)
+
+    def list_object_versions(
+        self,
+        *,
+        Bucket: str,
+        Prefix: str,
+        KeyMarker: str = "",
+        VersionIdMarker: str = "",
+    ) -> _ListVersionsOutput:
+        listed = [v for v in self.versions if v[0].startswith(Prefix)]
+        return {
+            "Versions": [
+                {"Key": key, "VersionId": vid}
+                for key, vid, marker in listed
+                if not marker
+            ],
+            "DeleteMarkers": [
+                {"Key": key, "VersionId": vid} for key, vid, marker in listed if marker
+            ],
+            "IsTruncated": False,
+        }
+
+
+def test_versioned_folder_marker_purge_counts_nothing() -> None:
+    """A marker's old version and a delete marker hold no bytes: the count is 0."""
+    client = _VersionedS3()
+    store = MinIOObjectStore(bucket="corpus", client=client)
+    store.ensure_bucket()
+    client.put_object(Bucket="corpus", Key="doc/", Body=b"", Metadata={})
+
+    assert store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),)) == 0
+    assert client.versions == []
+    store.verify_objects_purged(keys=(), prefixes=(ObjectKey("doc"),))
 
 
 @pytest.mark.parametrize("value", ("/absolute", "safe/../escape"))

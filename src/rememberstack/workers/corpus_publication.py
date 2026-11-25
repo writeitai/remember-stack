@@ -218,6 +218,10 @@ class CorpusPublisher:
             removed += purger.purge_objects(
                 keys=(), prefixes=tuple(ObjectKey(path) for path in sorted(folders))
             )
+        # The navigation rewrite dropped the index of a topic that only this
+        # document filled; a gateway that keeps folders still lists the topic.
+        for parent in sorted(ancestors - {""}, key=lambda name: -name.count("/")):
+            self._store.remove_empty_folder_markers(prefix=parent)
         removed += purger.purge_retained_versions_containing(
             keys=tuple(ObjectKey(path) for path in sorted(navigation)),
             needle=suffix.encode(),
