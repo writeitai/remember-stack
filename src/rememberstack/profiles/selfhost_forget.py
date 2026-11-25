@@ -108,8 +108,9 @@ class _NoKnowledgeStore:
         self._engine = engine
 
     def erase(
-        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...], first: bool
     ) -> KnowledgeErasure:
+        del first
         if drop_artifact_ids:
             with self._engine.connect() as connection:
                 present = connection.execute(

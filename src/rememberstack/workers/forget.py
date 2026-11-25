@@ -56,9 +56,14 @@ class ForgetKnowledge(Protocol):
     """The K step of a sweep (D159 §3.3 step 4) over the composed K store."""
 
     def erase(
-        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...], first: bool
     ) -> KnowledgeErasure:
-        """Delete these compiled pages, rewrite history, report what still cites."""
+        """Delete these compiled pages, rewrite history, report what still cites.
+
+        ``first`` (the first sweep of a series) also drops every compiled page
+        whose generated band references a fact the document touched, shared
+        ones included: its wording may have come from the document.
+        """
         ...
 
     def flag(self, *, forget: Forget, paths: tuple[str, ...]) -> None:
@@ -89,13 +94,20 @@ class ForgetKnowledgeEraser:
         self._repository = repository
 
     def erase(
-        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...], first: bool
     ) -> KnowledgeErasure:
-        """Drop the pending compiled pages and rewrite history that names the document."""
+        """Drop the pending compiled pages and rewrite history that names the document.
+
+        Later sweeps drop only pages naming IDs that no longer exist, so a
+        rebuilt page rendering a surviving shared fact is never dropped again.
+        """
         deployment_id = forget.deployment_id
+        needles = self._catalog.needles(forget=forget)
         return self._repository.erase(
-            needles=self._catalog.needles(forget=forget),
-            page_needles=self._catalog.page_needles(forget=forget),
+            needles=needles,
+            page_needles=needles
+            if first
+            else self._catalog.page_needles(forget=forget),
             compiled=compiled_paths(
                 control_plane=self._control_plane, deployment_id=deployment_id
             ),
@@ -135,7 +147,7 @@ class ForgetKnowledgeEraser:
                 ):
                     self.flag(forget=forget, paths=forget.blocking_k_paths)
                     continue
-                erasure = self.erase(forget=forget, drop_artifact_ids=())
+                erasure = self.erase(forget=forget, drop_artifact_ids=(), first=False)
                 status = self._catalog.redaction_progress(
                     forget=forget, blocking_k_paths=erasure.blocking_paths
                 )
@@ -374,12 +386,13 @@ class ForgetHandler:
             ObjectKey(key)
             for key in sorted(self._catalog.live_originals(forget=forget))
         )
+        keys = tuple(key for key in findings.object_keys if not key.root.endswith("/"))
+        prefixes = (
+            ObjectKey(f"{forget.doc_id}/"),
+            *(key for key in findings.object_keys if key.root.endswith("/")),
+        )
         for purger in self._object_purgers:
-            removed = purger.purge_objects(
-                keys=findings.object_keys,
-                prefixes=(ObjectKey(f"{forget.doc_id}/"),),
-                keep=live,
-            )
+            removed = purger.purge_objects(keys=keys, prefixes=prefixes, keep=live)
             found |= removed > 0
         if findings.fixture_keys:
             # Deployment-wide K plan transcripts: purged, never counted.
@@ -392,9 +405,14 @@ class ForgetHandler:
         if payload.reapply and payload.first:
             # A restored K repository may hold the pages the record names;
             # they are deleted and rebuilt, never kept as owner edits.
-            compiled = self._catalog.collected_artifact_ids(forget=forget)
-            self._catalog.mark_stale(forget=forget, artifact_ids=compiled)
-        erasure = self._knowledge.erase(forget=forget, drop_artifact_ids=compiled)
+            marked = self._catalog.mark_stale(
+                forget=forget,
+                artifact_ids=self._catalog.collected_artifact_ids(forget=forget),
+            )
+            compiled = tuple(sorted({*compiled, *marked}, key=str))
+        erasure = self._knowledge.erase(
+            forget=forget, drop_artifact_ids=compiled, first=payload.first
+        )
         if compiled:
             self._catalog.clear_k_pending(forget=forget, artifact_ids=compiled)
         return found or erasure.removed, erasure.blocking_paths

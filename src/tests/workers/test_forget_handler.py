@@ -78,8 +78,11 @@ class _Catalog:
     def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
         return (_COMPILED_ID,)
 
-    def mark_stale(self, *, forget: Forget, artifact_ids: tuple[UUID, ...]) -> None:
+    def mark_stale(
+        self, *, forget: Forget, artifact_ids: tuple[UUID, ...]
+    ) -> tuple[UUID, ...]:
         self.stale.append(artifact_ids)
+        return artifact_ids
 
     def clear_k_pending(
         self, *, forget: Forget, artifact_ids: tuple[UUID, ...]
@@ -157,7 +160,7 @@ class _Knowledge:
     fail: bool = False
 
     def erase(
-        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...], first: bool
     ) -> KnowledgeErasure:
         if self.fail:
             self.fail = False
@@ -351,3 +354,21 @@ def test_authored_pages_make_the_forget_wait_for_the_k_sync() -> None:
     assert _run(rig, payload) is None
     assert rig.catalog.finished == [("k/authored.md",)]
     assert rig.knowledge.flagged == [("k/authored.md",)]
+
+
+def test_the_record_keeps_content_free_original_locators() -> None:
+    """A stored file name's extension never lands on the forget record."""
+    from rememberstack.spine.forget import original_locator
+
+    other = UUID("59100000-0000-0000-0000-0000000000ff")
+    assert (
+        original_locator(key=f"{_DOC_ID}/{_OWN_HASH}/original.pdf", doc_id=_DOC_ID)
+        is None
+    )
+    assert (
+        original_locator(key=f"{other}/{_OWN_HASH}/original.pdf", doc_id=_DOC_ID)
+        == f"{other}/{_OWN_HASH}/"
+    )
+    assert original_locator(key="uploads/abcdefghijklmnop", doc_id=_DOC_ID) == (
+        "uploads/abcdefghijklmnop"
+    )

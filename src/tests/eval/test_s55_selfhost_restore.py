@@ -91,8 +91,8 @@ class _Catalog:
     def collected_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
         return (_ARTIFACT_ID,)
 
-    def mark_stale(self, **_: object) -> None:
-        return None
+    def mark_stale(self, **_: object) -> tuple[UUID, ...]:
+        return (_ARTIFACT_ID,)
 
     def clear_k_pending(self, **_: object) -> None:
         return None
@@ -124,7 +124,7 @@ class _Knowledge:
         )
 
     def erase(
-        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...]
+        self, *, forget: Forget, drop_artifact_ids: tuple[UUID, ...], first: bool
     ) -> KnowledgeErasure:
         return self.repository.erase(
             needles=(str(forget.doc_id),),

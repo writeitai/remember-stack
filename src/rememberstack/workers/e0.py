@@ -63,6 +63,7 @@ from rememberstack.core import UrlConverter
 from rememberstack.core import UrlPageCountingConverter
 from rememberstack.core import with_content_hashes
 from rememberstack.core.content_detection import detect_content_mime
+from rememberstack.core.content_detection import sniffed_text_mimes
 from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.extraction_eligibility import is_model_free
 from rememberstack.core.extraction_eligibility import is_search_only_text
@@ -71,6 +72,7 @@ from rememberstack.core.file_card import CardConverter
 from rememberstack.core.format_registry import detect_mime
 from rememberstack.core.format_registry import exceeds_reading_limit
 from rememberstack.core.format_registry import family_for_mime
+from rememberstack.core.format_registry import FORMAT_MIMES
 from rememberstack.core.metering import cost_class_for_route
 from rememberstack.core.metering import DOC_SCAN_ALGORITHM_VERSION
 from rememberstack.core.metering import DOC_TEXT_ALGORITHM_VERSION
@@ -186,6 +188,10 @@ representation without model calls (D138 §1)."""
 
 UPLOAD_SOURCE_KIND: Final = "upload"
 """The one-shot upload connector's source kind (D55 lineage identity)."""
+
+_TEXT_DOCUMENT_MIMES: Final = frozenset({FORMAT_MIMES["rtf"], FORMAT_MIMES["por"]})
+"""Text-class bytes whose registry type keeps its own reader: RTF, and SPSS
+Portable (a text encoding of a dataset)."""
 
 _STORED_CHUNK_BYTES: Final = 1 << 20
 """Read size while a stored object is streamed for registration (D147)."""
@@ -649,6 +655,29 @@ class UploadIngestor:
     ) -> str:
         """The MIME E0 stores: byte classes first, registry hints within families."""
         detected = detect_content_mime(content=content, declared_mime=mime)
+        if detected == "application/octet-stream":
+            sniffed = sniffed_text_mimes(content=content)
+            if sniffed:
+                # Text that is not UTF-8 (UTF-16 delimited, 8-bit email): the
+                # name, then the declaration, may pick one of its families;
+                # otherwise it stays unread, never a binary family.
+                for hint in (
+                    detect_mime(
+                        file_name=filename,
+                        declared_mime="",
+                        content=b"\x00",
+                        routed_mimes=self._routable,
+                    ),
+                    detect_mime(
+                        file_name="",
+                        declared_mime=mime,
+                        content=b"\x00",
+                        routed_mimes=self._routable,
+                    ),
+                ):
+                    if hint in sniffed:
+                        return hint
+                return detected
         if detected in {"text/plain", "text/markdown", "application/octet-stream"}:
             routed = detect_mime(
                 file_name=filename,
@@ -671,7 +700,7 @@ class UploadIngestor:
                     "notebook",
                     "html",
                 }
-                or routed == "application/rtf"
+                or routed in _TEXT_DOCUMENT_MIMES
             ):
                 detected = routed
             elif detected == "application/octet-stream" and family in {

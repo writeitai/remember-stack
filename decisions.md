@@ -6424,6 +6424,20 @@ building a managed mount/download service were also rejected. Full contract:
 
 ## D126. Configurable System One Jev fact adjudication engine
 
+**OpenRouter routing clarification, 2026-11-24:** Jev may also be served by
+OpenRouter's TypeSafe-compatible `/systemone` endpoint.
+`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter` builds the client from the
+deployment's OpenRouter settings (key, base URL, ZDR), so a multi-deployment
+host bills each deployment to its own key. With OpenRouter ZDR on, every call
+sends `provider: {zdr: true, data_collection: deny}`, and the direct
+`typesafe` route and the native Decisions backup are both refused when the
+profile is built. Strict zero retention also needs the OpenRouter account or
+key guardrail to exclude Safety Retention for All other models. The billed `usage.cost` is required. The default `typesafe`
+route is unchanged. The owner requires remember.dev to send customer content
+only to ZDR endpoints. See the
+[binding contract](plan/designs/jev_adjudication_design.md#system-one-through-openrouter)
+and [analysis](plan/analysis/systemone-via-openrouter-zdr-20261124.md).
+
 **Availability-backup amendment, 2026-11-06:** Jev remains primary. An explicit
 `openai_decisions` backup can implement the same System One port using native
 GPT-6 Luna choice/predicate/score requests, after classified unavailability.
@@ -6471,7 +6485,7 @@ to prevent cross-engine attempt contamination. All generation identity call site
 (`NormalizeRelationsHandler`/`AdjudicateObservationsHandler`, `FactAdjudicator.prepare` and `apply`,
 `selfhost._expected_components`, and `work_ledger` barrier/enqueue checks) read unified active version
 helpers (`active_adjudicator_versions`, `active_flush_version`). Metered on tier `fact_adjudication_jev`
-with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens).
+with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens on the direct `typesafe` route; the `openrouter` route records OpenRouter's billed `usage.cost`, see the 2026-11-24 clarification above).
 Replacing generative claim extraction or section summaries with System One was rejected
 because System One cannot generate freeform prose; placing the engine behind a Cloud
 proxy was rejected per the D60/D61 library boundary.
@@ -6632,6 +6646,25 @@ binary is stored with a binary card rather than refused.
 Recognized binary signatures override filename hints; PDF always remains PDF
 and follows D139's every-page OCR route.
 
+**Refined 2026-11-24 (content sniffing for formats the readers already
+decode).** A legacy OLE container takes its Word, Excel or PowerPoint subtype
+from its root storage's streams (`WordDocument`, `Workbook` or `Book`,
+`PowerPoint Document`, compared without case; MS-CFB, bounded and strict
+reads). When they name none, more than one, or the compound file is
+malformed, the upload is `ambiguous_office_format`; a declaration never
+decides it. Two text encodings that are not UTF-8 are admitted
+for the families whose readers decode them: UTF-16 with a byte-order mark,
+without control characters to the end of the file, for delimited files (as
+with UTF-8 text, the name or declaration picks the family within the
+class); and an Internet message (a header block without binary controls or
+message-level parse defects, holding a `From` field without defects naming
+a mailbox, and a non-empty To, Date, Subject, Message-ID or Received field;
+a body without binary controls to the end) for email with an 8-bit body. Bytes starting with the UTF-16 little-endian
+byte-order mark (FF FE, also an MPEG-1 Layer I frame sync) are never taken
+for audio. A declaration spelled as a registry alias of the detected
+family (Office templates and slideshows, SVG, XHTML) is compatible. The file
+name still never decides a class the bytes do not establish.
+
 **Status:** accepted. **Date:** 2026-09-23.
 
 **Context.** Declared MIME could select conversion, metering, and storage for a
@@ -6644,7 +6677,8 @@ legacy OLE signatures identify office; strict UTF-8 identifies text. A
 declaration contradicting a recognizable byte class raises a typed client
 error. For formats indistinguishable within a class, the filename and
 declaration select the D133/D138 registry family and posture, while
-legacy OLE needs a declared office subtype. Store the resulting MIME, and use
+legacy OLE takes its office subtype from its root streams (refined below;
+originally a declared subtype). Store the resulting MIME, and use
 it consistently for the conversion route, original storage class, and (through
 the route) the managed meter's cost class (D150). Every object-store write must provide a class: raw media hot,
 other raw originals cold; query-facing derived objects and P3 snapshots hot;
@@ -7662,7 +7696,9 @@ deployment's values into another's work.
    adjudication engine) and the accounts of the optional converter providers (Mistral OCR,
    image description) and of System One still come from the environment. They are the
    same for every deployment a process serves, so they are the host's accounts, not any
-   one deployment's.
+   one deployment's. *(Clarified 2026-11-24, D126: on `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`
+   System One uses the deployment's own `model_provider` key, base URL and ZDR flag
+   instead; only the direct `typesafe` route uses the process-wide TypeSafe account.)*
 2. **Run one named task.** `run_task(context, processing_id)` (`rememberstack.profiles`)
    reads the row's route from the context's database and runs it through the ordinary
    worker boundary (`Worker.run_one`, with a claim restricted to that row by

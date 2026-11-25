@@ -87,7 +87,9 @@ office ZIP packages, their member names. Printable prefix strings alone do
 not establish a binary class; a PDF token after a bounded preamble requires a
 PDF object body and end marker, even if the file has trailing padding.
 Remaining content must be valid UTF-8 text without binary controls; a UTF-8 BOM
-and CRLF are valid. It detects text, PDF, image, audio, video, and office
+and CRLF are valid. Two exceptions keep a text family whose reader decodes
+them: UTF-16 delimited text with a byte-order mark, and an Internet message
+whose body is not UTF-8. It detects text, PDF, image, audio, video, and office
 classes. A contradictory declared class is a typed ingest refusal, surfaced
 as HTTP 422. Binary bytes D132 cannot classify may use a D138 registry hint
 for a family D132 does not cover (for example, an archive); the converter
@@ -98,15 +100,18 @@ original class, and, through that route, a metered deployment's cost class
 (D150). Text flavours cannot be settled by
 bytes: once bytes establish text, D133/D138 registry hints select Markdown,
 CSV, code, configuration, or plain text and their distinct processing postures.
-Textual email, notebooks, RTF, and delimited data keep their registry families;
+Textual email, notebooks, RTF, SPSS Portable (`.por`, a text encoding of a
+dataset), and delimited data keep their registry families;
 their converters validate full structure. Recognizable HTML markup retains
 `text/html` for its separate converter, and an empty upload
 is valid text in every deployment; a metered one bills it at the per-source
 minimum (D150).
 
 For legacy OLE office containers, bytes establish the office class and the
-declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE
-container is refused. This check identifies the class; a converter still
+root storage's streams select its subtype (`WordDocument`, `Workbook` or
+`Book`, `PowerPoint Document`). A container whose streams name none, or more
+than one, or whose directory is malformed is refused as ambiguous; a
+declaration does not decide it. This check identifies the class; a converter still
 validates the complete format before producing evidence.
 
 **Class on every object (D132).** The object-store write contract requires an
@@ -852,7 +857,7 @@ format. These are the fixed top-level document types, each with an `_index.md`:
 
 | Directory | Deterministic match |
 |---|---|
-| `email/` | Email source kind or email family (`message/rfc822`, validated MSG/email route) |
+| `email/` | Email source kind or email family (`message/rfc822`, the email route) |
 | `chat/` | Chat/message-thread source kind or conversation route, excluding email |
 | `image/` | Image MIME or `image` family |
 | `audio/`, `video/` | Stored `audio/*` or `video/*` MIME, respectively; both belong to the `media` family |
