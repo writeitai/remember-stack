@@ -21988,8 +21988,9 @@ need action from you are marked **Action needed**.
 
 **More image formats.** The `image_ocr_description` route now reads static
 WebP as uploaded, and converts GIF, TIFF, BMP, HEIC, AVIF and PSD to one PNG
-before OCR and the description. Only the first frame or page is read, and the
-result says so. The conversion runs in a separate process limited to 1.5 GiB
+before OCR and the description. One image per file is read (the first frame
+or page, or a HEIC's primary image), and the result says when more were left
+out. The conversion runs in a separate process limited to 1.5 GiB
 of memory and 60 seconds; a file that exceeds either limit fails as
 unreadable. Route each type you want read in
 `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`.
