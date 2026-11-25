@@ -22,9 +22,15 @@ Your agents have easy access to the information - they remember!
 **[Quickstart](https://remember.dev/docs/start/quickstart)** ·
 **[What is a memory system?](https://remember.dev/docs/start/what-is-a-memory-system)**
 
-**[RememberStack on LoCoMo](benchmarks/locomo/README.md#published-results).**
-Two graders scored the same 1,540 answers at 90.26% (native judge) and 94.09%
-(Mem0-style judge).
+**[94.09% accuracy on LoCoMo benchmark.](benchmarks/locomo/README.md#published-results)**
+
+<br />
+
+<p align="center">
+  <a href="benchmarks/locomo/README.md#published-results">
+    <img src="benchmarks/locomo/assets/ai-memory-engines.png" alt="Published LoCoMo scores for AI memory engines. RememberStack 94.09%, Mem0 92.5%, Hindsight 92.0%." width="820" />
+  </a>
+</p>
 
 ---
 

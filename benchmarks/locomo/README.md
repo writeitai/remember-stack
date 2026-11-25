@@ -27,9 +27,9 @@ on that saved data.
 
 ## Published results
 
-RememberStack completed this run on November 16, 2026. Two LLM judges graded
-the same saved answers to all 1,540 category 1–4 questions across ten
-conversations, excluding the 446 adversarial questions.
+**94.09% LLM-judge accuracy: 1,449 / 1,540 correct** with the Mem0-style judge,
+completed November 16, 2026. Both grading passes cover the same saved answers
+to all category 1–4 questions in ten conversations:
 
 | Grading policy | Correct answers | Accuracy |
 | --- | ---: | ---: |
