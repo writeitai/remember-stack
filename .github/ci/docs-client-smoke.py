@@ -17,6 +17,7 @@ from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
 
 import remember
+from remember.credentials import credentials_path
 
 QUERY = "SELECT doc_id, current_version_id FROM documents_live WHERE source_ref = $1"
 SOURCE_DATE = datetime(2026, 9, 17, 9, 30, tzinfo=UTC)
@@ -40,7 +41,12 @@ async def check_mcp(*, doc_id: str, version_id: str) -> None:
     api_url = remember.resolve_connection().api_url
     assert api_url is not None, "Set REMEMBER_API_URL to the Compose engine"
     server = StdioServerParameters(
-        command="remember", args=["mcp"], env={"REMEMBER_API_URL": api_url}
+        command="remember",
+        args=["mcp"],
+        env={
+            "REMEMBER_API_URL": api_url,
+            "REMEMBER_CONFIG_DIR": str(credentials_path().parent),
+        },
     )
     async with (
         stdio_client(server=server) as (read, write),
