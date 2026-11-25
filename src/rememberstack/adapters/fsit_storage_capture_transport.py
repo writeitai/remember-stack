@@ -33,6 +33,7 @@ from rememberstack.adapters.fsit_storage_capture import ProviderPage
 from rememberstack.adapters.fsit_storage_capture import ProviderRecord
 from rememberstack.adapters.fsit_storage_capture import ProviderRequest
 from rememberstack.model.storage_capture import Digest
+from rememberstack.model.storage_capture import StorageCaptureEncodingError
 
 
 class ProviderCaptureUnavailable(RuntimeError):
@@ -130,7 +131,7 @@ def _capture_id(*, request: ProviderRequest) -> str:
 def _envelope(*, scopes: tuple[ProviderCaptureScope, ...]) -> bytes:
     """Build only the fixed singleton-operation exact-scope canonical input."""
     if not scopes:
-        raise ValueError("provider_batch_empty")
+        raise StorageCaptureEncodingError("provider_batch_empty")
     first = scopes[0].request
     identifiers: set[str] = set()
     requests: list[dict[str, object]] = []
@@ -142,19 +143,19 @@ def _envelope(*, scopes: tuple[ProviderCaptureScope, ...]) -> bytes:
             or request.cut_at_unix_us != first.cut_at_unix_us
             or capture_id in identifiers
         ):
-            raise ValueError("provider_batch_scope")
+            raise StorageCaptureEncodingError("provider_batch_scope")
         grant = scope.grant.get_secret_value()
         secret = grant.removeprefix("mtblc_")
         try:
             decoded = base64.urlsafe_b64decode(secret + "=" * (-len(secret) % 4))
         except ValueError:
-            raise ValueError("provider_batch_grant") from None
+            raise StorageCaptureEncodingError("provider_batch_grant") from None
         if (
             not grant.startswith("mtblc_")
             or len(decoded) < 32
             or base64.urlsafe_b64encode(decoded).decode().rstrip("=") != secret
         ):
-            raise ValueError("provider_batch_grant")
+            raise StorageCaptureEncodingError("provider_batch_grant")
         identifiers.add(capture_id)
         requests.append({"grant": grant, "request": request.model_dump(mode="json")})
     body = json.dumps(
@@ -164,7 +165,7 @@ def _envelope(*, scopes: tuple[ProviderCaptureScope, ...]) -> bytes:
         separators=(",", ":"),
     ).encode("utf-8")
     if len(body) > 16 << 20:
-        raise ValueError("provider_batch_envelope_bound")
+        raise StorageCaptureEncodingError("provider_batch_envelope_bound")
     return body
 
 
@@ -446,7 +447,7 @@ def open_provider_capture_batch(
         or isinstance(maximum_frame_bytes, bool)
         or maximum_frame_bytes <= 0
     ):
-        raise ValueError("provider_batch_admission_bound")
+        raise StorageCaptureEncodingError("provider_batch_admission_bound")
     stdin = _envelope(scopes=scopes)
     with transport.open(stdin=stdin) as process:
         source = FsitStorageCaptureSource(

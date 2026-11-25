@@ -4,22 +4,35 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+import json
 import logging
+from pathlib import Path
 from threading import Event
 from unittest.mock import Mock
 from unittest.mock import patch
 
 import pytest
 
+from rememberstack.adapters.fsit_storage_capture import provider_canonical_bytes
+from rememberstack.adapters.fsit_storage_capture import ProviderManifest
 from rememberstack.adapters.fsit_storage_capture_transport import (
     ProviderCaptureUnavailable,
 )
+from rememberstack.core.storage_capture import capture_request_id
+from rememberstack.core.storage_capture import membership_set_digest
+from rememberstack.core.storage_capture import native_witness_digest
+from rememberstack.model.storage_capture import StorageCaptureManifest
+from rememberstack.model.storage_capture import StorageCaptureRequest
+from rememberstack.model.storage_capture import StorageComponent
+from rememberstack.model.storage_capture import StorageComponentRecord
+from rememberstack.model.storage_capture import StorageNativeWitness
 from rememberstack.profiles.managed_storage_capture import (
     ManagedStorageCaptureUnavailable,
 )
 from rememberstack.profiles.storage_capture_batch import capture_storage_batch
 from rememberstack.profiles.storage_capture_batch import ManagedStorageCaptureInput
 from rememberstack.profiles.storage_capture_batch import ManagedStorageCaptureResult
+from rememberstack.profiles.storage_capture_profile import profile_bytes
 
 _MODULE = "rememberstack.profiles.storage_capture_batch"
 
@@ -144,6 +157,101 @@ def test_broken_provider_context_fails_every_scope_keeping_own_codes(
         "capture_writer_class_unknown",
         "provider_transport_lost",
     ]
+
+
+@pytest.mark.parametrize(
+    "code", ["manifest_digest_mismatch", "provider_manifest_digest"]
+)
+def test_replay_retains_declared_capture_integrity_code(
+    caplog: pytest.LogCaptureFixture, code: str
+) -> None:
+    """Corrupt persisted evidence has the same stable reason in results and logs."""
+    vector_file = (
+        Path(__file__).parents[1]
+        / "fixtures/storage_capture/fsit_bc8482ab_manifest.json"
+    )
+    vector = json.loads(vector_file.read_bytes())
+    provider = ProviderManifest.model_validate_json(json.dumps(vector["manifest"]))
+    if code == "provider_manifest_digest":
+        provider = provider.model_copy(update={"manifest_digest": "0" * 64})
+    request = StorageCaptureRequest(
+        deployment_id="1" * 32,
+        cut_at_unix_us=provider.request.cut_at_unix_us,
+        store_binding_digest="2" * 64,
+        schema_profile_digest="3" * 64,
+        classification_digest="4" * 64,
+        native_capture_profile_digest="5" * 64,
+        operator_mapping_digest="6" * 64,
+    )
+    capture_id = capture_request_id(request=request)
+    witness = StorageNativeWitness(
+        capture_id=capture_id,
+        deployment_id=request.deployment_id,
+        profile_digest=request.native_capture_profile_digest,
+        source_digest="7" * 64,
+        schema_digest="8" * 64,
+        backend_identity="backend",
+        transaction_identity="transaction",
+        view_identity="view",
+        view_acquired_before_unix_us="1",
+        view_acquired_after_unix_us="2",
+        guard_acquired_before_unix_us="1",
+        guard_acquired_after_unix_us="2",
+        guard_checked_after_unix_us="3",
+        release_before_unix_us="4",
+        release_after_unix_us="5",
+        clock_profile_digest="9" * 64,
+        clock_error_us="1",
+        allocation_records_digest="a" * 64,
+    )
+    components: tuple[StorageComponent, ...] = (
+        "canonical_object",
+        "k_repository",
+        "p3_origin",
+        "postgres_allocated",
+    )
+    manifest = StorageCaptureManifest(
+        capture_id=capture_id,
+        request=request,
+        native_witness_digest=native_witness_digest(witness=witness),
+        provider_manifest_digest=provider.manifest_digest,
+        component_records=tuple(
+            StorageComponentRecord(
+                component=component,
+                measured_bytes="0",
+                classification_digest=request.classification_digest,
+                operator_mapping_digest=request.operator_mapping_digest,
+                evidence_digest="b" * 64,
+                resource_set_digest="c" * 64,
+            )
+            for component in components
+        ),
+        reference_count="0",
+        terminal_count="0",
+        resource_observation_count="0",
+        page_count="0",
+        page_digests=(),
+        set_digest=membership_set_digest(page_digests=()),
+        manifest_digest="0" * 64,
+    )
+    item = _input(deployment_id=request.deployment_id)
+    item.request = request
+    item.evidence_store.read_manifest.return_value = profile_bytes(record=manifest)
+    item.evidence_store.read_native_witness.return_value = profile_bytes(record=witness)
+    item.evidence_store.read_provider_manifest.return_value = provider_canonical_bytes(
+        record=provider
+    )
+    live_capture = Mock()
+
+    (result,) = _run(inputs=(item,), capture=live_capture)
+
+    live_capture.assert_not_called()
+    assert result.completed is None
+    assert result.failure == code
+    (record,) = caplog.records
+    assert record.levelname == "ERROR"
+    assert vars(record)["error_code"] == code
+    assert record.exc_info is None
 
 
 def test_preflight_failure_keeps_only_the_type_of_free_text_errors(

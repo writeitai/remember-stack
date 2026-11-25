@@ -27,6 +27,7 @@ from pydantic import field_validator
 from pydantic import model_validator
 
 from rememberstack.model.storage_capture import Digest
+from rememberstack.model.storage_capture import StorageCaptureEncodingError
 from rememberstack.model.storage_capture import UUID32
 
 
@@ -335,13 +336,13 @@ def check_provider_manifest(*, manifest: ProviderManifest) -> None:
     ).encode("utf-8")
     expected_scope = hashlib.sha256(b"fsit-scope-v1\0" + scope_bytes).hexdigest()
     if manifest.capture_id != expected_id or manifest.scope_digest != expected_scope:
-        raise ValueError("provider_capture_identity")
+        raise StorageCaptureEncodingError("provider_capture_identity")
     if manifest.native_witness_digest != provider_record_digest(
         domain="fsit-witness-v1", record=manifest.native_witness
     ) or manifest.manifest_digest != provider_record_digest(
         domain="fsit-manifest-v1", record=manifest, omit="manifest_digest"
     ):
-        raise ValueError("provider_manifest_digest")
+        raise StorageCaptureEncodingError("provider_manifest_digest")
     if (
         manifest.page_count != str(len(manifest.pages))
         or tuple(row.filesystem_id for row in manifest.sets) != request.filesystem_ids
@@ -354,17 +355,17 @@ def check_provider_manifest(*, manifest: ProviderManifest) -> None:
         or int(manifest.expires_at_unix_us)
         != int(request.cut_at_unix_us) + 72 * 3600 * 1_000_000
     ):
-        raise ValueError("provider_manifest_membership")
+        raise StorageCaptureEncodingError("provider_manifest_membership")
     for ordinal, page in enumerate(manifest.pages):
         if (
             page.page_ordinal != str(ordinal)
             or not 0 < int(page.item_count) <= 1024
             or (ordinal + 1 < len(manifest.pages) and page.item_count != "1024")
         ):
-            raise ValueError("provider_manifest_pages")
+            raise StorageCaptureEncodingError("provider_manifest_pages")
     for row in manifest.sets:
         if row.root_materialized != (int(row.entry_count) != 0):
-            raise ValueError("provider_manifest_empty_set")
+            raise StorageCaptureEncodingError("provider_manifest_empty_set")
     expected_chunks = tuple(
         (state, marked)
         for state in ("pending", "uploading", "sealed")
@@ -375,14 +376,14 @@ def check_provider_manifest(*, manifest: ProviderManifest) -> None:
             tuple((cell.state, cell.deletion_marked) for cell in row.chunks)
             != expected_chunks
         ):
-            raise ValueError("provider_resource_cells")
+            raise StorageCaptureEncodingError("provider_resource_cells")
         if tuple(cell.state for cell in row.multipart) != (
             "open",
             "completing",
             "committing",
             "aborting",
         ):
-            raise ValueError("provider_multipart_cells")
+            raise StorageCaptureEncodingError("provider_multipart_cells")
     witness = manifest.native_witness
     if (
         witness.cell_id != request.cell_id
@@ -390,13 +391,13 @@ def check_provider_manifest(*, manifest: ProviderManifest) -> None:
         or witness.clock.error_us == "0"
         or witness.clock.boot_id != witness.gateway.fence.boot_id
     ):
-        raise ValueError("provider_witness_context")
+        raise StorageCaptureEncodingError("provider_witness_context")
     cut, uncertainty = int(request.cut_at_unix_us), int(witness.clock.error_us)
     if (
         int(witness.guard.acquired.after_unix_us) > cut - uncertainty
         or int(witness.guard.held_through.before_unix_us) < cut + uncertainty
     ):
-        raise ValueError("provider_witness_cut")
+        raise StorageCaptureEncodingError("provider_witness_cut")
     _check_native_witness(witness=witness)
 
 
@@ -404,7 +405,7 @@ def decode_provider_manifest(*, body: bytes) -> ProviderManifest:
     """Decode the one exact canonical provider artifact, without origin authority."""
     manifest = ProviderManifest.model_validate_json(body)
     if body != provider_canonical_bytes(record=manifest):
-        raise ValueError("provider_manifest_not_canonical")
+        raise StorageCaptureEncodingError("provider_manifest_not_canonical")
     check_provider_manifest(manifest=manifest)
     return manifest
 
@@ -413,7 +414,7 @@ def decode_provider_page(*, body: bytes) -> ProviderPage:
     """Decode the exact page-result wrapper, leaving complete-set checks explicit."""
     page = ProviderPage.model_validate_json(body)
     if body != provider_canonical_bytes(record=page):
-        raise ValueError("provider_page_not_canonical")
+        raise StorageCaptureEncodingError("provider_page_not_canonical")
     return page
 
 
@@ -423,7 +424,7 @@ def _check_native_witness(*, witness: ProviderWitness) -> None:
     error = int(clock.error_us)
     cut = int(witness.cut_at_unix_us)
     if not 0 < error < 2**63 or not -(2**63) <= cut - error <= cut + error < 2**63:
-        raise ValueError("provider_clock_range")
+        raise StorageCaptureEncodingError("provider_clock_range")
     brackets = (
         clock.before,
         clock.after,
@@ -434,7 +435,7 @@ def _check_native_witness(*, witness: ProviderWitness) -> None:
         witness.resource_view.acquired,
     )
     if any(int(row.before_unix_us) > int(row.after_unix_us) for row in brackets):
-        raise ValueError("provider_native_bracket_order")
+        raise StorageCaptureEncodingError("provider_native_bracket_order")
     if (
         int(clock.before.boottime_ns) > int(fence.closed_before_ns)
         or int(clock.after.boottime_ns) < int(fence.released_after_ns)
@@ -442,7 +443,7 @@ def _check_native_witness(*, witness: ProviderWitness) -> None:
         or int(witness.extraction_completed_at_unix_us)
         < int(guard.released.before_unix_us)
     ):
-        raise ValueError("provider_native_clock_continuity")
+        raise StorageCaptureEncodingError("provider_native_clock_continuity")
     for view in (witness.namespace_view, witness.resource_view):
         if (
             not 0 < int(view.backend_pid) < 2**32
@@ -450,13 +451,13 @@ def _check_native_witness(*, witness: ProviderWitness) -> None:
             or int(view.acquired.before_unix_us) < int(guard.acquired.before_unix_us)
             or int(view.acquired.after_unix_us) > int(guard.released.after_unix_us)
         ):
-            raise ValueError("provider_original_view_identity")
+            raise StorageCaptureEncodingError("provider_original_view_identity")
     for row in (guard.first, guard.last):
         if (
             not 0 < int(row.backend_pid) < 2**32
             or not 0 < int(row.relation_oid) < 2**32
         ):
-            raise ValueError("provider_guard_observation_range")
+            raise StorageCaptureEncodingError("provider_guard_observation_range")
     if (
         guard.first.backend_pid,
         guard.first.relation_oid,
@@ -466,7 +467,7 @@ def _check_native_witness(*, witness: ProviderWitness) -> None:
         guard.last.relation_oid,
         guard.last.virtual_transaction,
     ):
-        raise ValueError("provider_original_guard_identity")
+        raise StorageCaptureEncodingError("provider_original_guard_identity")
     native_ns = (
         fence.gateway_started_ns,
         fence.filer_started_ns,
@@ -480,7 +481,7 @@ def _check_native_witness(*, witness: ProviderWitness) -> None:
         fence.released_after_ns,
     )
     if any(int(value) >= 2**63 for value in native_ns):
-        raise ValueError("provider_fence_native_range")
+        raise StorageCaptureEncodingError("provider_fence_native_range")
     (
         started,
         filer,
@@ -509,7 +510,7 @@ def _check_native_witness(*, witness: ProviderWitness) -> None:
         or int(fence.held_upper_bound_ms)
         != (released_after - before + 999_999) // 1_000_000
     ):
-        raise ValueError("provider_released_fence_order")
+        raise StorageCaptureEncodingError("provider_released_fence_order")
 
 
 def provider_page_digest(*, page: ProviderPage) -> str:
@@ -543,7 +544,7 @@ def iter_provider_items(
     seen = 0
     for ordinal, page in enumerate(pages):
         if ordinal >= len(manifest.pages):
-            raise ValueError("provider_extra_page")
+            raise StorageCaptureEncodingError("provider_extra_page")
         expected = manifest.pages[ordinal]
         if (
             page.capture_id != manifest.capture_id
@@ -553,13 +554,13 @@ def iter_provider_items(
             or page.page_digest != expected.page_digest
             or page.page_digest != provider_page_digest(page=page)
         ):
-            raise ValueError("provider_page_context")
+            raise StorageCaptureEncodingError("provider_page_context")
         for item in page.items:
             key = (item.filesystem_id, item.path_id)
             if item.filesystem_id not in counts or (
                 previous is not None and key <= previous
             ):
-                raise ValueError("provider_item_scope_order")
+                raise StorageCaptureEncodingError("provider_item_scope_order")
             previous = key
             counts[item.filesystem_id] += 1
             yield item
@@ -567,7 +568,7 @@ def iter_provider_items(
     if seen != len(manifest.pages) or any(
         counts[row.filesystem_id] != int(row.entry_count) for row in manifest.sets
     ):
-        raise ValueError("provider_incomplete_set")
+        raise StorageCaptureEncodingError("provider_incomplete_set")
 
 
 def provider_path_identity(
@@ -575,15 +576,15 @@ def provider_path_identity(
 ) -> str:
     """Hash an engine-known exact key using D63's decoded filesystem bytes."""
     if len(capture_id) != 64 or any(c not in "0123456789abcdef" for c in capture_id):
-        raise ValueError("provider_capture_identity")
+        raise StorageCaptureEncodingError("provider_capture_identity")
     filesystem = base64.b32decode(filesystem_id.upper() + "======")
     canonical = base64.b32encode(filesystem).decode().rstrip("=").lower()
     if len(filesystem) != 16 or canonical != filesystem_id:
-        raise ValueError("provider_filesystem_identity")
+        raise StorageCaptureEncodingError("provider_filesystem_identity")
     if relative_path and any(
         part in {"", ".", ".."} or "\0" in part for part in relative_path.split("/")
     ):
-        raise ValueError("provider_relative_path")
+        raise StorageCaptureEncodingError("provider_relative_path")
     body = relative_path.encode("utf-8")
     return hashlib.sha256(
         b"fsit-path-v1\0"

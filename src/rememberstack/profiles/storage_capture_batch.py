@@ -30,6 +30,7 @@ from rememberstack.adapters.fsit_storage_capture_transport import (
     RawProviderCaptureTransport,
 )
 from rememberstack.core.storage_capture import capture_request_id
+from rememberstack.model.storage_capture import StorageCaptureEncodingError
 from rememberstack.model.storage_capture import StorageCaptureRequest
 from rememberstack.ports.storage_capture import StorageCaptureEvidenceStore
 from rememberstack.ports.storage_capture import StorageCaptureObjectStore
@@ -157,16 +158,17 @@ def _report_capture_scope_failure(error: Exception) -> str:
             NativeStorageCaptureRefused,
             ManagedStorageCaptureUnavailable,
             ProviderCaptureUnavailable,
+            StorageCaptureEncodingError,
         ),
     ):
         _logger.error(
-            "Storage capture scope failed",
+            "Storage capture scope failed.",
             extra={"error_code": error.code, "exception_type": kind},
             stacklevel=2,
         )
         return error.code
     _logger.error(
-        "Storage capture scope failed",
+        "Storage capture scope failed.",
         extra={"error_code": "storage_capture_failed", "exception_type": kind},
         stacklevel=2,
     )
@@ -223,7 +225,7 @@ def capture_storage_batch(
         or isinstance(maximum_frame_bytes, bool)
         or maximum_frame_bytes <= 0
     ):
-        raise ValueError("capture_batch_admission_bound")
+        raise StorageCaptureEncodingError("capture_batch_admission_bound")
     first = inputs[0]
     seen: set[str] = set()
     for item in inputs:
@@ -233,7 +235,7 @@ def capture_storage_batch(
             != first.profile.bindings.provider_cell_id
             or item.request.deployment_id in seen
         ):
-            raise ValueError("capture_batch_exact_scope")
+            raise StorageCaptureEncodingError("capture_batch_exact_scope")
         seen.add(item.request.deployment_id)
 
     results: dict[int, CompletedStorageCapture] = {}

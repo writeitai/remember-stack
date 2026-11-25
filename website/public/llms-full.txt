@@ -9858,10 +9858,21 @@ The main places the engine logs:
 | A live graph query times out or loses its connection (503) | `graph_query_failed` | ERROR |
 | A live graph result no longer matches its rows (503) | `graph_hydration_mismatch` | ERROR |
 | The live graph has no free slot (503) | `graph_capacity_exhausted` | WARNING |
-| The query sandbox consumes a database or dependency failure | `query_database_failed` / `query_dependency_unavailable` | ERROR |
+| A query consumes a database failure | `query_database_failed` | ERROR |
+| A query sandbox dependency fails | `query_dependency_unavailable` | ERROR |
+| A read reaches its database budget | `query_budget_exceeded` | WARNING |
+| A query search projection is unavailable | `search_projection_unavailable` | WARNING |
+| Model-based document structuring falls back | `structure_fallback` | ERROR |
+| The document skeleton check fails | `skeleton_check_failed` | ERROR |
+| Section title role classification fails | `section_roles_failed` | ERROR |
+| A section summary cannot be generated | `summary_failed` | ERROR |
+| Profile refresh after document archive fails | `profile_refresh_failed` | ERROR |
+| A synchronization item fails | `sync_item_failed` | ERROR |
+| A Vertex stream reports usage the engine cannot parse | `provider_usage_unparsed` | ERROR |
 | A native storage capture scope fails | The declared refusal code or `storage_capture_failed` | ERROR |
 | A spend lease cannot be reserved or committed | `spend_lease_unavailable` / `spend_lease_commit_failed` | ERROR |
 | The perimeter fails while authenticating a request | `perimeter_auth_failed` | ERROR |
+| A signing-key or revocation refresh keeps the last accepted state after a failure | `perimeter_refresh_failed` | WARNING |
 | An MCP tool fails unexpectedly | `mcp_tool_failed` | ERROR |
 | The control plane rejects the meter's producer credential | `meter_receipt_unauthorized` | ERROR |
 | The control plane is unavailable; the receipt is retried | `meter_receipt_retry` | WARNING |
@@ -9877,7 +9888,11 @@ For coded failures, use the Sentry SDK's Python logging integration. The
 built-in reporter configured by `REMEMBERSTACK_SENTRY_DSN` omits
 `error_code` and skips worker-loop logs. See the
 [configuration reference](https://remember.dev/docs/reference/configuration#observability) for
-its settings.
+its settings. The `setup`, `api` and worker
+processes report through the built-in reporter. It keeps the exception type
+and stack frames, replaces the message with `[redacted]`, and drops request
+data, breadcrumbs, frame locals and extras. Worker attempt events include
+`stage` and `processing_id` tags, plus `lane` when available.
 
 Leave `REMEMBERSTACK_SENTRY_DSN` unset and initialise the SDK in a bootstrap module (see [Where the setup runs](#where-the-setup-runs)):
 
