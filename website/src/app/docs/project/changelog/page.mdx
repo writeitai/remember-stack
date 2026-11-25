@@ -24,6 +24,49 @@ release. What it serves is on
 
 </Cloud>
 
+## 0.22.0 (November 2026)
+
+**Archive and forget replace delete.** Two verbs now take a document out of
+memory. **Archive** (`POST /documents/{doc_id}/archive`, `archive_document`,
+`remember documents archive`) hides the document and closes the facts only it
+supported; **unarchive** is the exact undo. `include_archived` shows archived
+documents in document lists, search and the context operations. A connector
+that sees a source file disappear archives it, and the file coming back
+unarchives it. **Forget** (`POST /documents/{doc_id}/forget`,
+`forget_document`, `remember documents forget`, the `forget_document` MCP tool
+with `confirm`) hides the document at once and then erases it in the
+background, sweeping until nothing is left: claims, exclusive facts, entities
+only it named, stored originals, corpus folders and compiled knowledge pages,
+including their Git history. `GET /forgets` and `remember forget list|status`
+follow each forget record; it waits as `waiting_for_redaction` only while a
+page you wrote still cites the document. A forgotten document is refused on
+re-ingest with `document_forgotten` unless that one request sets
+`allow_forgotten`. See
+[Documents and sources](/docs/concepts/documents-and-sources#forgetting-a-document).
+
+**Action needed: `DELETE /documents/{doc_id}` is removed**, together with
+`MemoryClient.delete_document`, `remember documents delete`, the
+`delete_document` MCP tool and their TypeScript counterparts. Use archive for
+a reversible removal and forget for erasure.
+
+**Action needed (self-hosted).** Setup migrates to `p9_55_0076`. Documents
+deleted under the earlier release become archives, and unfinished forgets
+continue under the new forget records. The separate forget manifest store is
+gone: remove `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` and
+`REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_BUCKET_NAME` if you set them, and
+forget no longer pauses the deployment or answers `503 forget_in_progress`.
+After restoring a backup, run `remember ops forget-reapply --deployment <UUID>`
+so forgets recorded since the backup are applied again. See
+[Operating](/docs/self-hosting/operating).
+
+**Agent tooling.** The RememberStack agent skill and guide are published
+([Skills](/docs/start/skills)), the CLI can return machine-readable results
+with actionable error messages, and the engine HTTP API boundary is documented
+and verified.
+
+**Error codes.** Coded failure reporting (D158) is complete, and the docs show
+how to export logs.
+
 ## 0.21.3 (November 2026)
 
 **More image formats.** The `image_ocr_description` route now reads static
