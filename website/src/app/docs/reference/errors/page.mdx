@@ -55,9 +55,9 @@ their code in `code`. `wait_for_readiness` raises
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token.<Cloud> On remember.dev, run `remember login` again or create a token in the console.</Cloud> |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
-| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
+| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `POST /documents/{doc_id}/archive`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
-| `404` | `document_not_found` | `DELETE /documents/{doc_id}`, or a period, reference or section route, for a document that does not exist, is deleted or is forgotten; `POST /documents/{doc_id}/forget` for a document that never existed (forgetting a forgotten document again answers `200` with its record). | Do not retry; check the id with `GET /documents`. |
+| `404` | `document_not_found` | `POST /documents/{doc_id}/archive` or `/unarchive` for a document that does not exist, or a period, reference or section route for a document that does not exist or is forgotten; `POST /documents/{doc_id}/forget` for a document that never existed (forgetting a forgotten document again answers `200` with its record). | Do not retry; check the id with `GET /documents`. |
 | `404` | `forget_not_found` | `GET /forgets/{forget_id}` for a forget record that does not exist. | Check the id with `GET /forgets`. |
 | `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
 | `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |
@@ -179,7 +179,7 @@ timeouts, store codes).
 
 The MCP server returns a tool failure as a normal tool result with
 `"isError": true` and one JSON text block. Every tool — `ingest`,
-`pipeline_readiness`, `delete_document`, `forget_document`, the assured operations and the SQL
+`pipeline_readiness`, `archive_document`, `unarchive_document`, `forget_document`, the assured operations and the SQL
 query tools — returns the same object:
 
 ```json
@@ -214,7 +214,7 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `confirmation_required` | `null` | no | Ask the user to confirm that this document is to be forgotten for good, then call again with confirm=true. (`forget_document` without `confirm: true`; nothing was forgotten.) |
-| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id. `forget_document`: Do not retry. Check the doc_id with the user.) |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`, `forget_document`: Do not retry. Check the doc_id with the user. (`section_history`, `update_document_tags`: Do not retry. Check the doc_id.) |
 | `document_forgotten`, `forget_not_complete` | 409 | no | Read the detail; fix the call. Do not retry it unchanged. (`ingest` of forgotten content; see [Adding forgotten content back](/docs/reference/http-api/ingest#adding-forgotten-content-back).) |
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
@@ -320,7 +320,7 @@ The routes themselves are in [remember.dev API](/docs/reference/cloud-api).
 | `structuring` | Being split into sections. |
 | `ready` | Converted and structured. Extraction may still be running; use readiness. |
 | `failed` | Conversion or structuring failed; `error` says why. |
-| `deleted` | Deleted. Not listed by `GET /documents`. |
+| `deleted` | Removed by a forget. Not listed by `GET /documents`. |
 
 ### Pipeline stage status
 

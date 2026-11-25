@@ -14,7 +14,7 @@ from sqlalchemy.engine import Engine
 
 
 class SyncCatalog:
-    """Cycle rows, known revisions, and deletion tombstones."""
+    """Cycle rows, known revisions, and source archives."""
 
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
@@ -67,33 +67,33 @@ class SyncCatalog:
     def observe_deletion(
         self, *, deployment_id: UUID, source_kind: str, source_ref: str, cycle_id: UUID
     ) -> UUID | None:
-        """Tombstone a source-deleted lineage (loud, recorded, idempotent).
+        """Archive a source-deleted lineage (``archived_by = source``, D159).
 
-        The tombstone is stamped with the observing cycle so reconciliation
-        can place the deletion inside its cycle barrier. The downstream
-        cascade (claims currency, fact closure per mode, artifact removal)
-        is the delete worker's job. Every version is tombstoned with the
-        lineage, as for an operator delete, so a file recreated in a later
-        cycle is processed as a new version instead of matching a deleted
-        one (D135).
+        The file existed and said what it said, so a source deletion is
+        history, not a mistake. The lineage stops being listed at once; its
+        testimony cascade is the cycle finalizer's job (the retract-timing
+        barrier, stamped with ``cycle_id``), under the archive's
+        reconciliation id. A lineage already
+        archived (by the caller or an earlier observation) is left as it is.
+        The source undoes it by showing the file again.
         """
+        from rememberstack.spine.lifecycle import LifecycleCatalog
+        from rememberstack.spine.processing_layers import take_layer_fence_on
+
         with self._engine.begin() as connection:
+            # D143 §3.3 lock order: the layer fence before the lineage lock.
+            take_layer_fence_on(connection=connection, deployment_id=deployment_id)
             doc_id = connection.execute(
-                _TOMBSTONE_LINEAGE,
+                _LOCK_LIVE_LINEAGE,
                 {
                     "deployment_id": deployment_id,
                     "source_kind": source_kind,
                     "source_ref": source_ref,
-                    "cycle_id": cycle_id,
                 },
             ).scalar_one_or_none()
             if doc_id is not None:
-                connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
-                # D102/D135: deleted evidence never anchors identity; a
-                # recreated file earns fresh anchors from its new version.
-                connection.execute(
-                    _CLEAR_DOCUMENT_BINDINGS,
-                    {"deployment_id": deployment_id, "doc_id": doc_id},
+                LifecycleCatalog.on_connection(connection=connection).set_archived(
+                    doc_id=doc_id, archived_by="source", cycle_id=cycle_id
                 )
             return doc_id
 
@@ -122,33 +122,22 @@ _KNOWN_REVISIONS = text(
     WHERE d.deployment_id = :deployment_id
       AND d.source_kind = :source_kind
       AND d.deleted_at IS NULL
+      -- a source archive is re-fetched, so the file reappearing undoes it;
+      -- a caller archive keeps its revision and is undone only by a change
+      AND d.archived_by IS DISTINCT FROM 'source'
       AND d.source_ref IS NOT NULL
     ORDER BY d.doc_id, v.version_no DESC NULLS LAST
     """
 )
 
-_TOMBSTONE_LINEAGE = text(
+_LOCK_LIVE_LINEAGE = text(
     """
-    UPDATE documents
-    SET deleted_at = now(), deleted_sync_cycle_id = :cycle_id
+    SELECT doc_id FROM documents
     WHERE deployment_id = :deployment_id
       AND source_kind = :source_kind
       AND source_ref = :source_ref
       AND deleted_at IS NULL
-    RETURNING doc_id
-    """
-)
-
-_CLEAR_DOCUMENT_BINDINGS = text(
-    """
-    DELETE FROM document_entity_bindings
-    WHERE deployment_id = :deployment_id AND doc_id = :doc_id
-    """
-)
-
-_TOMBSTONE_LINEAGE_VERSIONS = text(
-    """
-    UPDATE document_versions SET deleted_at = now()
-    WHERE doc_id = :doc_id AND deleted_at IS NULL
+      AND archived_at IS NULL
+    FOR UPDATE
     """
 )

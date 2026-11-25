@@ -220,11 +220,11 @@ def test_read_only_omits_and_refuses_every_write_tool() -> None:
         client=_engine(seen=seen), read_only=True, path_ingest=True
     )
     names = [entry["name"] for entry in server.list_tools()["tools"]]  # type: ignore[index]
-    assert "ingest" not in names and "delete_document" not in names
+    assert "ingest" not in names and "archive_document" not in names
     assert "pipeline_readiness" in names
     for name, arguments in (
         ("ingest", {"text": "x", "filename": "x.md"}),
-        ("delete_document", {"doc_id": "00000000-0000-0000-0000-000000000001"}),
+        ("archive_document", {"doc_id": "00000000-0000-0000-0000-000000000001"}),
     ):
         assert (
             _error(server.call_tool(name=name, arguments=dict(arguments)))["code"]
@@ -666,7 +666,7 @@ class _Remote:
             },
             {"name": "query_sql", "inputSchema": {"type": "object"}},
             {
-                "name": "delete_document",
+                "name": "archive_document",
                 "inputSchema": {"type": "object"},
                 "annotations": {"readOnlyHint": True},
             },
@@ -900,7 +900,7 @@ def test_read_only_bridge_passes_only_read_catalogue_tools() -> None:
         _call(4, "ingest"),
         _call(5, "account_usage"),
         _call(6, "query_sql"),
-        _call(7, "delete_document"),
+        _call(7, "archive_document"),
         read_only=True,
     )
     listed = next(answer for answer in answers if answer.get("id") == 2)

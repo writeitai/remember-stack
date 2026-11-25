@@ -65,6 +65,7 @@ src/tests/workers/test_e2_chain.py
 src/tests/workers/test_e3_chain.py
 src/tests/workers/test_fact_label_concurrency_pg.py
 src/tests/workers/test_lifecycle_reconciliation.py
+src/tests/workers/test_archive_upgrade_pg.py
 src/tests/workers/test_p3_corpusfs.py
 src/tests/workers/test_corpus_reader_export_pg.py
 src/tests/workers/test_reuse_lifecycle.py
@@ -97,3 +98,4 @@ src/tests/adapters/test_minio_corpus_publication.py
 src/tests/adapters/test_minio_corpus_forget.py
 src/tests/adapters/test_minio_corpus_consumption.py
 src/tests/adapters/test_minio_storage_capture.py
+src/tests/workers/test_forget_reingest_pg.py

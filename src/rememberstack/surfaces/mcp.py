@@ -4,8 +4,8 @@ Every tool renders from the shared catalogue in `remember.mcp_tools`, the same
 definitions `remember mcp` renders. The four assured operations are always
 listed; the seven open-query tools when an `OpenQueryFacade` is composed; the
 Layer 1 write tools (`ingest`, `pipeline_readiness`) when both their ports are
-composed; `delete_document` when a deletion port is composed (D135); and
-`forget_document` when a forget port is composed (D159). The
+composed; `archive_document`/`unarchive_document` when an archive port is
+composed; and `forget_document` when a forget port is composed (D159). The
 engine does not run on the caller's machine, so `ingest` never offers the local
 `path` body source here. The nineteen `examples.*` identities are never
 top-level tools — they run only through `run_saved_query`.
@@ -25,11 +25,11 @@ from uuid import UUID
 
 from remember.errors import MemoryApiError
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
-from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import FORGET_DOCUMENT_TOOL_NAME
-from remember.mcp_tools import handle_delete_document_tool
+from remember.mcp_tools import handle_archive_tool
 from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_forget_document_tool
 from remember.mcp_tools import handle_memory_write_tool
@@ -62,11 +62,12 @@ from remember.models import TagUpdate
 from rememberstack.model import DocumentForgottenError
 from rememberstack.model import ForgetNotCompleteError
 from rememberstack.model import UnknownTagError
-from rememberstack.model.client import DocumentDeletion
+from rememberstack.model.client import DocumentArchive
 from rememberstack.model.client import DocumentReferencesPage
 from rememberstack.model.client import DocumentReferencesRequest
 from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
+from rememberstack.model.client import DocumentUnarchive
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.client import SectionHistoryPage
@@ -77,7 +78,7 @@ from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.model.processing_layers import LayerSelectionError
 from rememberstack.model.processing_layers import LayerUnavailableError
-from rememberstack.surfaces.http_api import DocumentDeletionPort
+from rememberstack.surfaces.http_api import DocumentArchivePort
 from rememberstack.surfaces.http_api import DocumentForgetPort
 from rememberstack.surfaces.http_api import DocumentReferencesPort
 from rememberstack.surfaces.http_api import DocumentSearchPort
@@ -184,17 +185,26 @@ class _LocalMemoryWriteBackend:
         return None
 
 
-class _LocalDocumentDeleteBackend:
-    """Adapt the in-process deletion port to the shared delete tool (D135)."""
+class _LocalDocumentArchiveBackend:
+    """Adapt the in-process archive port to the shared archive tools (D159)."""
 
-    def __init__(self, *, deletion: DocumentDeletionPort, deployment_id: UUID) -> None:
-        self._deletion = deletion
+    def __init__(self, *, archive: DocumentArchivePort, deployment_id: UUID) -> None:
+        self._archive = archive
         self._deployment_id = deployment_id
 
-    def delete_document(self, *, doc_id: UUID) -> DocumentDeletion:
-        """Delete through the composed port; absence surfaces as a 404 shape."""
+    def archive_document(self, *, doc_id: UUID) -> DocumentArchive:
+        """Archive through the composed port; absence surfaces as a 404 shape."""
         try:
-            return self._deletion.delete_document(
+            return self._archive.archive_document(
+                deployment_id=self._deployment_id, doc_id=doc_id
+            )
+        except DocumentNotFoundError as error:
+            raise _DocumentNotFound() from error
+
+    def unarchive_document(self, *, doc_id: UUID) -> DocumentUnarchive:
+        """Unarchive through the composed port; absence surfaces as a 404 shape."""
+        try:
+            return self._archive.unarchive_document(
                 deployment_id=self._deployment_id, doc_id=doc_id
             )
         except DocumentNotFoundError as error:
@@ -362,7 +372,7 @@ class OperationMcpServer:
         open_query: OpenQueryFacade | None = None,
         ingest: IngestPort | None = None,
         pipeline_readiness: PipelineReadinessPort | None = None,
-        deletion: DocumentDeletionPort | None = None,
+        archive: DocumentArchivePort | None = None,
         forget: DocumentForgetPort | None = None,
         document_search: DocumentSearchPort | None = None,
         section_history: SectionHistoryPort | None = None,
@@ -377,7 +387,7 @@ class OperationMcpServer:
         tools require both ingest and pipeline_readiness; half-wiring either
         port alone is refused so tools/list never advertises a half-broken pair.
         Operation-only compositions omit the write tools (O2).
-        `delete_document` is advertised only when `deletion` is composed,
+        the archive tools are advertised only when `archive` is composed,
         `forget_document` only when `forget` is, and
         `search_documents` only when `document_search` is, and
         `section_history` only when `section_history` is, and
@@ -404,11 +414,11 @@ class OperationMcpServer:
                 pipeline_readiness=pipeline_readiness,
                 deployment_id=surface.deployment_id,
             )
-        self._delete_backend: _LocalDocumentDeleteBackend | None = (
+        self._archive_backend: _LocalDocumentArchiveBackend | None = (
             None
-            if deletion is None
-            else _LocalDocumentDeleteBackend(
-                deletion=deletion, deployment_id=surface.deployment_id
+            if archive is None
+            else _LocalDocumentArchiveBackend(
+                archive=archive, deployment_id=surface.deployment_id
             )
         )
         self._forget_backend: _LocalDocumentForgetBackend | None = (
@@ -449,19 +459,19 @@ class OperationMcpServer:
     def list_tools(self) -> dict[str, object]:
         """List the composed catalogue tools, in catalogue order.
 
-        `search_documents` follows `delete_document` when a search port is
+        `search_documents` follows the archive tools when a search port is
         composed.
 
-        Write tools lead when both ports are composed, then `delete_document`
-        when deletion is composed, the four assured operations, `adjacent_chunks`,
+        Write tools lead when both ports are composed, then the archive tools
+        when archive is composed, the four assured operations, `adjacent_chunks`,
         and the seven §3.1 tools when open query is composed. `examples.*` never
         appear as top-level tools.
         """
         names: list[str] = []
         if self._write_backend is not None:
             names.extend((INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME))
-        if self._delete_backend is not None:
-            names.append(DELETE_DOCUMENT_TOOL_NAME)
+        if self._archive_backend is not None:
+            names.extend(ARCHIVE_TOOL_NAMES)
         if self._forget_backend is not None:
             names.append(FORGET_DOCUMENT_TOOL_NAME)
         if self._search_backend is not None:
@@ -499,9 +509,9 @@ class OperationMcpServer:
         answers are QueryResult/v1 or discovery payloads. Every failure is the
         catalogue's one structured error envelope.
         """
-        if name == DELETE_DOCUMENT_TOOL_NAME:
-            return handle_delete_document_tool(
-                arguments=arguments, backend=self._delete_backend
+        if name in ARCHIVE_TOOL_NAMES:
+            return handle_archive_tool(
+                name=name, arguments=arguments, backend=self._archive_backend
             )
         if name == FORGET_DOCUMENT_TOOL_NAME:
             return handle_forget_document_tool(

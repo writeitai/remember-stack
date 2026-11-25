@@ -8,7 +8,9 @@ import { ToolError, ToolArgumentError, invalidArguments } from './tool-errors';
 export type Permission = 'memory:read' | 'memory:write';
 export const INGEST_TOOL_NAME='ingest';
 export const PIPELINE_READINESS_TOOL_NAME='pipeline_readiness';
-export const DELETE_DOCUMENT_TOOL_NAME='delete_document';
+export const ARCHIVE_DOCUMENT_TOOL_NAME='archive_document';
+export const UNARCHIVE_DOCUMENT_TOOL_NAME='unarchive_document';
+export const ARCHIVE_TOOL_NAMES=Object.freeze([ARCHIVE_DOCUMENT_TOOL_NAME,UNARCHIVE_DOCUMENT_TOOL_NAME]);
 export const FORGET_DOCUMENT_TOOL_NAME='forget_document';
 export const SEARCH_DOCUMENTS_TOOL_NAME='search_documents';
 export const ADJACENT_CHUNKS_TOOL_NAME='adjacent_chunks';
@@ -125,7 +127,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
       validateSchema({schema:definition.input_schema,value:args});
       return {version_ids:(args.version_ids as unknown[]).map(value=>uuid({value,field:'version_id'})),require:validateModel({name:'ReadinessRequirements',value:args.require})};
     }
-    if(name==='delete_document')return {doc_id:uuid({value:args.doc_id,field:'doc_id'})};
+    if(ARCHIVE_TOOL_NAMES.includes(name))return {doc_id:uuid({value:args.doc_id,field:'doc_id'})};
     if(name===FORGET_DOCUMENT_TOOL_NAME) {
       if(args.confirm!==true)throw new ToolArgumentError({error:new ToolError({code:'confirmation_required',detail:'forget_document needs confirm=true; nothing was forgotten.',status_code:null,retryable:false,agent_action:'Ask the user to confirm that this document is to be forgotten for good, then call again with confirm=true.'})});
       return {doc_id:uuid({value:args.doc_id,field:'doc_id'})};

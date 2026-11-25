@@ -94,6 +94,7 @@ EXAMPLE_QUERIES: Final[dict[str, tuple[str, str]]] = {
         " JOIN documents_live AS d"
         "   ON d.deployment_id = m.deployment_id AND d.doc_id = m.doc_id"
         " WHERE m.entity_id = $1::uuid"
+        "   AND d.archived_at IS NULL"
         " ORDER BY m.mention_count DESC, d.doc_id"
         " LIMIT 50",
     ),

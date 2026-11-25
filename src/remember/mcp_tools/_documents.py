@@ -39,6 +39,7 @@ _FILTER_KEYS = frozenset(
         "thread_ref",
         "doc_ids",
         "tags",
+        "include_archived",
     }
 )
 _TOP_LEVEL_KEYS = frozenset({"query", "versions", "time", "k", "limit", "cursor"})

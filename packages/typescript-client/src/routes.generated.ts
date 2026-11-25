@@ -1,48 +1,5 @@
 /* Generated from Python; regenerate with npm run generate. */
 export default {
-  "DELETE /documents/{doc_id}": {
-    "method": "DELETE",
-    "operationId": "delete_document_documents__doc_id__delete",
-    "parameters": [
-      {
-        "in": "path",
-        "name": "doc_id",
-        "required": true,
-        "schema": {
-          "format": "uuid",
-          "title": "Doc Id",
-          "type": "string"
-        }
-      }
-    ],
-    "path": "/documents/{doc_id}",
-    "requestBody": null,
-    "responses": {
-      "200": {
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/DocumentDeletion"
-            }
-          }
-        },
-        "description": "Successful Response"
-      },
-      "404": {
-        "description": "document_not_found"
-      },
-      "422": {
-        "content": {
-          "application/json": {
-            "schema": {
-              "$ref": "#/components/schemas/HTTPValidationError"
-            }
-          }
-        },
-        "description": "Validation Error"
-      }
-    }
-  },
   "DELETE /documents/{doc_id}/effective-periods": {
     "method": "DELETE",
     "operationId": "clear_effective_time_documents__doc_id__effective_periods_delete",
@@ -263,6 +220,16 @@ export default {
             }
           ],
           "title": "Status"
+        }
+      },
+      {
+        "in": "query",
+        "name": "include_archived",
+        "required": false,
+        "schema": {
+          "default": false,
+          "title": "Include Archived",
+          "type": "boolean"
         }
       }
     ],
@@ -1595,6 +1562,49 @@ export default {
       }
     }
   },
+  "POST /documents/{doc_id}/archive": {
+    "method": "POST",
+    "operationId": "archive_document_documents__doc_id__archive_post",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/archive",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DocumentArchive"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "document_not_found"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
   "POST /documents/{doc_id}/forget": {
     "method": "POST",
     "operationId": "forget_document_documents__doc_id__forget_post",
@@ -1693,6 +1703,49 @@ export default {
       },
       "422": {
         "description": "unknown_tag"
+      }
+    }
+  },
+  "POST /documents/{doc_id}/unarchive": {
+    "method": "POST",
+    "operationId": "unarchive_document_documents__doc_id__unarchive_post",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/unarchive",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DocumentUnarchive"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "document_not_found"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
       }
     }
   },

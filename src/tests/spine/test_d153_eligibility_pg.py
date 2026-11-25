@@ -147,10 +147,13 @@ def _snapshot(*, connection: Connection) -> dict[str, list[str]]:
         rows = (
             connection.execute(
                 text(
-                    f"SELECT (to_jsonb(row)-'evaluated_at')::text AS value,"
+                    # D159 appended documents_live.archived_at after the old
+                    # head; the oracle compares the columns both heads have.
+                    f"SELECT (to_jsonb(row)-'evaluated_at'-'archived_at')::text AS value,"
                     " (NOT (to_jsonb(row) ? 'evaluated_at') OR"
                     " (to_jsonb(row)->>'evaluated_at')::timestamptz=statement_timestamp()) AS clock_matches"
-                    f" FROM memory_v1.{contract.name} row ORDER BY (to_jsonb(row)-'evaluated_at')::text"
+                    f" FROM memory_v1.{contract.name} row"
+                    " ORDER BY (to_jsonb(row)-'evaluated_at'-'archived_at')::text"
                 )
             )
             .mappings()

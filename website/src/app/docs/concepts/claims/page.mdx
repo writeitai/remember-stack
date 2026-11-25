@@ -222,9 +222,11 @@ currently says. It starts `true`. It becomes `false` when:
 |---|---|
 | `reextracted` | A newer extractor processed the same file; its claims replace these. |
 | `version_superseded` | In `living` mode, a new version of the document no longer contains this passage. |
-| `version_deleted` | The version was deleted. |
+| `version_archived` | The document was [archived](/docs/concepts/documents-and-sources#archiving-a-document). |
 
 A fourth reason, `review_restored`, returns a claim to current testimony.
+Unarchiving the document, or a new version of it that reuses the claim, also
+returns it, recorded under `version_archived`.
 
 Currency is bookkeeping, not truth. A non-current claim still exists, can
 still be read for audit, and still says what it said. What changes is that it

@@ -10,9 +10,12 @@ export const metadata = {
 SQL queries run over **the query space**, `memory_v1`: a fixed set of
 prepared, read-only views and functions over your memory. Every statement is
 parsed and validated against it before it runs, and anything outside it is
-rejected. The views already apply the memory's rules — deleted versions,
-forgotten sources and superseded readings are absent — so a statement can only
-see what the memory itself would return.
+rejected. The views already apply the memory's rules — removed versions,
+forgotten sources and superseded readings are absent, and an archived
+document's claims are no longer current testimony. `documents_live` still lists
+an archived document, marked with `archived_at`, and history views (mentions,
+claim history) keep it, so a statement that joins them filters on
+`archived_at IS NULL` for live documents only, as `documents_about` does.
 
 This page is the reference for the query space: [identity and
 versioning](#version-and-manifest-hash), [the grammar a statement must
@@ -1029,7 +1032,7 @@ One row per non-tombstoned version of a live document lineage, keyed by (deploym
 
 ### documents_live
 
-One row per live document lineage, keyed by (deployment_id, doc_id). A tombstoned lineage is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name deleted state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.
+One row per document lineage that has not been forgotten, keyed by (deployment_id, doc_id): the inventory. An [archived](/docs/reference/http-api/ingest#post-documentsdoc_idarchive) lineage is listed with archived_at set; its claims are not current testimony, so every current-testimony relation leaves it out. A lineage hidden by forget is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name removed state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.
 
 - **Grain:** one live document lineage (`document_lineage_live`)
 - **Row key:** `deployment_id`, `doc_id`
@@ -1055,6 +1058,7 @@ One row per live document lineage, keyed by (deployment_id, doc_id). A tombstone
 | `source_modified_at` | timestamp with time zone | yes | When the source says the current snapshot was authored, which dates derived testimony. |
 | `published_at` | timestamp with time zone | yes | The document's own publication date on the current version, null when unknown. |
 | `language` | text | yes | Detected primary language of the current version, null when undetected. |
+| `archived_at` | timestamp with time zone | yes | When the lineage was archived: its testimony ended and it is kept as history; null while live. Search and the context operations leave an archived lineage out unless asked. |
 
 ### entities_current
 
@@ -1453,7 +1457,7 @@ One row per visible D54 testimony-currency transition, keyed by (deployment_id, 
 | `doc_id` | uuid | no | The live lineage whose basis change drove the transition. |
 | `reconciliation_id` | uuid | no | The single reconciliation run that emitted the transition, so a retried run is recognizable as one run. |
 | `became_current` | boolean | no | True when the claim regained currency and false when it lost currency. |
-| `reason` | text | no | Why currency changed, one of reextracted, version_superseded, version_deleted, or review_restored. Values: `reextracted`, `version_superseded`, `version_deleted`, `review_restored`. |
+| `reason` | text | no | Why currency changed, one of reextracted, version_superseded, version_archived, or review_restored. Values: `reextracted`, `version_superseded`, `version_archived`, `review_restored`. |
 | `from_extractor_version` | text | yes | The superseded extractor generation for a re-extraction, null for the other reasons. |
 | `from_version_id` | uuid | yes | The superseded document version, exposed only while that version is itself visible and null otherwise. |
 | `occurred_at` | timestamp with time zone | no | When the transition occurred, which is a transaction-time instant and never a validity clock. |

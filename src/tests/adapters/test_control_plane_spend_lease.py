@@ -769,7 +769,8 @@ def test_parked_deployment_refuses_the_document_list() -> None:
         ("GET", "/deployment", None),
         ("GET", "/healthz", None),
         ("GET", "/operations", None),
-        ("DELETE", f"/documents/{_DEPLOYMENT}", None),
+        ("POST", f"/documents/{_DEPLOYMENT}/archive", None),
+        ("POST", f"/documents/{_DEPLOYMENT}/unarchive", None),
         ("DELETE", f"/documents/{_DEPLOYMENT}/effective-periods", None),
         (
             "PUT",
@@ -864,7 +865,8 @@ def test_every_published_route_is_gated_or_named_ungated() -> None:
         ("GET", "/operations"),
         # D143: reading the layer states is a metadata read like /deployment.
         ("GET", "/processing-layers"),
-        ("DELETE", "/documents/{doc_id}"),
+        ("POST", "/documents/{doc_id}/archive"),
+        ("POST", "/documents/{doc_id}/unarchive"),
         ("DELETE", "/documents/{doc_id}/effective-periods"),
         ("PUT", "/documents/{doc_id}/versions/{version_id}/effective-periods"),
         # D140 supplied references are written by a deterministic E0 worker:

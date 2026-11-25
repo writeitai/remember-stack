@@ -208,8 +208,8 @@ supports. After the call commits, the `review_fact_windows` stage (in `worker-ll
 the model, once for each fact whose evidence's periods moved, whether the
 fact's dates still fit; it keeps them or replaces them with dates grounded in
 the claims, and records the decision in the fact's adjudication history. The
-same check runs when a new edition finishes processing and when a version or
-document is deleted. A fact whose periods did not move is not rechecked.
+same check runs when a new edition finishes processing, and when a document
+is archived, unarchived or forgotten. A fact whose periods did not move is not rechecked.
 
 Two other tools:
 

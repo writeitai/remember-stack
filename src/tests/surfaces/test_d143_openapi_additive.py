@@ -29,11 +29,13 @@ _ROOT = Path(__file__).parents[3]
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 _PRE_D143_SHA256: Final = (
-    "baae77c8e6e8b808ea0f2fccf2b768c54396df09424db4fe56ccc38653c19cf5"
+    "97542f8b164e6f83ba6afc7ce00e6ad3b2b135ee8dd0679e14b210de7245c076"
 )
 """Canonical hash of ``openapi.json`` after stripping D143 additions.
 
-Pinned after D155 slice 5 (``p3_path`` and p3 readiness field descriptions);
+Pinned after D159 archive (the public delete removed outright, archive and
+unarchive routes, ``include_archived`` and the ``archived`` markers): a
+removal, not an addition, so the baseline moves. Before that, after D155 slice 5 (``p3_path`` and p3 readiness field descriptions);
 before that, against the D154 pagination rename baseline (browse ``limit`` /
 ``next_cursor``, Envelope ``next_cursor``, Truncation without
 ``continuation``, QueryResult without ``exact_total*``, graph keyset

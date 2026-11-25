@@ -31,7 +31,7 @@ from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import DeclaredEffectivePeriod
 from remember.models import DeploymentBuildInfo
-from remember.models import DocumentDeletion
+from remember.models import DocumentArchive
 from remember.models import DocumentPage
 from remember.models import DocumentReference
 from remember.models import DocumentReferenceSource
@@ -46,6 +46,7 @@ from remember.models import DocumentSearchResult
 from remember.models import DocumentSummary
 from remember.models import DocumentTagFilter
 from remember.models import DocumentTags
+from remember.models import DocumentUnarchive
 from remember.models import DocumentVersionSummary
 from remember.models import EffectiveInterval
 from remember.models import EffectivePeriodInput
@@ -104,7 +105,8 @@ __all__ = (
     "ContextBundleV2",
     "DeclaredEffectivePeriod",
     "DeploymentBuildInfo",
-    "DocumentDeletion",
+    "DocumentArchive",
+    "DocumentUnarchive",
     "DocumentPage",
     "DocumentSearchFilters",
     "DocumentTagFilter",

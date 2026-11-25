@@ -147,7 +147,8 @@ objects and arrays, with validated defaults.
 | `referenceGenerations` | `ReferenceGenerations` |
 | `setEffectivePeriods` | `EffectivePeriodsSet` |
 | `clearEffectiveTime` | `EffectiveTimeCleared` |
-| `deleteDocument` | `DocumentDeletion` |
+| `archiveDocument` | `DocumentArchive` |
+| `unarchiveDocument` | `DocumentUnarchive` |
 | `forgetDocument`, `getForget` | `Forget` |
 | `listForgets` | `ForgetList` |
 | `listTags` | `TagList` |
@@ -164,7 +165,7 @@ transport is never closed by the SDK.
 
 The complete schema-derived model and support-type vocabulary is:
 
-`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTagFilter`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Forget`, `ForgetList`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentArchive`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTagFilter`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentUnarchive`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Forget`, `ForgetList`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
 Schema-owned public models have `Input` variants for inputs; connection and issuer
 types expose the SDK support contracts. CLI credential-response types are data
 contracts only and do not add login or key-writing operations to this package.
@@ -228,6 +229,21 @@ On `factsContext`, contradicting evidence from non-matching documents stays
 in the answer, marked `in_documents_filter: false`; see
 [The documents filter](/docs/reference/assured-operations#the-documents-filter).
 What tags are: [Tag documents](/docs/guides/tag-documents).
+
+### Archive
+
+`archiveDocument({ docId })` archives one document: the memory stops
+believing it, and it stays readable as history. It returns a
+`DocumentArchive`; archiving an archived document returns the same
+`archived_at` with zero counts. `unarchiveDocument({ docId })` undoes the
+archive exactly and returns a `DocumentUnarchive`. Both need a `write`
+credential; an unknown `docId` raises MemoryApiError with statusCode 404
+and detail `document_not_found`. Archived documents are left out of reads unless you
+ask: `listDocuments({ includeArchived: true })`,
+`filters.include_archived` on `searchDocuments`, and
+`documents.include_archived` on `searchClaims`, `searchChunks` and the
+context operations. See
+[`POST /documents/{doc_id}/archive`](/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
 
 ### Version history and references
 
@@ -345,8 +361,9 @@ The base package exports `ToolDefinition`, `Permission`, `memoryTools`, `tool`,
 Definitions carry routes, versions, permissions, schemas and annotations.
 `OPEN_QUERY_TOOL_NAMES`, `OPERATION_TOOL_NAMES` and `MEMORY_WRITE_TOOL_NAMES`
 identify the source-defined groups. Individual constants include
-INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, DELETE_DOCUMENT_TOOL_NAME,
-SEARCH_DOCUMENTS_TOOL_NAME and ADJACENT_CHUNKS_TOOL_NAME. `TAG_READ_TOOL_NAMES`,
+INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, ARCHIVE_DOCUMENT_TOOL_NAME,
+UNARCHIVE_DOCUMENT_TOOL_NAME, SEARCH_DOCUMENTS_TOOL_NAME and
+ADJACENT_CHUNKS_TOOL_NAME; `ARCHIVE_TOOL_NAMES` groups the two archive tools. `TAG_READ_TOOL_NAMES`,
 `TAG_WRITE_TOOL_NAMES` and `TAG_TOOL_NAMES` group the five tag tools.
 
 `validateArguments` checks every memory tool and returns parsed arguments.

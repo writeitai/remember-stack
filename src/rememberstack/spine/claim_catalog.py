@@ -20,11 +20,14 @@ from rememberstack.core.source_passages import spans_from_json
 from rememberstack.model import ClaimForEmbedding
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import ClaimRecord
+from rememberstack.model import CurrencyTransition
 from rememberstack.model import DecisionRecord
 from rememberstack.model import EvidenceSpan
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
+from rememberstack.spine.lifecycle import archive_reconciliation_id
+from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.selection_catalog import require_extraction_sources_on
 from rememberstack.spine.selection_catalog import SelectionCatalog
 
@@ -334,6 +337,15 @@ class ClaimCatalog:
                     if existing != claimify_input_hash:
                         raise ValueError("Claimify completion has different inputs")
                     return
+            # D159: an archived lineage's new claims are published, but never
+            # as current testimony — they are retired under the archive's
+            # reconciliation id at once, so unarchive restores them with the
+            # rest. The share lock serializes with archive and unarchive.
+            archive = (
+                connection.execute(_LOCK_LINEAGE_ARCHIVE, {"chunk_id": owner.chunk_id})
+                .mappings()
+                .one_or_none()
+            )
             for claim in claims:
                 payload = claim.model_dump(mode="json")
                 payload["added_context"] = [
@@ -356,6 +368,23 @@ class ClaimCatalog:
                         ),
                     ),
                 )
+            if archive is not None and archive["archived_at"] is not None and claims:
+                LifecycleCatalog.on_connection(connection=connection).apply_transitions(
+                    deployment_id=owner.deployment_id,
+                    reconciliation_id=archive_reconciliation_id(
+                        doc_id=owner.doc_id, archived_at=archive["archived_at"]
+                    ),
+                    transitions=tuple(
+                        CurrencyTransition(
+                            claim_id=claim.claim_id,
+                            doc_id=claim.doc_id,
+                            became_current=False,
+                            reason="version_archived",
+                            from_version_id=archive["version_id"],
+                        )
+                        for claim in claims
+                    ),
+                )
             for decision in decisions:
                 connection.execute(_INSERT_DECISION, decision.model_dump(mode="json"))
             if claimify_input_hash is not None:
@@ -364,6 +393,16 @@ class ClaimCatalog:
                     {"chunk_id": owner.chunk_id, "input_hash": claimify_input_hash},
                 )
 
+
+_LOCK_LINEAGE_ARCHIVE = text(
+    """
+    SELECT d.archived_at, c.version_id
+    FROM chunks c
+    JOIN documents d ON d.doc_id = c.doc_id
+    WHERE c.chunk_id = :chunk_id
+    FOR SHARE OF d
+    """
+)
 
 _SELECT_EXTRACTED = text(
     """
@@ -395,9 +434,10 @@ _SELECT_PRIOR_EXTRACTED = text(
            OR c.claimify_input_hash = :claimify_input_hash)
       AND cv.version_no < (SELECT version_no FROM document_versions
                            WHERE version_id = :version_id)
-      -- deleted testimony is never reused: its claims lost currency when
-      -- the version was deleted, and re-attaching them would leave the new
-      -- version silently testifying nothing (D135)
+      -- removed testimony is never reused: its claims lost currency when
+      -- the version was removed, and re-attaching them would leave the new
+      -- version silently testifying nothing. An archived version is not
+      -- removed: its claims are reused and become current again (D159).
       AND cv.deleted_at IS NULL
       AND (EXISTS (SELECT 1 FROM chunk_claims x WHERE x.chunk_id = c.chunk_id)
            OR EXISTS (SELECT 1 FROM claim_extraction_decisions d

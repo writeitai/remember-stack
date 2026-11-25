@@ -84,7 +84,7 @@ from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
 from rememberstack.workers import CycleFinalizer
 from rememberstack.workers import DeletionService
-from rememberstack.workers import DocumentDeleter
+from rememberstack.workers import DocumentArchiver
 from rememberstack.workers import E1Settings
 from rememberstack.workers import E2Settings
 from rememberstack.workers import E3Settings
@@ -1199,12 +1199,11 @@ def test_disabled_gaps_enter_on_backfill_and_deferred_gaps_on_steady(
     )
 
 
-def test_deleting_a_document_while_facts_are_off_closes_its_facts(
+def test_archiving_a_document_while_facts_are_off_closes_its_facts(
     rig: _LayerRig,
 ) -> None:
-    """§9.12 deletion: deleting a document while facts are off closes its
-    facts, clears its document bindings and deletes its gaps — without
-    switching facts on."""
+    """§9.12 removal: archiving a document while facts are off closes its
+    facts and clears its document bindings — without switching facts on."""
     rig.configure(claims=True, facts=True)
     first = rig.ingest(
         source_ref="docs/staff.md",
@@ -1231,9 +1230,9 @@ def test_deleting_a_document_while_facts_are_off_closes_its_facts(
     assert isinstance(gaps, int) and gaps >= 1  # v2's facts gap
     e3_rows = rig.stage_rows(stages=_E3_STAGES)
 
-    result = DocumentDeleter(
+    result = DocumentArchiver(
         engine=rig.engine, profile_refresher=rig.profiles
-    ).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
+    ).archive_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
     rig.drain()
 
     assert result.relations_closed >= 1
@@ -1258,17 +1257,22 @@ def test_deleting_a_document_while_facts_are_off_closes_its_facts(
         )
         == 0
     )
+    # D159: the archived lineage keeps its gaps (unarchive resumes them) but
+    # enters nothing, even once facts are switched on
     assert (
         rig.scalar(
             "SELECT count(*) FROM processing_layer_gaps WHERE doc_id = :d",
             d=first.doc_id,
         )
-        == 0
+        == gaps
     )
     configuration = rig.layers.configuration(deployment_id=_DEPLOYMENT_ID)
     assert configuration.claims_enabled and not configuration.facts_enabled
     assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).facts == "disabled"
     assert rig.stage_rows(stages=_E3_STAGES) == e3_rows  # no fact work opened
+    rig.configure(claims=True, facts=True)
+    rig.drain()
+    assert rig.stage_rows(stages=_E3_STAGES) == e3_rows
 
 
 def test_deleting_the_current_living_version_reopens_and_processes_its_predecessor(
@@ -2036,7 +2040,7 @@ def test_a_living_deletion_while_layers_are_off_reopens_the_restored_version_ato
     def died(**_: object) -> object:
         raise RuntimeError("the worker died right after the repoint committed")
 
-    monkeypatch.setattr(rig.lifecycle, "reconciliation_context", died)
+    monkeypatch.setattr(rig.lifecycle, "stale_for_version_deletion", died)
     with pytest.raises(RuntimeError, match="died right after the repoint"):
         rig.deletion.delete_version(version_id=deleted)
     monkeypatch.undo()
@@ -2117,7 +2121,7 @@ def test_deleting_a_lineage_removes_its_gaps_in_the_tombstone_commit(
     def died(**_: object) -> object:
         raise RuntimeError("the worker died right after the tombstone committed")
 
-    monkeypatch.setattr("rememberstack.workers.reconcile.cascade_lineage_removal", died)
+    monkeypatch.setattr("rememberstack.workers.reconcile._cascade_run", died)
     with pytest.raises(RuntimeError, match="died right after the tombstone"):
         rig.deletion.delete_lineage(deployment_id=_DEPLOYMENT_ID, doc_id=doc_id)
     monkeypatch.undo()

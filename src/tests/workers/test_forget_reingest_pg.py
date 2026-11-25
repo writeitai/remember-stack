@@ -15,6 +15,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 from typing import cast
+from unittest.mock import MagicMock
 from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid5
@@ -47,6 +48,7 @@ from rememberstack.spine import DocumentCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import SyncCatalog
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers import DocumentArchiver
 from rememberstack.workers import SyncCycleRunner
 from rememberstack.workers import SyncSettings
 from rememberstack.workers import UploadIngestor
@@ -468,6 +470,7 @@ def test_a_connector_resync_skips_the_forgotten_file(rig: _Rig, tmp_path: Path) 
     runner = SyncCycleRunner(
         catalog=SyncCatalog(engine=rig.engine),
         ingestor=rig.ingestor,
+        archiver=DocumentArchiver(engine=rig.engine, profile_refresher=MagicMock()),
         settings=SyncSettings(debounce_quiet_seconds=0.0),
     )
 

@@ -55,7 +55,7 @@ from remember.models import DeploymentBuildInfo
 from remember.models import DOCUMENT_REFERENCES_DEFAULT_LIMIT
 from remember.models import DOCUMENT_SEARCH_DEFAULT_K
 from remember.models import DOCUMENT_SEARCH_DEFAULT_LIMIT
-from remember.models import DocumentDeletion
+from remember.models import DocumentArchive
 from remember.models import DocumentPage
 from remember.models import DocumentReferencesPage
 from remember.models import DocumentReferencesRequest
@@ -65,6 +65,7 @@ from remember.models import DocumentSearchRequest
 from remember.models import DocumentStatusFilter
 from remember.models import DocumentTags
 from remember.models import DocumentTagsUpdate
+from remember.models import DocumentUnarchive
 from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsRequest
 from remember.models import EffectivePeriodsSet
@@ -1091,18 +1092,22 @@ class MemoryClient:
         limit: int = 50,
         cursor: str | None = None,
         status: DocumentStatusFilter | None = None,
+        include_archived: bool = False,
     ) -> DocumentPage:
         """One page of the deployment's documents, newest lineage first.
 
         Pass the returned ``next_cursor`` back as ``cursor`` to read the next
         page; ``None`` means there are no more. ``status`` filters on each document's newest
-        version, for example ``"failed"``.
+        version, for example ``"failed"``. Archived documents are listed only
+        with ``include_archived=True``.
         """
         params: dict[str, str | int] = {"limit": limit}
         if cursor is not None:
             params["cursor"] = cursor
         if status is not None:
             params["status"] = status
+        if include_archived:
+            params["include_archived"] = "true"
         return _validated(
             DocumentPage,
             self._json("GET", "/documents", params=params),
@@ -1306,19 +1311,34 @@ class MemoryClient:
             endpoint="POST /documents/references",
         )
 
-    def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:
-        """Remove one document from the live memory.
+    def archive_document(self, *, doc_id: UUID | str) -> DocumentArchive:
+        """Archive one document: the memory stops believing it (D159).
 
         Its claims stop being current testimony and facts that no other
-        document supports are closed. The claims and the stored original stay
-        as history. An unknown or already deleted ``doc_id`` raises
+        document supports are closed; the document stays readable as history
+        (``include_archived``) and ``unarchive_document`` undoes it exactly. A
+        repeat answers the same ``archived_at`` with zero counts. An unknown
+        ``doc_id`` raises ``MemoryApiError`` with ``status_code`` 404.
+        """
+        document = UUID(str(doc_id))
+        return _validated(
+            DocumentArchive,
+            self._json("POST", f"/documents/{document}/archive"),
+            endpoint="POST /documents/{doc_id}/archive",
+        )
+
+    def unarchive_document(self, *, doc_id: UUID | str) -> DocumentUnarchive:
+        """Undo an archive exactly: its testimony is current again (D159).
+
+        Facts the archive closed reopen when they have support again. A live
+        document answers zero counts. An unknown ``doc_id`` raises
         ``MemoryApiError`` with ``status_code`` 404.
         """
         document = UUID(str(doc_id))
         return _validated(
-            DocumentDeletion,
-            self._json("DELETE", f"/documents/{document}"),
-            endpoint="DELETE /documents/{doc_id}",
+            DocumentUnarchive,
+            self._json("POST", f"/documents/{document}/unarchive"),
+            endpoint="POST /documents/{doc_id}/unarchive",
         )
 
     def forget_document(self, *, doc_id: UUID | str) -> Forget:

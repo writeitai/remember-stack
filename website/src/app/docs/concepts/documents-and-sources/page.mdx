@@ -136,7 +136,7 @@ version's date and is read afresh.
 The rule only ever looks back to earlier dates. If you ingest the 2026
 edition of a document first and the identical 2024 edition later, the 2024
 passages take 2024 and are read afresh; nothing already stamped is re-dated.
-Passages of deleted versions are never drawn on, and the date is recorded
+Passages of forgotten versions are never drawn on, and the date is recorded
 once and never changes. `chunks_live.text_origin_at` in the
 [query space](/docs/reference/query-space#chunks_live) shows it. Passages
 written by an earlier release have no recorded origin, so the first new
@@ -172,9 +172,8 @@ Bytes that match an **older** version (the file was changed and then changed
 back) create a new version. The document moves forward; it never silently
 jumps back to an old snapshot.
 
-Bytes sent again after the document was [deleted](#deleting-a-document)
-also create a new version (`created=true`), and it is processed from the
-start.
+Bytes sent again after the document was [archived](#archiving-a-document)
+that match its latest version leave it archived (`created=false`).
 
 ## Editions in force
 
@@ -248,39 +247,60 @@ processed can already be found by name. Say John uploaded
 `billing-migration.md`: searching for either name finds the one document.
 See [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
 
-## Deleting a document
+## Archiving a document
 
-Deleting a document removes it from the memory: every version of it, in one
-call (`DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
-`remember documents delete`, or the `delete_document` MCP tool).
+Archiving a document tells the memory that it no longer holds, such as a dead
+plan or a replaced price list. It acts on every version of the document in one
+call (`POST /documents/{doc_id}/archive`, `MemoryClient.archive_document`,
+`remember documents archive`, or the `archive_document` MCP tool). The
+document is kept and stays readable as history.
 
 Say Dana uploaded a draft of the billing migration plan that says "the
-migration finishes in March", and John's status note says the same. Dana
-deletes the draft. From then on:
+migration finishes in March", and John's status note says the same. The plan
+is abandoned, so Dana archives the draft. From then on:
 
-- the draft is gone from `GET /documents`, search, facts, the graph and SQL
-  queries;
 - its claims stop counting as evidence (their currency ends with reason
-  `version_deleted`);
+  `version_archived`);
 - "the migration finishes in March" stays believed, because John's note still
   supports it; it now has one supporter instead of two;
-- a fact that only the draft supported is closed, and the closure is recorded
-  as a retraction (`retracted_source_removal`), exactly as when a living
-  document drops a passage.
+- a fact that only the draft supported is closed: the memory stops believing
+  it, its world-time window stays as the draft stated it, and the closure is
+  recorded as a retraction (`retracted_source_removal`), exactly as when a
+  living document drops a passage;
+- the draft is left out of `GET /documents`, search and the context
+  operations, and its folder leaves the corpus filesystem.
 
-Deleting is not erasing. The claims, the stored original and the record of
-what changed stay in the deployment as history, which is why a deletion can
-be audited. To erase a document, [forget](#forgetting-a-document) it.
+Archiving is not erasing. The document, its versions, its stored original and
+the facts it closed stay in the deployment as history. Reads that pass
+`include_archived` return the archived document, and mark each of its claims
+and passages as archived; those claims never count as current support. A read
+of belief as of a time before the archive sees the closed facts as they were.
+In SQL queries, `documents_live` lists the draft with `archived_at` set.
+To erase a document instead, [forget](#forgetting-a-document) it.
 
-If you send the same file again later, it is added back as a new version and
-processed like a new document. The facts that were closed stay closed; its
-new claims support facts in the usual way.
+An archive takes effect when you call it. To say that an edition applied only
+for a period, use [effective periods](#editions-in-force) instead.
 
-A deletion is all or nothing. A document that was still being processed
-when you deleted it publishes no further claims, and anything it had already
-produced is never visible and is retired when its version reaches the
-`reconcile` stage. Details and errors:
-[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+### Bringing it back
+
+`POST /documents/{doc_id}/unarchive` (`MemoryClient.unarchive_document`,
+`remember documents unarchive`, or the `unarchive_document` MCP tool) undoes
+the archive exactly: the claims it retired count again, and the facts it
+closed reopen when they have support again. The reopening is recorded as a new
+event, so a read of belief as of a time inside the archive still sees those
+facts closed then.
+
+Sending the same bytes again does not bring an archived document back; it
+stays archived. A new version of it does: it is ingested as usual, and
+sections whose text did not change reuse their claims instead of being read
+again.
+
+A connector sync that sees a file deleted at its source archives the
+document. When the source shows the same file again,
+that archive is undone; a changed file is a new version.
+
+Details and errors:
+[`POST /documents/{doc_id}/archive`](/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
 
 ## Forgetting a document
 
@@ -316,7 +336,7 @@ Each version carries a processing status for its early stages:
 | `structuring` | Converted; sections are being detected. |
 | `ready` | Converted and structured. |
 | `failed` | Conversion or structuring failed; the version's `error` says why. |
-| `deleted` | Removed. |
+| `deleted` | Removed by a forget. |
 
 <Callout type="warning">
 
@@ -330,7 +350,8 @@ check [readiness](/docs/concepts/pipeline#readiness), not the document status.
 `GET /documents` lists documents newest first, reports the newest version's
 status, and adds a `serving` flag that is `true` when any version of the
 document has reached `ready`. A document whose newest upload failed can still
-be serving an older version. See
+be serving an older version. Archived documents are listed only when you ask
+for them (`include_archived=true`). See
 [Ingest, readiness, documents](/docs/reference/http-api/ingest).
 
 ## Who ingested a version

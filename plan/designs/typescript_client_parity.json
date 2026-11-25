@@ -17,7 +17,7 @@
     "ContextBundleV2",
     "DeclaredEffectivePeriod",
     "DeploymentBuildInfo",
-    "DocumentDeletion",
+    "DocumentArchive",
     "DocumentPage",
     "DocumentReference",
     "DocumentReferenceSource",
@@ -32,6 +32,7 @@
     "DocumentSummary",
     "DocumentTagFilter",
     "DocumentTags",
+    "DocumentUnarchive",
     "DocumentVersionSummary",
     "EffectiveInterval",
     "EffectivePeriodInput",
@@ -250,7 +251,7 @@
         "property": false
       },
       "list_documents": {
-        "arguments": "self, *, limit: int=50, cursor: str | None=None, status: DocumentStatusFilter | None=None",
+        "arguments": "self, *, limit: int=50, cursor: str | None=None, status: DocumentStatusFilter | None=None, include_archived: bool=False",
         "returns": "DocumentPage",
         "property": false
       },
@@ -294,9 +295,14 @@
         "returns": "DocumentReferencesPage",
         "property": false
       },
-      "delete_document": {
+      "archive_document": {
         "arguments": "self, *, doc_id: UUID | str",
-        "returns": "DocumentDeletion",
+        "returns": "DocumentArchive",
+        "property": false
+      },
+      "unarchive_document": {
+        "arguments": "self, *, doc_id: UUID | str",
+        "returns": "DocumentUnarchive",
         "property": false
       },
       "forget_document": {
@@ -855,8 +861,16 @@
           "typescript": "ADJACENT_CHUNKS_TOOL_NAME",
           "disposition": "public client support export"
         },
-        "DELETE_DOCUMENT_TOOL_NAME": {
-          "typescript": "DELETE_DOCUMENT_TOOL_NAME",
+        "ARCHIVE_DOCUMENT_TOOL_NAME": {
+          "typescript": "ARCHIVE_DOCUMENT_TOOL_NAME",
+          "disposition": "public client support export"
+        },
+        "ARCHIVE_TOOL_NAMES": {
+          "typescript": "ARCHIVE_TOOL_NAMES",
+          "disposition": "public client support export"
+        },
+        "UNARCHIVE_DOCUMENT_TOOL_NAME": {
+          "typescript": "UNARCHIVE_DOCUMENT_TOOL_NAME",
           "disposition": "public client support export"
         },
         "FORGET_DOCUMENT_TOOL_NAME": {
@@ -891,7 +905,7 @@
           "typescript": "SEARCH_DOCUMENTS_TOOL_NAME",
           "disposition": "public client support export"
         },
-        "DocumentDeleteBackend": {
+        "DocumentArchiveBackend": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "DocumentForgetBackend": {
@@ -926,7 +940,7 @@
           "typescript": "errorResult",
           "disposition": "public client support export"
         },
-        "handle_delete_document_tool": {
+        "handle_archive_tool": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "handle_forget_document_tool": {

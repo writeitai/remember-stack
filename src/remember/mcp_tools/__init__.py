@@ -14,7 +14,8 @@ the base ``remember`` install.
 from __future__ import annotations
 
 from remember.mcp_tools._definitions import ADJACENT_CHUNKS_TOOL_NAME
-from remember.mcp_tools._definitions import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools._definitions import ARCHIVE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools._definitions import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools._definitions import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools._definitions import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
@@ -33,6 +34,7 @@ from remember.mcp_tools._definitions import TAG_TOOL_NAMES
 from remember.mcp_tools._definitions import TAG_WRITE_TOOL_NAMES
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._definitions import ToolDefinition
+from remember.mcp_tools._definitions import UNARCHIVE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._documents import DocumentSearchBackend
 from remember.mcp_tools._documents import handle_search_documents_tool
 from remember.mcp_tools._errors import error_result
@@ -41,9 +43,9 @@ from remember.mcp_tools._errors import layer_unavailable
 from remember.mcp_tools._errors import map_error
 from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._errors import ToolError
-from remember.mcp_tools._memory import DocumentDeleteBackend
+from remember.mcp_tools._memory import DocumentArchiveBackend
 from remember.mcp_tools._memory import DocumentForgetBackend
-from remember.mcp_tools._memory import handle_delete_document_tool
+from remember.mcp_tools._memory import handle_archive_tool
 from remember.mcp_tools._memory import handle_forget_document_tool
 from remember.mcp_tools._memory import handle_memory_write_tool
 from remember.mcp_tools._memory import McpMemorySettings
@@ -59,7 +61,9 @@ from remember.mcp_tools._validate import validate_arguments
 
 __all__ = (
     "ADJACENT_CHUNKS_TOOL_NAME",
-    "DELETE_DOCUMENT_TOOL_NAME",
+    "ARCHIVE_DOCUMENT_TOOL_NAME",
+    "ARCHIVE_TOOL_NAMES",
+    "UNARCHIVE_DOCUMENT_TOOL_NAME",
     "DOCUMENT_REFERENCES_TOOL_NAME",
     "FORGET_DOCUMENT_TOOL_NAME",
     "DocumentReferencesBackend",
@@ -76,7 +80,6 @@ __all__ = (
     "TAG_TOOL_NAMES",
     "TAG_WRITE_TOOL_NAMES",
     "TagBackend",
-    "DocumentDeleteBackend",
     "DocumentForgetBackend",
     "DocumentSearchBackend",
     "McpMemorySettings",
@@ -86,7 +89,8 @@ __all__ = (
     "ToolDefinition",
     "ToolError",
     "error_result",
-    "handle_delete_document_tool",
+    "DocumentArchiveBackend",
+    "handle_archive_tool",
     "handle_forget_document_tool",
     "handle_document_references_tool",
     "invalid_arguments",
