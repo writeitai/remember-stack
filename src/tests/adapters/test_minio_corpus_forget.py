@@ -314,6 +314,34 @@ def test_forget_erases_all_suffix_copies_without_touching_control(
     )
 
 
+def test_forget_erases_empty_folder_markers(forget: _Forget) -> None:
+    """A gateway's "dir/" folder keys, even a folder left only as one, go too."""
+    suffix = corpus_suffix(forget.state.source.doc_id)
+    current = next(
+        doc
+        for doc in forget.state.selected()
+        if doc.doc_id == forget.state.source.doc_id
+    )
+    for marker in (
+        current.path + "/",
+        current.path + "/media/",
+        current.path + "/empty/deeper/",
+        "pdf/marker-only--" + suffix + "/",
+        "pdf/marker-only--" + suffix + "/nested/",
+    ):
+        forget.state.bucket.client.put_object(
+            Bucket=forget.state.bucket.name, Key=marker, Body=b""
+        )
+    forget.request()
+    forget.sweep_until_clean()
+    forget.assert_clean()
+    assert not [
+        key.root
+        for key in forget.state.bucket.store.iter_purge_keys()
+        if key.root.endswith("/") and suffix in key.root
+    ]
+
+
 def test_a_late_corpus_write_is_removed_by_the_next_sweep(
     forget: _Forget, monkeypatch: pytest.MonkeyPatch
 ) -> None:

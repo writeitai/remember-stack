@@ -174,6 +174,21 @@ def test_real_listing_crosses_provider_pages_and_purge_keeps_siblings(
     assert {k.root for k in bucket.store.iter_keys(prefix="")} == {"path-other/control"}
 
 
+def test_purge_deletes_explicit_folder_markers_under_the_prefix(
+    bucket: _Bucket,
+) -> None:
+    """A "dir/" marker object under a purged prefix goes; one outside stays."""
+    bucket.store.write_bytes(
+        key=ObjectKey("doc/a/file"), content=b"x", storage_class="hot"
+    )
+    for marker in ("doc/", "doc/a/", "doc/empty/deeper/", "document/"):
+        bucket.client.put_object(Bucket=bucket.name, Key=marker, Body=b"")
+
+    assert bucket.store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),)) == 1
+    bucket.store.verify_objects_purged(keys=(), prefixes=(ObjectKey("doc"),))
+    assert [key.root for key in bucket.store.iter_keys(prefix="")] == ["document/"]
+
+
 @pytest.mark.parametrize("operation", ["upload_part", "complete_multipart_upload"])
 def test_upload_failures_abort_parts_and_preserve_old_object(
     bucket: _Bucket, monkeypatch: pytest.MonkeyPatch, operation: str

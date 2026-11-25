@@ -491,7 +491,8 @@ class MinIOObjectStore:
         """Delete exact keys/descendants; return how many objects were removed.
 
         The count covers current objects, retained versions and unfinished
-        uploads, so a caller can tell erasure from absence. Only existing
+        uploads, so a caller can tell erasure from absence. Empty-folder
+        markers below a prefix are deleted too, but not counted. Only existing
         objects are deleted, so a versioned bucket gains no delete marker for
         an absent key. ``keep`` names exact keys (with their versions) that
         are never touched.
@@ -509,12 +510,13 @@ class MinIOObjectStore:
                 removed += 1
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
-                if key.root in kept:
+                if key.root in kept or key.root.endswith("/"):
                     continue
                 if before_write:
                     before_write()
                 self.delete(key=key)
                 removed += 1
+            self._delete_folder_markers(boundary=boundary, before_write=before_write)
         # Suspended versioning still retains source-bearing history. Never
         # confuse an empty current listing with erasure of those bytes.
         if self._has_versions():
@@ -546,6 +548,38 @@ class MinIOObjectStore:
         except _UploadListingNotImplemented:
             pass  # logged by _iter_uploads; the provider's cleanup policy applies
         return removed
+
+    def _delete_folder_markers(
+        self, *, boundary: str, before_write: Callable[[], None] | None
+    ) -> None:
+        """Delete the empty-folder markers below a purged prefix, deepest first.
+
+        Some S3 gateways (mountable, SeaweedFS) list an empty folder as a key
+        ending in "/", which no engine key can be. A marker holds no bytes, so
+        it is not counted as a removed object. Deleting one can empty its
+        parent, which the gateway then lists, so list again until none remain.
+        """
+        deleted: set[str] = set()
+        while markers := sorted(
+            (
+                key.root
+                for key in self.iter_keys(prefix=boundary)
+                if key.root.endswith("/")
+            ),
+            key=lambda name: (-name.count("/"), name),
+        ):
+            if deleted.issuperset(markers):
+                raise RuntimeError(f"folder markers survived deletion: {markers!r}")
+            for name in markers:
+                validate_object_path(name, prefix=True)
+                if before_write:
+                    before_write()
+                try:
+                    self._client.delete_object(Bucket=self._bucket, Key=name)
+                except ClientError as error:
+                    if _error_code(error=error) not in {"404", "NoSuchKey", "NotFound"}:
+                        raise
+            deleted.update(markers)
 
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]

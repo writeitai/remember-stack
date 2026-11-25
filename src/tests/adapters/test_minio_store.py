@@ -1,6 +1,7 @@
 """WP-0.4c contract tests for immutable S3 object storage."""
 
 from io import BytesIO
+from typing import Any
 
 from botocore.exceptions import ClientError
 import pytest
@@ -245,6 +246,92 @@ def test_purge_respects_prefix_boundaries_and_verifies() -> None:
     )
     with pytest.raises(RuntimeError, match="doc/reappeared"):
         store.verify_objects_purged(keys=(), prefixes=(ObjectKey("doc"),))
+
+
+class _FolderS3(_MemoryS3):
+    """A gateway (mountable, SeaweedFS) that keeps folders and lists empty ones.
+
+    Writing an object creates its folders; deleting it leaves them behind. An
+    empty folder is listed as a key ending in "/" and deleted by that key; a
+    folder that still holds anything refuses deletion.
+    """
+
+    def __init__(self, *, sticky: bool = False) -> None:
+        """Start empty; ``sticky`` folders silently survive deletion."""
+        super().__init__()
+        self.folders: set[tuple[str, str]] = set()
+        self.sticky = sticky
+
+    def put_object(self, *, Bucket: str, Key: str, **kwargs: Any) -> object:
+        """Create the object and every folder above it."""
+        parts = Key.split("/")[:-1]
+        for depth in range(1, len(parts) + 1):
+            self.folders.add((Bucket, "/".join(parts[:depth]) + "/"))
+        return super().put_object(Bucket=Bucket, Key=Key, **kwargs)
+
+    def delete_object(self, *, Bucket: str, Key: str, VersionId: str = "") -> object:
+        """Delete a file, or an empty folder by its marker key."""
+        if not Key.endswith("/"):
+            return super().delete_object(Bucket=Bucket, Key=Key)
+        if self._below(bucket=Bucket, folder=Key):
+            raise _client_error(code="DirectoryNotEmpty", operation="DeleteObject")
+        if not self.sticky:
+            self.folders.discard((Bucket, Key))
+        return {}
+
+    def list_objects_v2(
+        self, *, Bucket: str, Prefix: str, ContinuationToken: str = ""
+    ) -> _ListObjectsOutput:
+        """List files and empty folders, in key order."""
+        listed = super().list_objects_v2(Bucket=Bucket, Prefix=Prefix)
+        names = [item["Key"] for item in listed.get("Contents", ())]
+        names += [
+            folder
+            for bucket, folder in self.folders
+            if bucket == Bucket
+            and folder.startswith(Prefix)
+            and not self._below(bucket=Bucket, folder=folder)
+        ]
+        return {"Contents": [{"Key": name} for name in sorted(names)]}
+
+    def _below(self, *, bucket: str, folder: str) -> bool:
+        return any(
+            name != folder and name.startswith(folder)
+            for owner, name in (*self.objects, *self.folders)
+            if owner == bucket
+        )
+
+
+def test_purge_removes_empty_folder_markers_deepest_first_without_counting() -> None:
+    """A gateway's empty folders under a prefix go too; a later sweep is clean."""
+    client = _FolderS3()
+    store = MinIOObjectStore(bucket="corpus", client=client)
+    store.ensure_bucket()
+    for name in ("doc/a", "doc/nested/deep/b", "document/sibling"):
+        store.write_bytes(key=ObjectKey(name), content=b"x", storage_class="hot")
+    store.delete(key=ObjectKey("document/sibling"))  # leaves "document/" listed
+
+    # Files are counted; the folders they leave behind are deleted, uncounted.
+    assert store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),)) == 2
+    assert [key.root for key in store.iter_keys(prefix="")] == ["document/"]
+    assert ("corpus", "doc/") not in client.folders
+    # A folder left only as a marker (an earlier sweep removed its files) is
+    # purged without error and without counting as residue.
+    client.folders.add(("corpus", "doc/again/"))
+    assert store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),)) == 0
+    assert [key.root for key in store.iter_keys(prefix="")] == ["document/"]
+    store.verify_objects_purged(keys=(), prefixes=(ObjectKey("doc"),))
+
+
+def test_a_folder_marker_that_survives_deletion_fails_the_purge() -> None:
+    """A gateway that keeps the marker is visible, never mistaken for erasure."""
+    client = _FolderS3(sticky=True)
+    store = MinIOObjectStore(bucket="corpus", client=client)
+    store.ensure_bucket()
+    store.write_bytes(key=ObjectKey("doc/a"), content=b"x", storage_class="hot")
+
+    with pytest.raises(RuntimeError, match="doc/"):
+        store.purge_objects(keys=(), prefixes=(ObjectKey("doc"),))
 
 
 @pytest.mark.parametrize("value", ("/absolute", "safe/../escape"))
