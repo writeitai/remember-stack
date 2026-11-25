@@ -244,19 +244,26 @@ def _bmff_mime(*, content: Content) -> str | None:
         return None
     # The major brand, then each compatible brand, read one at a time.
     seen: set[str] = set()
+    generic_image = False
     for offset in itertools.chain((8,), range(16, size, 4)):
-        kind = _BMFF_BRANDS.get(content[offset : offset + 4])
+        brand = content[offset : offset + 4]
+        kind = _BMFF_BRANDS.get(brand)
         if kind is not None:
             seen.add(kind)
+        generic_image = generic_image or brand == b"mif1"
     for kind in ("image/heic", "image/avif", "audio/mp4"):
         if kind in seen:
             return kind
+    # ``mif1`` is the generic HEIF image brand that AVIF files carry too: it
+    # names HEIC only when no codec brand does.
+    if generic_image:
+        return "image/heic"
     return "video/mp4"
 
 
 _BMFF_BRANDS: dict[bytes, str] = {
     **dict.fromkeys(
-        (b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1"), "image/heic"
+        (b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis"), "image/heic"
     ),
     **dict.fromkeys((b"avif", b"avis"), "image/avif"),
     **dict.fromkeys((b"M4A ", b"M4B ", b"M4P "), "audio/mp4"),

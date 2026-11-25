@@ -110,6 +110,28 @@ Notes an implementer needs:
   does not replace local decode bounds or guarantee acceptance by every provider;
   rejected requests remain visible failures. Rationale and the one-time checkpoint
   boundary: `../analysis/image_description_detail_20261110.md`.
+- **Which images, and in what form.** PNG, JPEG and WebP reach both lanes as
+  uploaded; an animated PNG or WebP is refused. GIF, TIFF, BMP, HEIC, AVIF and PSD
+  are converted to one PNG first, so both lanes always receive a format they both
+  document: the image Pillow opens (the first frame of an animated GIF, the first
+  page of a multi-page TIFF, a PSD's composite, a HEIC's primary image), EXIF
+  orientation applied (not to PSD; a PSD is read only from an 8-bit
+  composite, as opaque: its fourth channel may be a saved selection; a TIFF is
+  read as opaque too, since libtiff can drop a planar alpha plane), an RGB or CMYK image's embedded ICC profile applied to sRGB
+  and then dropped, 16-bit samples scaled to 8 bits (signed, 32-bit integer or float samples, big-endian 16-bit white-is-zero TIFF, PSDs with
+  extra saved channels and non-8-bit or ZIP-compressed PSD composites are refused; BigTIFF is not
+  recognized as an image). Colour carried only as
+  metadata (HEIC NCLX, AVIF CICP, BMP V5 colour spaces) is not applied yet, and a HEIC or AVIF
+  rotated only by EXIF (no container rotation) is not turned upright yet. Mistral OCR also reads some of these formats
+  directly; one PNG path for both lanes is the simpler contract. The byte and pixel
+  bounds apply to the upload and again to the PNG, before either call. The
+  conversion runs in a child process capped at 1.5 GiB of address space (Linux)
+  and 60 seconds (starting points to measure): decoders can need far more than a
+  file's bytes or displayed size suggest, and a file that breaks a cap is a bad
+  file, not a retry. Each
+  converted type keys its lane checkpoints by its own MIME type and the conversion
+  version (`png-first-frame-exif-srgb-v1`), so it never reuses a PNG's lanes.
+  Every accepted image is one `image` unit (D150).
 - **Zero-data-retention routing is explicit.** `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`
   (default off) adds `zdr: true` and `data_collection: deny` to the description
   request, with or without a provider allowlist. Strict zero retention also needs the
