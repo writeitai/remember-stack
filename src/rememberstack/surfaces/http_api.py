@@ -846,7 +846,7 @@ def build_api(
             content={"detail": {"code": "invalid_parameter", "message": str(error)}},
         )
 
-    @app.get("/resolve", response_model=Envelope)
+    @app.get("/resolve", tags=["client"], response_model=Envelope)
     def resolve(
         deployment: _Deployment,
         name: str,
@@ -861,7 +861,7 @@ def build_api(
             context_entity_ids=tuple(context_entity_ids or ()),
         )
 
-    @app.get("/lookup/relations", response_model=Envelope)
+    @app.get("/lookup/relations", tags=["client"], response_model=Envelope)
     def lookup_relations(
         deployment: _Deployment,
         subject_entity_id: UUID | None = None,
@@ -887,14 +887,16 @@ def build_api(
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
-    @app.get("/transcript/relation/{relation_id}", response_model=Envelope)
+    @app.get(
+        "/transcript/relation/{relation_id}", tags=["client"], response_model=Envelope
+    )
     def transcript_relation(deployment: _Deployment, relation_id: UUID) -> Envelope:
         """The S8 audit query: why the system believes what it believes."""
         return deployment.engine.transcript_relation(
             deployment_id=deployment.deployment_id, relation_id=relation_id
         )
 
-    @app.get("/lookup/observations", response_model=Envelope)
+    @app.get("/lookup/observations", tags=["client"], response_model=Envelope)
     def lookup_observations(
         deployment: _Deployment,
         entity_id: UUID,
@@ -918,7 +920,7 @@ def build_api(
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
-    @app.get("/search/claims", response_model=Envelope)
+    @app.get("/search/claims", tags=["client"], response_model=Envelope)
     def search_claims(
         deployment: _Deployment,
         query: str,
@@ -930,7 +932,7 @@ def build_api(
             deployment_id=deployment.deployment_id, query=query, k=k, channel=channel
         )
 
-    @app.get("/search/chunks", response_model=Envelope)
+    @app.get("/search/chunks", tags=["client"], response_model=Envelope)
     def search_chunks(
         deployment: _Deployment,
         query: str,
@@ -947,7 +949,7 @@ def build_api(
     # access logs, kept by proxies and retained in browser history — so the
     # surface a browser uses must not put it there (D59). The GET forms stay
     # for existing clients, which reach the deployment over a private path.
-    @app.post("/search/claims", response_model=Envelope)
+    @app.post("/search/claims", tags=["client"], response_model=Envelope)
     def post_search_claims(
         deployment: _Deployment, body: Annotated[SearchRequest, Body()]
     ) -> Envelope:
@@ -970,7 +972,7 @@ def build_api(
         except UnknownTagError as error:
             raise _tag_errors(error) from error
 
-    @app.post("/search/chunks", response_model=Envelope)
+    @app.post("/search/chunks", tags=["client"], response_model=Envelope)
     def post_search_chunks(
         deployment: _Deployment, body: Annotated[SearchRequest, Body()]
     ) -> Envelope:
@@ -990,7 +992,7 @@ def build_api(
         except UnknownTagError as error:
             raise _tag_errors(error) from error
 
-    @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
+    @app.get("/chunks/{chunk_id}/adjacent", tags=["client"], response_model=Envelope)
     def adjacent_chunks(
         deployment: _Deployment,
         chunk_id: UUID,
@@ -1003,7 +1005,7 @@ def build_api(
             deployment_id=deployment.deployment_id, chunk_id=chunk_id, window=window
         )
 
-    @app.post("/chunks/adjacent", response_model=Envelope)
+    @app.post("/chunks/adjacent", tags=["client"], response_model=Envelope)
     def post_adjacent_chunks(
         deployment: _Deployment, body: Annotated[AdjacentChunksRequest, Body()]
     ) -> Envelope:
@@ -1014,7 +1016,9 @@ def build_api(
             window=body.window,
         )
 
-    @app.get("/hydrate/relation/{relation_id}", response_model=Envelope)
+    @app.get(
+        "/hydrate/relation/{relation_id}", tags=["client"], response_model=Envelope
+    )
     def hydrate_relation(deployment: _Deployment, relation_id: UUID) -> Envelope:
         """The S5 chain: relation → evidence claims → source documents."""
         return deployment.engine.hydrate_relation(
@@ -1285,7 +1289,11 @@ def _mount_build_info(*, app: FastAPI, tools: dict[str, int]) -> None:
     catalogue tools this API serves is a fact about the routes mounted here.
     """
 
-    @app.get("/deployment", response_model=DeploymentBuildInfo)
+    @app.get(
+        "/deployment",
+        tags=["client", "diagnostics"],
+        response_model=DeploymentBuildInfo,
+    )
     def deployment_build_info(deployment: _Deployment) -> DeploymentBuildInfo:
         """Report which code, model bindings and tools are serving, before any work."""
         # D143 §7.4: tools that read only an unserved layer are not listed.
@@ -1401,7 +1409,7 @@ def _mount_graph(*, app: FastAPI) -> None:
     (D143 §7.2).
     """
 
-    @app.post("/graph/neighborhood", response_model=Envelope)
+    @app.post("/graph/neighborhood", tags=["client"], response_model=Envelope)
     def graph_neighborhood(
         deployment: _Deployment, body: GraphNeighborhoodRequest
     ) -> Envelope:
@@ -1424,7 +1432,7 @@ def _mount_graph(*, app: FastAPI) -> None:
         # D143 §7.3: an empty answer while facts backfill is a boundary.
         return disclose_layers(envelope=envelope, admission=admission)
 
-    @app.post("/graph/path", response_model=Envelope)
+    @app.post("/graph/path", tags=["client"], response_model=Envelope)
     def graph_path(deployment: _Deployment, body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
         graph = _served(deployment.graph)
@@ -1442,7 +1450,7 @@ def _mount_graph(*, app: FastAPI) -> None:
             )
         return disclose_layers(envelope=envelope, admission=admission)
 
-    @app.post("/graph/citation-path", response_model=Envelope)
+    @app.post("/graph/citation-path", tags=["client"], response_model=Envelope)
     def graph_citation_path(
         deployment: _Deployment, body: GraphCitationPathRequest
     ) -> Envelope:
@@ -1470,7 +1478,7 @@ def _mount_open_query(*, app: FastAPI) -> None:
     """
     principal_dep = _open_query_principal
 
-    @app.post("/query/sql", response_model=QueryResult)
+    @app.post("/query/sql", tags=["client"], response_model=QueryResult)
     def query_sql(
         deployment: _Deployment,
         body: SqlQueryRequest,
@@ -1491,7 +1499,7 @@ def _mount_open_query(*, app: FastAPI) -> None:
             )
         )
 
-    @app.post("/query/sql/explain", response_model=QueryResult)
+    @app.post("/query/sql/explain", tags=["client"], response_model=QueryResult)
     def explain_sql(
         deployment: _Deployment,
         body: SqlExplainRequest,
@@ -1511,7 +1519,7 @@ def _mount_open_query(*, app: FastAPI) -> None:
             )
         )
 
-    @app.get("/query/space")
+    @app.get("/query/space", tags=["client"])
     def describe_query_space(
         deployment: _Deployment,
         pattern: str | None = None,
@@ -1530,7 +1538,7 @@ def _mount_open_query(*, app: FastAPI) -> None:
         )
         return query_space_description_payload(description)
 
-    @app.get("/query/space/search")
+    @app.get("/query/space/search", tags=["client"])
     def search_query_space(
         deployment: _Deployment,
         query: Annotated[str, Query(min_length=1)],
@@ -1550,7 +1558,7 @@ def _mount_open_query(*, app: FastAPI) -> None:
             for hit in hits
         ]
 
-    @app.get("/query/saved")
+    @app.get("/query/saved", tags=["client"])
     def list_saved_queries(
         deployment: _Deployment,
         namespace: str | None = None,
@@ -1577,7 +1585,7 @@ def _mount_open_query(*, app: FastAPI) -> None:
             for row in rows
         ]
 
-    @app.get("/query/saved/{namespace}/{name}")
+    @app.get("/query/saved/{namespace}/{name}", tags=["client"])
     def describe_saved_query(
         deployment: _Deployment, namespace: str, name: str, version: int | None = None
     ) -> dict[str, object]:
@@ -1610,7 +1618,11 @@ def _mount_open_query(*, app: FastAPI) -> None:
             "approver_principal": detail.approver_principal,
         }
 
-    @app.post("/query/saved/{namespace}/{name}/run", response_model=QueryResult)
+    @app.post(
+        "/query/saved/{namespace}/{name}/run",
+        tags=["client"],
+        response_model=QueryResult,
+    )
     def run_saved_query(
         deployment: _Deployment,
         namespace: str,
@@ -1687,7 +1699,11 @@ def _sandbox_status(code: QueryErrorCode) -> int:
 def _mount_pipeline_readiness(*, app: FastAPI) -> None:
     """Expose a normal, read-only completion boundary for bounded versions."""
 
-    @app.post("/readiness", response_model=PipelineReadinessReport)
+    @app.post(
+        "/readiness",
+        tags=["client", "diagnostics"],
+        response_model=PipelineReadinessReport,
+    )
     def pipeline_readiness(
         deployment: _Deployment, request: Annotated[PipelineReadinessRequest, Body()]
     ) -> PipelineReadinessReport:
@@ -1702,7 +1718,7 @@ def _mount_pipeline_readiness(*, app: FastAPI) -> None:
 def _mount_document_inventory(*, app: FastAPI) -> None:
     """Expose the read-only inventory of what this deployment holds."""
 
-    @app.get("/documents", response_model=DocumentPage)
+    @app.get("/documents", tags=["client"], response_model=DocumentPage)
     def list_documents(
         deployment: _Deployment,
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -1752,6 +1768,7 @@ def _mount_document_search(*, app: FastAPI) -> None:
 
     @app.post(
         "/documents/search",
+        tags=["client"],
         response_model=DocumentSearchPage,
         responses={400: {"description": "cursor is malformed"}},
     )
@@ -1782,6 +1799,7 @@ def _mount_section_history(*, app: FastAPI) -> None:
 
     @app.get(
         "/documents/{doc_id}/sections/{section_key:path}/history",
+        tags=["client"],
         response_model=SectionHistoryPage,
         responses={
             400: {"description": "cursor is malformed or belongs to another call"},
@@ -1870,6 +1888,7 @@ def _mount_references(*, app: FastAPI) -> None:
 
     @app.put(
         "/documents/{doc_id}/versions/{version_id}/references",
+        tags=["client"],
         response_model=ReferencesSet,
         responses={
             404: {"description": "document_not_found | version_not_found"},
@@ -1927,6 +1946,7 @@ def _mount_references(*, app: FastAPI) -> None:
 
     @app.get(
         "/documents/{doc_id}/versions/{version_id}/references",
+        tags=["client"],
         response_model=ReferenceGenerations,
         responses={404: {"description": "document_not_found | version_not_found"}},
     )
@@ -1963,6 +1983,7 @@ def _mount_document_references(*, app: FastAPI) -> None:
 
     @app.post(
         "/documents/references",
+        tags=["client"],
         response_model=DocumentReferencesPage,
         responses={
             400: {"description": "cursor is malformed or belongs to another call"},
@@ -1999,6 +2020,7 @@ def _mount_document_archive(*, app: FastAPI) -> None:
 
     @app.post(
         "/documents/{doc_id}/archive",
+        tags=["client"],
         response_model=DocumentArchive,
         responses={404: {"description": "document_not_found"}},
     )
@@ -2022,6 +2044,7 @@ def _mount_document_archive(*, app: FastAPI) -> None:
 
     @app.post(
         "/documents/{doc_id}/unarchive",
+        tags=["client"],
         response_model=DocumentUnarchive,
         responses={404: {"description": "document_not_found"}},
     )
@@ -2046,6 +2069,7 @@ def _mount_forget(*, app: FastAPI) -> None:
 
     @app.post(
         "/documents/{doc_id}/forget",
+        tags=["client"],
         response_model=Forget,
         status_code=202,
         responses={
@@ -2079,7 +2103,7 @@ def _mount_forget(*, app: FastAPI) -> None:
             response.status_code = 200
         return forget
 
-    @app.get("/forgets", response_model=ForgetList)
+    @app.get("/forgets", tags=["client"], response_model=ForgetList)
     def list_forgets(deployment: _Deployment) -> ForgetList:
         """Every forget record of the deployment, oldest first.
 
@@ -2091,6 +2115,7 @@ def _mount_forget(*, app: FastAPI) -> None:
 
     @app.get(
         "/forgets/{forget_id}",
+        tags=["client"],
         response_model=Forget,
         responses={404: {"description": "forget_not_found"}},
     )
@@ -2152,6 +2177,7 @@ def _mount_effective_time(*, app: FastAPI) -> None:
 
     @app.put(
         "/documents/{doc_id}/versions/{version_id}/effective-periods",
+        tags=["client"],
         response_model=EffectivePeriodsSet,
         responses={
             404: {"description": "document_not_found | version_not_found"},
@@ -2188,6 +2214,7 @@ def _mount_effective_time(*, app: FastAPI) -> None:
 
     @app.delete(
         "/documents/{doc_id}/effective-periods",
+        tags=["client"],
         response_model=EffectiveTimeCleared,
         responses={404: {"description": "document_not_found"}},
     )
@@ -2245,7 +2272,7 @@ def _mount_tags(*, app: FastAPI) -> None:
     ``/``; the SDK, CLI and MCP tools accept a name and resolve it first.
     """
 
-    @app.get("/tags", response_model=TagList)
+    @app.get("/tags", tags=["client"], response_model=TagList)
     def list_tags(
         deployment: _Deployment,
         query: Annotated[str | None, Query(min_length=1, max_length=200)] = None,
@@ -2274,6 +2301,7 @@ def _mount_tags(*, app: FastAPI) -> None:
 
     @app.post(
         "/tags",
+        tags=["client"],
         response_model=Tag,
         responses={409: {"description": "conflict | tag_limit_exceeded"}},
     )
@@ -2293,6 +2321,7 @@ def _mount_tags(*, app: FastAPI) -> None:
 
     @app.patch(
         "/tags/{tag_id}",
+        tags=["client"],
         response_model=Tag,
         responses={
             404: {"description": "unknown_tag"},
@@ -2314,6 +2343,7 @@ def _mount_tags(*, app: FastAPI) -> None:
 
     @app.delete(
         "/tags/{tag_id}",
+        tags=["client"],
         response_model=Tag,
         responses={404: {"description": "unknown_tag"}},
     )
@@ -2328,6 +2358,7 @@ def _mount_tags(*, app: FastAPI) -> None:
 
     @app.post(
         "/documents/{doc_id}/tags",
+        tags=["client"],
         response_model=DocumentTags,
         responses={
             404: {"description": "document_not_found"},
@@ -2356,7 +2387,11 @@ def _mount_tags(*, app: FastAPI) -> None:
 def _mount_processing_layers(*, app: FastAPI) -> None:
     """Mount ``GET /processing-layers`` (D143 §7.4)."""
 
-    @app.get("/processing-layers", response_model=ProcessingLayerStates)
+    @app.get(
+        "/processing-layers",
+        tags=["client", "diagnostics"],
+        response_model=ProcessingLayerStates,
+    )
     def processing_layers(deployment: _Deployment) -> ProcessingLayerStates:
         """Each switchable layer is enabled, backfilling or disabled."""
         return _served(deployment.processing_layers).states(
@@ -2367,7 +2402,7 @@ def _mount_processing_layers(*, app: FastAPI) -> None:
 def _mount_operations(*, app: FastAPI) -> None:
     """Add the registry-rendered assured-operation endpoints (D50/D87)."""
 
-    @app.get("/operations", response_model=list[ToolDescriptor])
+    @app.get("/operations", tags=["client"], response_model=list[ToolDescriptor])
     def list_operations(deployment: _Deployment) -> list[ToolDescriptor]:
         """The four assured operations for this deployment."""
         surface = _served(deployment.surface)
@@ -2381,7 +2416,9 @@ def _mount_operations(*, app: FastAPI) -> None:
             if descriptor.name not in unserved
         ]
 
-    @app.post("/operations/{name}", response_model=Envelope | ContextBundleV2)
+    @app.post(
+        "/operations/{name}", tags=["client"], response_model=Envelope | ContextBundleV2
+    )
     def run_operation(
         deployment: _Deployment,
         name: str,
@@ -2547,7 +2584,7 @@ def _mount_ingest(
 ) -> None:
     """Add the D62 lineage-aware push surface over the E0 ingest gate."""
 
-    @app.post("/ingest", response_model=IngestedVersion)
+    @app.post("/ingest", tags=["client"], response_model=IngestedVersion)
     def ingest_document(
         deployment: _Deployment,
         request: Request,
@@ -2794,7 +2831,7 @@ def _mount_ingest(
 def _mount_connectors(*, app: FastAPI) -> None:
     """Add remote connector-management endpoints; execution stays server-side."""
 
-    @app.get("/connectors", response_model=list[ConnectorDescriptor])
+    @app.get("/connectors", tags=["operator"], response_model=list[ConnectorDescriptor])
     def list_connectors(deployment: _Deployment) -> list[ConnectorDescriptor]:
         return list(
             _served(deployment.connectors).connectors(
@@ -2802,7 +2839,7 @@ def _mount_connectors(*, app: FastAPI) -> None:
             )
         )
 
-    @app.post("/connectors", response_model=ConnectorDescriptor)
+    @app.post("/connectors", tags=["operator"], response_model=ConnectorDescriptor)
     def add_connector(
         deployment: _Deployment, connector: ConnectorCreate
     ) -> ConnectorDescriptor:
@@ -2810,7 +2847,11 @@ def _mount_connectors(*, app: FastAPI) -> None:
             deployment_id=deployment.deployment_id, connector=connector
         )
 
-    @app.post("/connectors/{connector_id}/pause", response_model=ConnectorDescriptor)
+    @app.post(
+        "/connectors/{connector_id}/pause",
+        tags=["operator"],
+        response_model=ConnectorDescriptor,
+    )
     def pause_connector(
         deployment: _Deployment, connector_id: UUID
     ) -> ConnectorDescriptor:
@@ -2821,7 +2862,11 @@ def _mount_connectors(*, app: FastAPI) -> None:
         except ConnectorNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
-    @app.get("/connectors/{connector_id}", response_model=ConnectorDescriptor)
+    @app.get(
+        "/connectors/{connector_id}",
+        tags=["operator"],
+        response_model=ConnectorDescriptor,
+    )
     def connector_status(
         deployment: _Deployment, connector_id: UUID
     ) -> ConnectorDescriptor:
