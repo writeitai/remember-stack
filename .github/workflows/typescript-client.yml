@@ -41,6 +41,8 @@ jobs:
       - name: Check executable Python behavior recordings
         working-directory: packages/typescript-client
         run: node scripts/npm.mjs run check:parity
+      - name: Check tagged operations against shipped clients
+        run: uv run --locked python scripts/check_client_api.py
       - name: Typecheck and run API/wire/security/HTTP/HTTPS tests
         working-directory: packages/typescript-client
         run: node scripts/npm.mjs run typecheck && node scripts/npm.mjs test
