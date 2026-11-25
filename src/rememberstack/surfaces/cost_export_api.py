@@ -85,7 +85,7 @@ def build_cost_export_app(
     )
     app.state.cost_export_bucket = limiter
 
-    @app.get("/ops/cost-export/v1", response_model=CostExportPage)
+    @app.get("/ops/cost-export/v1", tags=["operator"], response_model=CostExportPage)
     def cost_export_v1(
         authorization: str | None = Header(default=None),
         cursor: str | None = None,

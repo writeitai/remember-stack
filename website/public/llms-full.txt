@@ -10605,23 +10605,34 @@ that hold for all of its routes: where to send requests, how to authenticate,
 which credential may call what, how errors look, and which limits apply. The
 group pages then describe each route.
 
-The API has 40 documented operations:
+## API audiences
+
+Use the `client` tag in `openapi.json` to find the supported HTTP operations
+for the CLI, MCP server and SDKs. The `diagnostics` tag identifies three of
+those operations that report deployment status, processing-layer availability
+or document readiness. All three also carry the `client` tag because clients
+use them to discover capabilities or wait for processing.
+
+On deployments with API authentication enabled, every exported operation
+requires a deployment bearer credential and checks its scope. The [self-host
+quickstart](https://remember.dev/docs/self-hosting/authentication) can also run with API
+authentication disabled.
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `POST /documents/{doc_id}/archive`, `POST /documents/{doc_id}/unarchive`, `POST /documents/{doc_id}/forget`, `GET /forgets`, `GET /forgets/{forget_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
+| Ingest and documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `GET /documents`, `POST /documents/search`, `POST /documents/{doc_id}/archive`, `POST /documents/{doc_id}/unarchive`, `POST /documents/{doc_id}/forget`, `GET /forgets`, `GET /forgets/{forget_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
 | Sections and references | [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references) | `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` |
 | Assured operations | [Operations](https://remember.dev/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](https://remember.dev/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
 | Search | [Search](https://remember.dev/docs/reference/http-api/search) | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` |
 | Graph | [Graph](https://remember.dev/docs/reference/http-api/graph) | `POST /graph/neighborhood`, `POST /graph/path`, `POST /graph/citation-path` |
 | SQL queries | [SQL queries](https://remember.dev/docs/reference/http-api/query) | `POST /query/sql`, `POST /query/sql/explain`, `GET /query/space`, `GET /query/space/search`, `GET /query/saved`, `GET /query/saved/{namespace}/{name}`, `POST /query/saved/{namespace}/{name}/run` |
-| Deployment | [Deployment](https://remember.dev/docs/reference/http-api/deployment) | `GET /deployment` |
+| Client diagnostics | [Deployment](https://remember.dev/docs/reference/http-api/deployment), [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `GET /deployment`, `GET /processing-layers`, `POST /readiness` |
 
-Every deployment serves all of them, including the SQL query routes (`/query/*`). SQL queries run over the query
-space, `memory_v1`: a fixed set of prepared, read-only views and functions.
-Every statement is parsed and validated against it before it runs, and
-anything outside it is rejected.
+The shipped self-host profile supplies the capabilities in this table.
+Custom engine hosts can compose a subset. SQL queries run over the query
+space, `memory_v1`, a fixed set of prepared, read-only views and functions.
+The engine validates every statement against the query space before running it.
 
 The machine-readable schema is attached to every GitHub release:
 [openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.3/openapi.json).
@@ -10973,22 +10984,25 @@ Wildcards are refused at startup, and so is an origin with a path, a user,
 the default port (`443`, or `80` for `http`) written out, or upper-case
 letters.
 
-## Routes outside the documented API
+## Operator routes and liveness
 
-The published OpenAPI document (`openapi.json` in the repository) describes
-the 27 operations above. A few routes exist in the code but are not part of
-it:
+The release OpenAPI describes the stock engine's client operations. The
+engine tags its optional connector and cost-export routes `operator` and
+the container probe `liveness`. These routes sit outside the release export.
 
-| Route | Status |
-|---|---|
-| `GET /healthz` | Served by the self-hosted profile as the container's liveness probe. Returns `{"status": "ok"}` after a `SELECT 1` against PostgreSQL. No credential needed. Not in the OpenAPI document. See [Deployment](https://remember.dev/docs/reference/http-api/deployment#get-healthz). |
-| `GET /connectors`, `POST /connectors`, `GET /connectors/{connector_id}`, `POST /connectors/{connector_id}/pause` | Defined in the engine, but the shipped profile does not mount them, so they answer `404`. The `remember` client's `connectors()`, `add_connector()`, `pause_connector()` and `connector_status()` methods therefore fail against a stock deployment. |
-| `GET /ops/cost-export/v1` | Served on a separate listener, only when `REMEMBERSTACK_COST_EXPORT_BIND` is set. Self-hosted operators only. See [Deployment](https://remember.dev/docs/reference/http-api/deployment#get-opscost-exportv1). |
+| Audience | Routes | Access |
+|---|---|---|
+| Liveness | `GET /healthz` | Compose calls it without credentials to check the engine can reach PostgreSQL. It returns a fixed status on success. See [Deployment](https://remember.dev/docs/reference/http-api/deployment#get-healthz). |
+| Operator | `GET /connectors`, `POST /connectors`, `GET /connectors/{connector_id}`, `POST /connectors/{connector_id}/pause` | Custom hosts can mount these with the connector management port. With authentication enabled, reads require `read` or `write` and writes require `write`. The stock deployment omits the routes. |
+| Operator | `GET /ops/cost-export/v1` | An optional, separate listener that requires its own cost-export bearer token before reading receipts. See [Deployment](https://remember.dev/docs/reference/http-api/deployment#get-opscost-exportv1). |
 
-The running server does not serve its own schema: `/openapi.json`, `/docs`
-and `/redoc` answer `404`. Those pages would answer without a credential, and
-the API is for programs, not browsers, so they are switched off. Use the
-`openapi.json` file checked into the repository for the release you run.
+When you configure [CORS](#cors), the middleware also answers browser preflight
+requests without an API credential so a browser can check permission to send
+the actual request. The actual request still follows the route's authentication
+rules.
+
+Get `openapi.json` from the release you run. The engine disables the live schema,
+Swagger UI and ReDoc endpoints.
 
 ---
 
@@ -14658,13 +14672,13 @@ print(info.build_revision, info.model_bindings)
 
 **Note:**
 
-Self-hosted only, and not part of the documented API: it is absent from
+The self-hosted profile mounts this liveness probe outside the release
 `openapi.json`.
 
 Prove the engine process is up and can reach its PostgreSQL database. The
 Compose file uses it as the API container's health check.
 
-**Scope:** none. This is the one route that never asks for a credential.
+**Scope:** none. Compose calls this probe without a credential.
 
 ### Response
 

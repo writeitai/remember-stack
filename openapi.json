@@ -6263,7 +6263,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Post Adjacent Chunks"
+        "summary": "Post Adjacent Chunks",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/chunks/{chunk_id}/adjacent": {
@@ -6321,7 +6324,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Adjacent Chunks"
+        "summary": "Adjacent Chunks",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/deployment": {
@@ -6345,7 +6351,11 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Deployment Build Info"
+        "summary": "Deployment Build Info",
+        "tags": [
+          "client",
+          "diagnostics"
+        ]
       }
     },
     "/documents": {
@@ -6442,7 +6452,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Documents"
+        "summary": "List Documents",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/references": {
@@ -6492,7 +6505,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Document References"
+        "summary": "Document References",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/search": {
@@ -6539,7 +6555,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Search Documents"
+        "summary": "Search Documents",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/{doc_id}/archive": {
@@ -6588,7 +6607,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Archive Document"
+        "summary": "Archive Document",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/{doc_id}/effective-periods": {
@@ -6637,7 +6659,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Clear Effective Time"
+        "summary": "Clear Effective Time",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/{doc_id}/forget": {
@@ -6696,7 +6721,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Forget Document"
+        "summary": "Forget Document",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/{doc_id}/sections/{section_key}/history": {
@@ -6846,7 +6874,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Section History"
+        "summary": "Section History",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/{doc_id}/tags": {
@@ -6901,7 +6932,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Update Document Tags"
+        "summary": "Update Document Tags",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/{doc_id}/unarchive": {
@@ -6950,7 +6984,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Unarchive Document"
+        "summary": "Unarchive Document",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/{doc_id}/versions/{version_id}/effective-periods": {
@@ -7015,7 +7052,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Set Effective Periods"
+        "summary": "Set Effective Periods",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/documents/{doc_id}/versions/{version_id}/references": {
@@ -7074,7 +7114,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Reference Generations"
+        "summary": "Reference Generations",
+        "tags": [
+          "client"
+        ]
       },
       "put": {
         "description": "Replace one version's supplied references with an NDJSON set.\n\nOne reference per line: ``kind``, ``from_section_key``, ``target``\n(``source_kind``, ``source_ref``, ``version_key``, ``section_key``),\n``binding`` (``floating`` or ``pinned``), ``change_effective_from``\nand ``change_date_known`` (for ``amends``), ``source_label``,\n``context``. The latest PUT wins: an equal set is a retry, a set\nequal to the active one cancels a newer pending one, and any other\nset becomes a pending generation the pipeline validates\n(all-or-nothing against the version's section keys) and activates.\nA malformed line is 422 naming it; more than 64 MiB is 413.",
@@ -7138,7 +7181,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Set References"
+        "summary": "Set References",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/forgets": {
@@ -7162,7 +7208,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Forgets"
+        "summary": "List Forgets",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/forgets/{forget_id}": {
@@ -7211,7 +7260,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Get Forget"
+        "summary": "Get Forget",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/graph/citation-path": {
@@ -7255,7 +7307,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Graph Citation Path"
+        "summary": "Graph Citation Path",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/graph/neighborhood": {
@@ -7299,7 +7354,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Graph Neighborhood"
+        "summary": "Graph Neighborhood",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/graph/path": {
@@ -7343,7 +7401,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Graph Path"
+        "summary": "Graph Path",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/hydrate/relation/{relation_id}": {
@@ -7389,7 +7450,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Hydrate Relation"
+        "summary": "Hydrate Relation",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/ingest": {
@@ -7701,7 +7765,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Ingest Document"
+        "summary": "Ingest Document",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/lookup/observations": {
@@ -7803,7 +7870,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Lookup Observations"
+        "summary": "Lookup Observations",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/lookup/relations": {
@@ -7934,7 +8004,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Lookup Relations"
+        "summary": "Lookup Relations",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/operations": {
@@ -7962,7 +8035,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Operations"
+        "summary": "List Operations",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/operations/{name}": {
@@ -8047,7 +8123,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Run Operation"
+        "summary": "Run Operation",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/processing-layers": {
@@ -8071,7 +8150,11 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Processing Layers"
+        "summary": "Processing Layers",
+        "tags": [
+          "client",
+          "diagnostics"
+        ]
       }
     },
     "/query/saved": {
@@ -8152,7 +8235,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Saved Queries"
+        "summary": "List Saved Queries",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/query/saved/{namespace}/{name}": {
@@ -8224,7 +8310,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Describe Saved Query"
+        "summary": "Describe Saved Query",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/query/saved/{namespace}/{name}/run": {
@@ -8309,7 +8398,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Run Saved Query"
+        "summary": "Run Saved Query",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/query/space": {
@@ -8373,7 +8465,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Describe Query Space"
+        "summary": "Describe Query Space",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/query/space/search": {
@@ -8436,7 +8531,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Search Query Space"
+        "summary": "Search Query Space",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/query/sql": {
@@ -8503,7 +8601,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Query Sql"
+        "summary": "Query Sql",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/query/sql/explain": {
@@ -8570,7 +8671,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Explain Sql"
+        "summary": "Explain Sql",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/readiness": {
@@ -8614,7 +8718,11 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Pipeline Readiness"
+        "summary": "Pipeline Readiness",
+        "tags": [
+          "client",
+          "diagnostics"
+        ]
       }
     },
     "/resolve": {
@@ -8680,7 +8788,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Resolve"
+        "summary": "Resolve",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/search/chunks": {
@@ -8751,7 +8862,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Search Chunks"
+        "summary": "Search Chunks",
+        "tags": [
+          "client"
+        ]
       },
       "post": {
         "description": "Search live source chunks as separately typed evidence.\n\n``documents`` keeps chunks whose document version matches (D134);\n``time`` keeps chunks of versions in force for the scope (D140).",
@@ -8793,7 +8907,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Post Search Chunks"
+        "summary": "Post Search Chunks",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/search/claims": {
@@ -8864,7 +8981,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Search Claims"
+        "summary": "Search Claims",
+        "tags": [
+          "client"
+        ]
       },
       "post": {
         "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134); the returned evidence is the claim's origin, as\nwithout a filter. ``time`` (D140) selects claims of documents with\ndeclared effective periods through their occurrences in the versions\nin force for the scope, and returns those occurrences.",
@@ -8906,7 +9026,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Post Search Claims"
+        "summary": "Post Search Claims",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/tags": {
@@ -8980,7 +9103,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Tags"
+        "summary": "List Tags",
+        "tags": [
+          "client"
+        ]
       },
       "post": {
         "description": "Register a tag before it is used.\n\nThe name keeps the spelling it is declared with and is unique ignoring\ncase: declaring ``Project:A`` when ``project:a`` exists is 409\n``conflict``.",
@@ -9025,7 +9151,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Create Tag"
+        "summary": "Create Tag",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/tags/{tag_id}": {
@@ -9074,7 +9203,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Delete Tag"
+        "summary": "Delete Tag",
+        "tags": [
+          "client"
+        ]
       },
       "patch": {
         "description": "Rename or re-describe a tag; the documents carrying it keep it.\n\nThe old name stops resolving at once: there are no aliases, so a\ncaller still using it gets ``unknown_tag``.",
@@ -9134,7 +9266,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Update Tag"
+        "summary": "Update Tag",
+        "tags": [
+          "client"
+        ]
       }
     },
     "/transcript/relation/{relation_id}": {
@@ -9180,7 +9315,10 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Transcript Relation"
+        "summary": "Transcript Relation",
+        "tags": [
+          "client"
+        ]
       }
     }
   }
