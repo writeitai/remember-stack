@@ -83,6 +83,9 @@ class _Catalog:
     def live_originals(self, **_: object) -> frozenset[str]:
         return frozenset()
 
+    def hashes_in_use(self, **_: object) -> frozenset[str]:
+        return frozenset()
+
     def collected_artifact_ids(self, **_: object) -> tuple[UUID, ...]:
         return (_ARTIFACT_ID,)
 

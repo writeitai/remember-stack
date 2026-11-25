@@ -381,6 +381,30 @@ class ForgetCatalog:
                 },
             )
 
+    def hashes_in_use(
+        self, *, forget: Forget, hashes: tuple[str, ...]
+    ) -> frozenset[str]:
+        """Content hashes a surviving version of any lineage still uses.
+
+        A version row of a lineage that has a forget record does not count;
+        an archived or D135-deleted lineage's version does.
+        """
+        if not hashes:
+            return frozenset()
+        with self._engine.connect() as connection:
+            return frozenset(
+                str(value)
+                for value in connection.execute(
+                    text("""SELECT DISTINCT v.content_hash FROM document_versions v
+                    WHERE v.deployment_id = :d
+                      AND v.content_hash = ANY(CAST(:hashes AS text[]))
+                      AND NOT EXISTS (SELECT 1 FROM forgets f
+                                      WHERE f.deployment_id = v.deployment_id
+                                        AND f.doc_id = v.doc_id)"""),
+                    {"d": forget.deployment_id, "hashes": list(hashes)},
+                ).scalars()
+            )
+
     def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
         """The compiled K artifacts the record names, for a reapply."""
         with self._engine.connect() as connection:
@@ -442,6 +466,12 @@ def guard_forgotten_on(
 
 
 _LINEAGE_ORIGINAL = re.compile(r"(?P<owner>[0-9a-f-]{36})/(?P<hash>[0-9a-f]{64})/.+")
+
+
+def locator_hash(*, locator: str) -> str | None:
+    """The content hash of an ``<owner>/<hash>/`` locator, else ``None``."""
+    match = _LINEAGE_ORIGINAL.fullmatch(locator + "x")
+    return match["hash"] if match is not None and locator.endswith("/") else None
 
 
 def original_locator(*, key: str, doc_id: UUID) -> str | None:

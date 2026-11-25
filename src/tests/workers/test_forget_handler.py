@@ -52,6 +52,8 @@ class _Catalog:
     compiled: tuple[UUID, ...] = ()
     record_value: Forget = _FORGET
     series: str = ""
+    in_use: frozenset[str] = frozenset()
+    extra_keys: tuple[str, ...] = ()
     errors: list[str] = field(default_factory=list)
     finished: list[tuple[str, ...]] = field(default_factory=list)
     scheduled: list[EnqueueWork] = field(default_factory=list)
@@ -65,6 +67,7 @@ class _Catalog:
             object_keys=(
                 ObjectKey(f"{_DOC_ID}/{_OWN_HASH}/original.txt"),
                 ObjectKey(f"{_DOC_ID}/{_SHARED_HASH}/original.txt"),
+                *(ObjectKey(key) for key in self.extra_keys),
             ),
             compiled_artifact_ids=self.compiled,
             blocking_k_paths=(),
@@ -73,6 +76,11 @@ class _Catalog:
 
     def live_originals(self, *, forget: Forget) -> frozenset[str]:
         return self.live
+
+    def hashes_in_use(
+        self, *, forget: Forget, hashes: tuple[str, ...]
+    ) -> frozenset[str]:
+        return frozenset(hashes) & self.in_use
 
     def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
         return (_COMPILED_ID,)
@@ -372,3 +380,17 @@ def test_the_record_keeps_content_free_original_locators() -> None:
     assert original_locator(key="uploads/abcdefghijklmnop", doc_id=_DOC_ID) == (
         "uploads/abcdefghijklmnop"
     )
+
+
+def test_a_foreign_prefix_still_in_use_is_never_purged() -> None:
+    """Another lineage's <owner>/<hash>/ goes only when no surviving version uses it."""
+    owner = "59100000-0000-0000-0000-0000000000aa"
+    kept, gone = f"{owner}/{_SHARED_HASH}/", f"{owner}/{_OWN_HASH}/"
+    rig = _Rig(
+        catalog=_Catalog(
+            removed=[True], extra_keys=(kept, gone), in_use=frozenset({_SHARED_HASH})
+        )
+    )
+    _run(rig, _FIRST)
+    ((_, prefixes, _),) = rig.objects.calls
+    assert prefixes == (f"{_DOC_ID}/", gone)
