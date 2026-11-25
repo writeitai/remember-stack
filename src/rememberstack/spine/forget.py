@@ -892,6 +892,10 @@ class _Sweep:
             key=str,
         )
         p["exclusive_entity_ids"] = self._ids(_EXCLUSIVE_ENTITIES, p)
+        # Deliberately broad: a surviving T4 decision about any entity that
+        # ever shared merge history with one this document touched loses its
+        # rationale prose (never its verdict).
+        p["rationale_entity_ids"] = self._ids(_MERGE_COMPONENT, p)
         compiled = self._ids(
             _CITING_ARTIFACTS.format(facts="linked_fact_ids")
             + " AND a.page_kind = 'compiled'",
@@ -1041,6 +1045,7 @@ class _Sweep:
         )
         for statement in _ENTITY_STATEMENTS:
             self._exec(statement, p)
+        self._exec(_SCRUB_RATIONALE, p, residue=False)
 
     def _mark_compiled(
         self, *, ids: list[UUID], p: dict[str, Any], collected: dict[str, Any]
@@ -1422,6 +1427,21 @@ _FACT_ENDPOINTS = """
 # An entity is exclusive when it was resolved from this document's mentions
 # and from no mention of another, not forgotten document, and no surviving
 # fact uses it.
+_MERGE_COMPONENT = """
+    WITH RECURSIVE component(entity_id) AS (
+      SELECT CAST(value AS uuid) FROM unnest(CAST(:entity_ids AS uuid[])) value
+      UNION
+      SELECT CASE WHEN m.survivor_id = c.entity_id THEN m.absorbed_id
+                  ELSE m.survivor_id END
+      FROM merge_events m JOIN component c
+        ON c.entity_id IN (m.survivor_id, m.absorbed_id)
+      WHERE m.deployment_id=:deployment_id
+    )
+    SELECT entity_id FROM component
+"""
+"""The touched entities and every entity any merge event ever linked to them,
+in either direction, transitively (merges and unmerges alike)."""
+
 _EXCLUSIVE_ENTITIES = """
     SELECT e.entity_id FROM entities e
     WHERE e.deployment_id=:deployment_id
@@ -1761,19 +1781,6 @@ _ENTITY_STATEMENTS = (
                OR pre_merge_membership_snapshot <> '{}'::jsonb)
         """
     ),
-    # A surviving decision's T4 rationale may quote a candidate this
-    # document named; the verdict stays, the prose goes.
-    text(
-        """
-        UPDATE resolution_decisions d
-        SET features = (d.features - 'rationale') #- '{t4_selection,rationale}'
-        WHERE d.deployment_id=:deployment_id
-          AND (d.features ? 'rationale' OR d.features->'t4_selection' ? 'rationale')
-          AND EXISTS (
-            SELECT 1 FROM unnest(CAST(:resolved_entity_ids AS uuid[])) ids(value)
-            WHERE d.features::text LIKE '%' || CAST(ids.value AS text) || '%')
-        """
-    ),
     text(
         """
         UPDATE resolution_exclusions SET reason = NULL
@@ -1782,6 +1789,24 @@ _ENTITY_STATEMENTS = (
                OR entity_id_high=ANY(CAST(:resolved_entity_ids AS uuid[])))
         """
     ),
+)
+
+# A surviving decision's T4 rationale may quote a candidate this document
+# named, or one merged with it at the time; the verdict stays, the prose goes.
+# Deliberately broad (the whole merge-history component), so clearing it is
+# never the document's residue: a fresh decision there must not keep the
+# forget erasing.
+_SCRUB_RATIONALE = text(
+    """
+    UPDATE resolution_decisions d
+    SET features = (d.features - 'rationale') #- '{t4_selection,rationale}'
+    WHERE d.deployment_id=:deployment_id
+      AND (d.features ? 'rationale' OR d.features->'t4_selection' ? 'rationale')
+      AND (d.entity_id=ANY(CAST(:rationale_entity_ids AS uuid[]))
+           OR EXISTS (
+             SELECT 1 FROM unnest(CAST(:rationale_entity_ids AS uuid[])) ids(value)
+             WHERE d.features::text LIKE '%' || CAST(ids.value AS text) || '%'))
+    """
 )
 
 _DELETE_COMPILED_CITATIONS = text(
