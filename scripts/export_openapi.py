@@ -37,21 +37,10 @@ so `/connectors` is not part of the API this schema describes.
 
 So this composes the ports the self-host profile names, and no others.
 
-That correspondence is not machine-checked, and the reason is worth stating
-rather than leaving as an omission. Which capabilities a deployment actually
-composes is decided at run time from its settings — `auth` resolves to `None`
-for the open quickstart — so the profile names capabilities a given deployment
-may not have, and no reading of source can tell the two apart. An AST check
-that tried was defeated by six different ways of reaching the same function
-before it was abandoned.
-
-What guards this instead is `_SURFACE` in `test_openapi_export.py`: a frozen
-route set that makes any change to the published surface a visible edit someone
-has to justify. That is what would have caught the phantom `/connectors`
-routes — a person reading the diff, not a machine.
-
-The stubs never run. FastAPI reads route signatures and response models to
-build the document; the port objects are only needed for the app to compose.
+The offline export describes the stock self-host profile with authentication
+configured. The surface tests compare it with the profile's actual route
+inventory and check each published operation's audience and bearer requirement.
+The stubs keep the export independent of databases, object stores and providers.
 """
 
 from __future__ import annotations

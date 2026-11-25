@@ -19,6 +19,31 @@ Run the smallest relevant test set while iterating, then the complete checks app
 to the change before requesting review. User-facing behavior changes must update the
 corresponding documentation in the same pull request.
 
+## Engine OpenAPI export
+
+Run from the repository root with the locked development environment. The
+exporter composes the guarded engine API in process. It needs no running
+server, PostgreSQL instance, object store or provider credentials.
+
+```bash
+git rev-parse HEAD
+uv run --locked python scripts/export_openapi.py -o openapi.json
+uv run --locked pytest src/tests/surfaces/test_openapi_export.py -q
+```
+
+Record the revision from the first command with your verification result.
+The test compares the checked-in schema with a fresh export and with the
+shipped self-host route inventory. It checks audience tags, bearer security,
+representative request and response models, and early rejection of missing
+and invalid credentials on each protected route. The `Integration (surfaces)`
+CI job runs the test when surface code changes.
+
+When OpenAPI changes, regenerate the checked-in TypeScript contracts from
+`packages/typescript-client` using `node scripts/npm.mjs run generate`
+after installing locked dependencies with `node scripts/npm.mjs ci`. The
+TypeScript client workflow runs `node scripts/npm.mjs run check:generated`
+to check both the engine export and SDK artifacts for drift.
+
 ## Object-store integration tests
 
 D155's object operations run the same contract against local files and **real
