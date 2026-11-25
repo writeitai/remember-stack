@@ -46,7 +46,7 @@ FAILURE_CLASSES = {
     "subprocess.TimeoutExpired",
     "RuntimeError",
 }
-REPORTERS = {"_internal_error"}
+REPORTERS = {"_internal_error", "_report_capture_scope_failure"}
 HANDLER_LEVELS = {"error", "exception"}
 ERROR_LEVELS = {"error", "exception", "critical"}
 SUPPRESSION = re.compile(
@@ -90,7 +90,6 @@ BASELINE: dict[str, int] = {
     "adapters/vertex.py::_error_preview": 1,
     "adapters/vertex.py::_try_usage": 1,
     "core/content_detection.py::_office_zip_mime": 1,
-    "profiles/storage_capture_batch.py::capture_storage_batch": 3,
     "spine/corpus_publication.py::CorpusPublicationCatalog.locked": 2,
     "spine/readiness.py::_live_graph_status": 2,
     "surfaces/http_api.py::_authenticate": 1,
