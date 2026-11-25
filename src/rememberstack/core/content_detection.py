@@ -418,7 +418,12 @@ def _office_zip_mime(*, content: Content) -> str | None:
                     mime = raw.decode("ascii", errors="ignore")
                     if mime in _OFFICE_MIMES:
                         return mime
-    except (OSError, ValueError, zipfile.BadZipFile, RuntimeError):
+    except (
+        OSError,
+        ValueError,
+        zipfile.BadZipFile,
+        RuntimeError,
+    ):  # error-contract: expected input sniffing fallback
         pass
     return None
 

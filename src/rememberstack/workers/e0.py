@@ -1808,6 +1808,13 @@ class StructureHandler:
         except ProviderAccountingError:
             raise
         except ProviderCallError as error:
+            logger.error(
+                "Model-based document structuring failed.",
+                extra={
+                    "error_code": "structure_fallback",
+                    "exception_type": type(error).__name__,
+                },
+            )
             if error.usage is not None:
                 meter.record(
                     call_key="structure_fallback_failure",
@@ -1821,7 +1828,14 @@ class StructureHandler:
                 ),
                 "N/A",
             )
-        except Exception:  # noqa: BLE001 — a document never fails structuring
+        except Exception as error:  # noqa: BLE001 — a document never fails structuring
+            logger.error(
+                "Model-based document structuring failed.",
+                extra={
+                    "error_code": "structure_fallback",
+                    "exception_type": type(error).__name__,
+                },
+            )
             return (
                 resolve_fallback_skeleton(
                     proposed=(), blocks=blocks, document_md=markdown, title=source.title
@@ -1890,14 +1904,35 @@ class StructureHandler:
                     # provider — both are invalid responses, not outages
                     ValueError,
                 ) as error:
+                    logger.error(
+                        "The document skeleton check failed.",
+                        extra={
+                            "error_code": "skeleton_check_failed",
+                            "exception_type": type(error).__name__,
+                        },
+                    )
                     outcome = SkeletonCheckOutcome.INVALID_RESPONSE
                     usage = getattr(error, "usage", None) or usage
                     failure = _failure_envelope(error=error, usage=usage)
                 except ProviderCallError as error:
+                    logger.error(
+                        "The document skeleton check failed.",
+                        extra={
+                            "error_code": "skeleton_check_failed",
+                            "exception_type": type(error).__name__,
+                        },
+                    )
                     outcome = SkeletonCheckOutcome.PROVIDER_ERROR
                     usage = error.usage
                     failure = _failure_envelope(error=error, usage=usage)
                 except Exception as error:  # noqa: BLE001 - guard is fail-open
+                    logger.error(
+                        "The document skeleton check failed.",
+                        extra={
+                            "error_code": "skeleton_check_failed",
+                            "exception_type": type(error).__name__,
+                        },
+                    )
                     outcome = SkeletonCheckOutcome.PROVIDER_ERROR
                     failure = _failure_envelope(error=error, usage=None)
 
@@ -1974,6 +2009,13 @@ class StructureHandler:
             except ProviderAccountingError:
                 raise
             except ProviderCallError as error:
+                logger.error(
+                    "Section title role classification failed.",
+                    extra={
+                        "error_code": "section_roles_failed",
+                        "exception_type": type(error).__name__,
+                    },
+                )
                 if error.usage is not None:
                     meter.record(
                         call_key="section_roles_failure",
@@ -1981,8 +2023,14 @@ class StructureHandler:
                         usage=error.usage,
                         outcome="provider_error",
                     )
-            except Exception:  # noqa: BLE001 - undecided titles become body
-                pass
+            except Exception as error:  # noqa: BLE001 - undecided titles become body
+                logger.error(
+                    "Section title role classification failed.",
+                    extra={
+                        "error_code": "section_roles_failed",
+                        "exception_type": type(error).__name__,
+                    },
+                )
         return tuple(
             section.model_copy(update={"role": roles.get(section.node_path, "body")})
             for section in sections

@@ -72,7 +72,9 @@ class CodexCLIAgentAdapter:
                     check=False,
                     timeout=request.timeout_seconds,
                 )
-            except subprocess.TimeoutExpired as error:
+            except (
+                subprocess.TimeoutExpired
+            ) as error:  # error-contract: raised later by the knowledge driver
                 stdout = _timeout_text(value=error.stdout)
                 stderr = _timeout_text(value=error.stderr)
                 return KnowledgeAgentSessionResult(
@@ -150,7 +152,11 @@ def _declared_outputs(*, workspace: Path, paths: tuple[str, ...]) -> dict[str, s
             target = _workspace_path(workspace=workspace, relative_path=relative_path)
             if target.is_file():
                 outputs[relative_path] = target.read_text(encoding="utf-8")
-        except (OSError, UnicodeError, ValueError):
+        except (
+            OSError,
+            UnicodeError,
+            ValueError,
+        ):  # error-contract: raised later by the compiler as missing declared output
             # The compiler rejects the missing declared output after it archives
             # the process transcript; hostile links and unreadable bytes cannot
             # make a completed session disappear from the ledger.

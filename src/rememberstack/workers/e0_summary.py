@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 from math import ceil
 from typing import Final
 from uuid import UUID
@@ -39,6 +40,8 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.document_catalog import DocumentCatalog
+
+_logger = logging.getLogger(__name__)
 
 SUMMARY_CALL_TOKEN_CEILING: Final = 2_048
 """Per-request ceiling under the pinned whitespace-token counter."""
@@ -606,6 +609,10 @@ class SectionSummarizer:
                     generated.output.placement_path
                 )
                 if normalized_summary is None or normalized_placement is None:
+                    _logger.error(
+                        "The model returned a blank section summary or placement.",
+                        extra={"error_code": "summary_failed"},
+                    )
                     return _CallResult(None, None, tuple(events))
                 return _CallResult(
                     normalized_summary, normalized_placement, tuple(events)
@@ -625,6 +632,10 @@ class SectionSummarizer:
             )
             normalized_summary = _normalize_one_line(generated_summary.output.summary)
             if normalized_summary is None:
+                _logger.error(
+                    "The model returned a blank section summary or placement.",
+                    extra={"error_code": "summary_failed"},
+                )
                 return _CallResult(None, None, tuple(events))
             return _CallResult(normalized_summary, None, tuple(events))
         except ProviderAccountingError as error:
@@ -632,6 +643,13 @@ class SectionSummarizer:
                 error=error, events=tuple(events)
             ) from error
         except ProviderCallError as error:
+            _logger.error(
+                "Section summary generation failed.",
+                extra={
+                    "error_code": "summary_failed",
+                    "exception_type": type(error).__name__,
+                },
+            )
             if error.usage is not None:
                 events.append(
                     _MeterEvent(
@@ -641,8 +659,14 @@ class SectionSummarizer:
                         outcome="provider_error",
                     )
                 )
-        except Exception:  # noqa: BLE001 - summary failure never fails a document
-            pass
+        except Exception as error:  # noqa: BLE001 - summary failure never fails a document
+            _logger.error(
+                "Section summary generation failed.",
+                extra={
+                    "error_code": "summary_failed",
+                    "exception_type": type(error).__name__,
+                },
+            )
         return _CallResult(None, None, tuple(events))
 
     def _invoke_summary(self, *, prompt: str, call_key: str, tier: str) -> _CallResult:
@@ -659,11 +683,22 @@ class SectionSummarizer:
             normalized_summary = _normalize_one_line(generated.output.summary)
             event = _MeterEvent(call_key=call_key, tier=tier, usage=generated.usage)
             if normalized_summary is None:
+                _logger.error(
+                    "The model returned a blank section summary or placement.",
+                    extra={"error_code": "summary_failed"},
+                )
                 return _CallResult(None, None, (event,))
             return _CallResult(normalized_summary, None, (event,))
         except ProviderAccountingError as error:
             raise _SummaryAccountingFailure(error=error, events=()) from error
         except ProviderCallError as error:
+            _logger.error(
+                "Section summary generation failed.",
+                extra={
+                    "error_code": "summary_failed",
+                    "exception_type": type(error).__name__,
+                },
+            )
             if error.usage is not None:
                 return _CallResult(
                     None,
@@ -677,8 +712,14 @@ class SectionSummarizer:
                         ),
                     ),
                 )
-        except Exception:  # noqa: BLE001 - summary failure never fails a document
-            pass
+        except Exception as error:  # noqa: BLE001 - summary failure never fails a document
+            _logger.error(
+                "Section summary generation failed.",
+                extra={
+                    "error_code": "summary_failed",
+                    "exception_type": type(error).__name__,
+                },
+            )
         return _CallResult(None, None)
 
     def _load_cache(self, *, doc_id: UUID) -> dict[str, _CacheValue]:
@@ -691,7 +732,9 @@ class SectionSummarizer:
                 )
                 placement = payload.get("placement")
                 sections = payload.get("sections", ())
-            except Exception:  # noqa: BLE001 - cache corruption is a miss
+            except (
+                Exception
+            ):  # error-contract: expected cache miss for a missing or corrupt sidecar
                 # Sidecars are immutable cache metadata, not an availability
                 # dependency. Missing/legacy/malformed objects simply miss.
                 continue
@@ -721,7 +764,9 @@ class SectionSummarizer:
                             summary=normalized_summary, placement_path=cached_placement
                         ),
                     )
-                except Exception:  # noqa: BLE001 - one bad entry is one miss
+                except (
+                    Exception
+                ):  # error-contract: expected cache miss for an invalid entry
                     continue
         return cache
 

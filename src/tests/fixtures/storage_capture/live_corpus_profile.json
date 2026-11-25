@@ -516,12 +516,12 @@
         }
       ],
       "schema_profile_digest": "409a8efd94f46eadaed68edd1e71877719c81c186f0205c33005df48752ca932",
-      "source_digest": "62bc304acc96f093c6bc60980aa61575de5658fc1ee89c477b3362b1627719f1"
+      "source_digest": "6801a65753a2b67a07e99cb79a603adf290b4128354d676eace81874ef2c2682"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "8df6f761b3351caae86f1beb02f6f2b28433e223f35e6fa007391677040f98f0",
+      "classification_digest": "0e535eb15bede4b0e132e490bae249e2374a9e766036643b8f4f35ff1bb50952",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1150,23 +1150,23 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "c7ca5b3806a86b433916b9c0736b6e88e364016ce64d4363bafa05ab9ff8492d",
+      "profile_digest": "3b1193e778fc95bbdb9fb3b71d6304a91933207394bd468d93e55802ce19d3e7",
       "release_margin_us": 500000,
       "schema_digest": "e24a396670d5af10356a92bf3332009f58803b527c86c8a379bc2b691179dbf0",
       "schema_profile_digest": "409a8efd94f46eadaed68edd1e71877719c81c186f0205c33005df48752ca932",
-      "source_digest": "62bc304acc96f093c6bc60980aa61575de5658fc1ee89c477b3362b1627719f1",
+      "source_digest": "6801a65753a2b67a07e99cb79a603adf290b4128354d676eace81874ef2c2682",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "8df6f761b3351caae86f1beb02f6f2b28433e223f35e6fa007391677040f98f0",
+    "classification_digest": "0e535eb15bede4b0e132e490bae249e2374a9e766036643b8f4f35ff1bb50952",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "c7ca5b3806a86b433916b9c0736b6e88e364016ce64d4363bafa05ab9ff8492d",
-    "operator_mapping_digest": "21c5becf98ee12fa75e31891e69c14cec74d20337a289726b25a76d907a74dbf",
+    "native_capture_profile_digest": "3b1193e778fc95bbdb9fb3b71d6304a91933207394bd468d93e55802ce19d3e7",
+    "operator_mapping_digest": "301d5a50c53297b7dcec42bd5d70591f9009d14a1c51f89a640b45348118cf79",
     "schema_profile_digest": "409a8efd94f46eadaed68edd1e71877719c81c186f0205c33005df48752ca932",
     "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },

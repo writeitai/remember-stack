@@ -24,6 +24,7 @@ from datetime import UTC
 from functools import wraps
 from itertools import batched
 import json
+import logging
 import math
 from time import monotonic
 from typing import Any
@@ -470,6 +471,9 @@ def disclose_layers(*, envelope: Envelope, admission: LayerAdmission) -> Envelop
     )
 
 
+_logger = logging.getLogger(__name__)
+
+
 def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envelope]:
     """Run the default compound recipe in one bounded PostgreSQL snapshot."""
 
@@ -492,7 +496,12 @@ def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envel
             ) as connection:
                 call_kwargs["_snapshot_connection"] = connection
                 return method(*args, **call_kwargs)
-        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
+        except (
+            DBAPIError,
+            SQLAlchemyTimeoutError,
+            TimeoutError,
+        ) as error:  # error-contract: mixed deadline or database failure logged below
+            _report_query_read_failure(error=error)
             return _facts_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
@@ -1014,6 +1023,7 @@ class QueryEngine:
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
+            _report_query_read_failure(error=error)
             return _operation_deadline_boundary(grain=Grain.FACT)
 
     def _resolve_in_operation(
@@ -1368,6 +1378,7 @@ class QueryEngine:
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
+            _report_query_read_failure(error=error)
             return _operation_deadline_boundary(grain=Grain.FACT)
         except P1EntityScopeTooBroadError as error:
             return _entity_scope_too_broad(
@@ -1836,14 +1847,25 @@ class QueryEngine:
                 )
             except P1EntityScopeTooBroadError as error:
                 return _entity_scope_too_broad(grain=Grain.FACT, explanation=str(error))
-            except P1SearchUnavailableError:
+            except (
+                P1SearchUnavailableError
+            ):  # error-contract: expected disclosed projection boundary
+                _logger.warning(
+                    "The query search projection is unavailable.",
+                    extra={"error_code": "search_projection_unavailable"},
+                )
                 return _facts_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
                     explanation="the primary P1 fact channels are not ready",
                     workaround="retry after P1 relation and observation publication",
                 )
-            except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
+            except (
+                DBAPIError,
+                SQLAlchemyTimeoutError,
+                TimeoutError,
+            ) as error:  # error-contract: mixed deadline or database failure logged below
+                _report_query_read_failure(error=error)
                 return _facts_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
@@ -1872,7 +1894,12 @@ class QueryEngine:
                             time=selected_time, evaluated_at=evaluation
                         ),
                     )
-        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
+        except (
+            DBAPIError,
+            SQLAlchemyTimeoutError,
+            TimeoutError,
+        ) as error:  # error-contract: mixed deadline or database failure logged below
+            _report_query_read_failure(error=error)
             return _facts_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
@@ -1924,13 +1951,14 @@ class QueryEngine:
                     _deadline=database_deadline,
                     _connection=_snapshot_connection,
                 )
-            except (
+            except (  # error-contract: mixed capacity, deadline or query failure logged below
                 DBAPIError,
                 SQLAlchemyTimeoutError,
                 GraphBusyError,
                 GraphHydrationError,
                 TimeoutError,
-            ):
+            ) as error:
+                _report_query_read_failure(error=error)
                 return _facts_context_graph_boundary(
                     time=selected_time,
                     evaluated_at=evaluation,
@@ -1975,7 +2003,12 @@ class QueryEngine:
                     deployment_id=deployment_id,
                     entity_ids=tuple(neighbors),
                 )
-        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
+        except (
+            DBAPIError,
+            SQLAlchemyTimeoutError,
+            TimeoutError,
+        ) as error:  # error-contract: mixed deadline or database failure logged below
+            _report_query_read_failure(error=error)
             return _facts_context_graph_boundary(
                 time=selected_time,
                 evaluated_at=evaluation,
@@ -2188,6 +2221,7 @@ class QueryEngine:
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
+            _report_query_read_failure(error=error)
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
 
     def _claims_and_sources_context_in_snapshot(
@@ -2635,6 +2669,7 @@ class QueryEngine:
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
+            _report_query_read_failure(error=error)
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -2685,6 +2720,7 @@ class QueryEngine:
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
+            _report_query_read_failure(error=error)
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
         return _nomination_envelope(
             ids=nominated, empty_explanation="no claims were nominated"
@@ -2783,6 +2819,7 @@ class QueryEngine:
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
+            _report_query_read_failure(error=error)
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -2941,6 +2978,7 @@ class QueryEngine:
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
             if not _deadline_expired(error):
                 raise
+            _report_query_read_failure(error=error)
             return _operation_deadline_boundary(grain=Grain.EVIDENCE)
         return _nomination_envelope(
             ids=nominated, empty_explanation="no source chunks were nominated"
@@ -4107,7 +4145,13 @@ class QueryEngine:
             )
         except P1EntityScopeTooBroadError:
             raise
-        except P1SearchUnavailableError:
+        except (
+            P1SearchUnavailableError
+        ):  # error-contract: expected projection channel is unpublished
+            _logger.warning(
+                "The entity profile search projection is unavailable.",
+                extra={"error_code": "search_projection_unavailable"},
+            )
             # Profiles are an additive recall channel. During backfill or a
             # policy cut, authoritative fact search remains fully usable.
             return nominated
@@ -4743,7 +4787,13 @@ class QueryEngine:
                     k=QUERY_RESOLVE_CANDIDATE_LIMIT + 1,
                 ),
             )
-        except P1SearchUnavailableError:
+        except (
+            P1SearchUnavailableError
+        ):  # error-contract: expected disclosed projection boundary
+            _logger.warning(
+                "The query search projection is unavailable.",
+                extra={"error_code": "search_projection_unavailable"},
+            )
             return _embedding_channel_boundary()
         account = search_account(nominations)
         stop_reason = (
@@ -5285,6 +5335,43 @@ def _empty_negative(
         ),
         workaround="narrow the query or add filters, then retry",
     )
+
+
+def _report_query_read_failure(*, error: Exception) -> None:
+    """Report a consumed query failure without including caller or database text."""
+    exception_type = type(error).__name__
+    if isinstance(error, GraphBusyError):
+        _logger.warning(
+            "The live graph has no free query slot.",
+            extra={
+                "error_code": "graph_capacity_exhausted",
+                "exception_type": exception_type,
+            },
+        )
+    elif isinstance(error, GraphHydrationError):
+        _logger.error(
+            "The live graph result did not match its rows.",
+            extra={
+                "error_code": "graph_hydration_mismatch",
+                "exception_type": exception_type,
+            },
+        )
+    elif _deadline_expired(error):
+        _logger.warning(
+            "The query reached its database time budget.",
+            extra={
+                "error_code": "query_budget_exceeded",
+                "exception_type": exception_type,
+            },
+        )
+    else:
+        _logger.error(
+            "The query database operation failed.",
+            extra={
+                "error_code": "query_database_failed",
+                "exception_type": exception_type,
+            },
+        )
 
 
 def _deadline_expired(error: Exception) -> bool:

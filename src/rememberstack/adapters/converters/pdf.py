@@ -373,7 +373,7 @@ class _Sink:
         if self.error is None and self.out is not None:
             try:
                 self.out.write(data)
-            except OSError as err:
+            except OSError as err:  # error-contract: raised later by the render caller
                 self.error = err
         self.size += len(data)
         return len(data)

@@ -530,7 +530,7 @@ class KnowledgeCommitDriver:
         for artifact, future in futures:
             try:
                 outputs.append((artifact, future.result()))
-            except Exception as error:
+            except Exception as error:  # error-contract: raised later with the collected compile errors
                 errors.append(error)
         return outputs, errors
 
@@ -558,7 +558,7 @@ class KnowledgeCommitDriver:
                         session_transcript_uri=compilation.session_transcript_uri,
                     )
                 )
-            except Exception as ledger_error:
+            except Exception as ledger_error:  # error-contract: raised later with the aborted wave errors
                 ledger_errors.append(ledger_error)
         combined = [*errors, *ledger_errors]
         if len(combined) == 1:

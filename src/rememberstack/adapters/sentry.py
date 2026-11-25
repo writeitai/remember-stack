@@ -110,7 +110,7 @@ class SentryTelemetry:
                     if value is not None:
                         scope.set_tag(name, str(value))
                 self._sdk.capture_exception(exception)
-        except Exception:
+        except Exception:  # error-contract: exempt optional telemetry export
             _logger.warning("optional Sentry exception capture failed", exc_info=True)
 
 

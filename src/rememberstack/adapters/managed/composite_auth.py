@@ -47,7 +47,7 @@ class CompositeAuth:
         for adapter in self._adapters:
             try:
                 return adapter.authenticate(credential=credential)
-            except Exception as error:  # noqa: BLE001 - adapters signal by raising
+            except Exception as error:  # error-contract: expected adapters signal credential denial by raising
                 logger.debug(
                     "perimeter adapter %s declined the credential: %s",
                     type(adapter).__name__,

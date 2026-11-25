@@ -109,7 +109,14 @@ class SyncCycleRunner:
                         quiet=quiet,
                         versioning_mode=versioning_mode,
                     )
-                except Exception:  # noqa: BLE001 — the pass must stay recorded
+                except Exception as error:  # noqa: BLE001 — the pass must stay recorded
+                    _logger.error(
+                        "A synchronization item failed.",
+                        extra={
+                            "error_code": "sync_item_failed",
+                            "exception_type": type(error).__name__,
+                        },
+                    )
                     failed += 1
                     continue
                 kind, ref = outcome

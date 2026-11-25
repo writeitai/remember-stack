@@ -965,12 +965,14 @@ class DocumentArchiver:
                 meter=meter,
                 call_key=call_key,
             )
-        except Exception:  # noqa: BLE001 — the archive itself has committed
-            _logger.warning(
-                "document.archive profile refresh failed doc_id=%s; profiles"
-                " refresh on the next evidence change for those entities",
-                doc_id,
-                exc_info=True,
+        except Exception as error:  # noqa: BLE001 — the archive itself has committed
+            _logger.error(
+                "Profile refresh after document archive failed.",
+                extra={
+                    "error_code": "profile_refresh_failed",
+                    "doc_id": str(doc_id),
+                    "exception_type": type(error).__name__,
+                },
             )
 
 
