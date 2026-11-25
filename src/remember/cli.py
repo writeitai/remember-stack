@@ -25,6 +25,10 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from remember import __version__
+from remember.cli_output import CommandFailure
+from remember.cli_output import failure
+from remember.cli_output import report_error
+from remember.cli_output import usage_failure
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.connection import Connection
@@ -32,8 +36,11 @@ from remember.credentials import CredentialError
 from remember.credentials import DurabilityUnconfirmed
 from remember.errors import StoredKeyRefused
 from remember.issuer import DEFAULT_ISSUER
+from remember.issuer import DeviceGrantError
 from remember.issuer import fetch_issuer_metadata
+from remember.issuer import IssuerError
 from remember.issuer import same_origin
+from remember.mcp_tools._errors import map_error
 from remember.models import ConnectorCreate
 from remember.models import DocumentSearchFilters
 from remember.models import DocumentTagFilter
@@ -67,47 +74,58 @@ class _ClientRequestSettings(BaseSettings):
 
 def main(argv: list[str] | None = None) -> int:
     """The ``remember`` entry point; returns the process exit code."""
-    from pydantic import ValidationError
-
+    effective_argv = list(sys.argv[1:] if argv is None else argv)
+    options = (
+        effective_argv[: effective_argv.index("--")]
+        if "--" in effective_argv
+        else effective_argv
+    )
+    machine = "--json" in options
     parser: argparse.ArgumentParser | None = None
     try:
         _settle_journal()
-        effective_argv = list(sys.argv[1:] if argv is None else argv)
         internal_ops = _InternalOpsSettings.model_validate({}).internal_ops
-        if effective_argv:
-            subcmd = effective_argv[0]
-            if subcmd == "ops" and not internal_ops:
-                print(
-                    "error: 'remember ops' runs inside the engine container, "
-                    "for example 'docker compose exec api remember ops inspect "
-                    "--deployment <id>'. From a client, use "
-                    "'remember operations list|run'.",
-                    file=sys.stderr,
-                )
-                return 1
-            if subcmd == "query":
-                known_query_subcmds = {
-                    "text",
-                    "sql",
-                    "explain-sql",
-                    "space",
-                    "search-space",
-                    "list-saved",
-                    "describe-saved",
-                    "run-saved",
-                    "adjacent-chunks",
-                }
-                # Only the word right after `query` can name a subcommand;
-                # anywhere else it is part of the question or a flag value.
-                has_subcmd = (
-                    len(effective_argv) > 1 and effective_argv[1] in known_query_subcmds
-                )
-                has_help = any(arg in ("-h", "--help") for arg in effective_argv[1:])
-                if not has_subcmd and not has_help:
-                    effective_argv.insert(1, "text")
+        command_index = next(
+            (index for index, arg in enumerate(effective_argv) if arg != "--json"),
+            len(effective_argv),
+        )
+        subcmd = next(iter(effective_argv[command_index:]), None)
+        if subcmd == "ops" and not internal_ops:
+            raise failure(
+                code="command_unavailable",
+                detail="'remember ops' runs inside the engine container",
+                action=(
+                    "Run 'docker compose exec api remember ops inspect --deployment <id>'"
+                    " there, or use 'remember operations list|run' from a client."
+                ),
+            )
+        if subcmd == "query":
+            known_query_subcmds = {
+                "text",
+                "sql",
+                "explain-sql",
+                "space",
+                "search-space",
+                "list-saved",
+                "describe-saved",
+                "run-saved",
+                "adjacent-chunks",
+            }
+            # Skip output flags before looking for an explicit query command.
+            query_index = command_index + 1
+            while effective_argv[query_index : query_index + 1] == ["--json"]:
+                query_index += 1
+            has_subcmd = (
+                query_index < len(effective_argv)
+                and effective_argv[query_index] in known_query_subcmds
+            )
+            has_help = any(arg in ("-h", "--help") for arg in options[query_index:])
+            if not has_subcmd and not has_help:
+                effective_argv.insert(query_index, "text")
 
-        parser = _build_parser(include_internal_ops=internal_ops)
+        parser = _build_parser(include_internal_ops=internal_ops, machine=machine)
         args = parser.parse_args(effective_argv)
+        args.json = machine
 
         handlers = {
             "setup": _run_setup,
@@ -131,24 +149,18 @@ def main(argv: list[str] | None = None) -> int:
         handler = handlers.get(args.command)
         if handler is not None:
             return handler(args)
+    except CommandFailure as error:
+        report_error(error=error.error, machine=machine)
+        return error.exit_code
     except KeyboardInterrupt:
-        return 130
-    except ValidationError as error:
-        errors = error.errors()
-        if errors:
-            first = errors[0]
-            loc = ".".join(str(x) for x in first.get("loc", []))
-            msg = first.get("msg", str(error))
-            print(
-                f"error: Invalid environment configuration ({loc}): {msg}",
-                file=sys.stderr,
-            )
-        else:
-            print(f"error: Invalid environment configuration: {error}", file=sys.stderr)
-        return 1
-    except StoredKeyRefused as error:
-        print(f"error: {error.detail}", file=sys.stderr)
-        return 2
+        error = failure(
+            code="interrupted",
+            detail="Command interrupted.",
+            action="Check the operation's outcome before rerunning it.",
+            exit_code=130,
+        )
+        report_error(error=error.error, machine=machine)
+        return error.exit_code
     except (
         MemoryApiError,
         CredentialError,
@@ -158,11 +170,70 @@ def main(argv: list[str] | None = None) -> int:
         ValueError,
         OSError,
     ) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    if parser is not None:
+        diagnostic = _command_error(error)
+        report_error(error=diagnostic.error, machine=machine)
+        return diagnostic.exit_code
+    if parser is not None and not machine:
         parser.print_help()
+    if machine:
+        report_error(error=usage_failure("A command is required.").error, machine=True)
     return 2
+
+
+def _command_error(error: Exception) -> CommandFailure:
+    """Convert client and local errors to an actionable command failure."""
+    if isinstance(error, StoredKeyRefused):
+        return failure(
+            code="stored_key_refused",
+            detail=error.detail,
+            action="Pass the destination's key explicitly with REMEMBER_API_KEY or --api-key.",
+            exit_code=2,
+        )
+    if isinstance(error, CredentialError):
+        return failure(
+            code="credentials_unusable",
+            detail=str(error),
+            action="Check the credential file or run `remember login`.",
+        )
+    if isinstance(error, DeviceGrantError):
+        return failure(
+            code="device_grant_failed",
+            detail=error.detail,
+            action="Run `remember login` again and approve the request in the browser.",
+        )
+    if isinstance(error, IssuerError):
+        return failure(
+            code="issuer_error",
+            detail=error.detail,
+            action="Check the issuer URL and network and retry.",
+        )
+    if isinstance(error, MemoryApiError):
+        return CommandFailure(error=map_error(error))
+    if isinstance(error, httpx.RequestError):
+        return CommandFailure(
+            error=map_error(ConnectionError("Network request failed."))
+        )
+    if isinstance(error, ValidationError):
+        fields = ", ".join(
+            ".".join(str(part) for part in item["loc"])
+            for item in error.errors(include_input=False, include_context=False)
+        )
+        return failure(
+            code="invalid_configuration",
+            detail=f"Invalid environment configuration or input ({fields}).",
+            action="Check the named settings or arguments and rerun.",
+        )
+    if isinstance(error, (ValueError, httpx.InvalidURL)):
+        return failure(
+            code="invalid_arguments",
+            detail=str(error),
+            action="Check the command arguments and connection settings and rerun.",
+        )
+    return failure(
+        code="local_io_error",
+        detail=str(error),
+        action="Check the local files, permissions and available disk space.",
+    )
 
 
 def _issuer_http() -> httpx.Client:
@@ -1163,13 +1234,39 @@ def _add_tag_flags(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(flag, action="append", default=[], help=help_text)
 
 
-def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentParser:
+class _CliParser(argparse.ArgumentParser):
+    """Expose the output option at each command level and report parse failures safely."""
+
+    def __init__(self, **kwargs: object) -> None:
+        """Set up one level of the command grammar."""
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.add_argument(
+            "--json",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="emit machine-readable results and errors",
+        )
+
+    def error(self, message: str) -> None:
+        """Discard argparse's diagnostic, which can echo credential arguments."""
+        raise usage_failure(
+            f"Invalid arguments for {self.prog}. See {self.prog} --help."
+        )
+
+
+def _build_parser(
+    *, include_internal_ops: bool = False, machine: bool = False
+) -> argparse.ArgumentParser:
     """Build the client-first command grammar."""
-    parser = argparse.ArgumentParser(
+    parser = _CliParser(
         prog="remember", description="Remember platform command-line interface"
     )
     parser.add_argument(
-        "--version", action="version", version=f"remember {__version__}"
+        "--version",
+        action="version",
+        version=json.dumps({"version": __version__})
+        if machine
+        else f"remember {__version__}",
     )
     commands = parser.add_subparsers(dest="command")
     client_flags = argparse.ArgumentParser(add_help=False)
