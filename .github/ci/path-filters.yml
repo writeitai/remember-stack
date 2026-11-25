@@ -48,6 +48,11 @@ adapters:
   - 'src/tests/profiles/**'
   - 'src/tests/spikes/**'
 compose:
+  - 'website/src/app/docs/start/quickstart/page.mdx'
+  - 'website/src/app/docs/start/connect-your-agent/page.mdx'
+  - 'website/src/app/docs/reference/cli/page.mdx'
+  - 'website/src/app/docs/reference/python-sdk/page.mdx'
+  - 'website/src/app/docs/reference/mcp/page.mdx'
   - 'compose.yaml'
   - 'Dockerfile'
   - 'Dockerfile.postgres'

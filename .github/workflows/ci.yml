@@ -389,6 +389,24 @@ jobs:
             docker compose --env-file .env exec -T api python -c \
               'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
 
+      - name: Set up Python for the published client
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Verify the documented CLI, Python SDK and MCP workflows
+        env:
+          REMEMBER_API_URL: http://localhost:8000
+        run: |
+          scratch="$(mktemp -d)"
+          python -m venv "$scratch/venv"
+          source "$scratch/venv/bin/activate"
+          cd "$scratch"
+          export REMEMBER_CONFIG_DIR="$scratch/config"
+          pip install remember
+          pip install 'mcp==1.28.1'
+          python "$GITHUB_WORKSPACE/.github/ci/docs-client-smoke.py" | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Stage an upgrade from the prior schema
         run: |
           docker compose --env-file .env stop api worker-convert worker-llm
