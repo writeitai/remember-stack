@@ -171,6 +171,11 @@ New to memory systems? Start with
 [What is a memory system?](https://remember.dev/docs/start/what-is-a-memory-system), written for
 any reader.
 
+Connecting an agent? [Install the Remember skill](https://remember.dev/docs/start/skills) and
+try storing and finding a note. If you are reading as an agent, use the
+[documentation index](https://remember.dev/llms.txt) to find a page or load
+the [full documentation in text](https://remember.dev/llms-full.txt).
+
 ## What RememberStack keeps that a context window loses
 
 **What each source said.** Every statement worth keeping is stored as a
@@ -258,6 +263,9 @@ Source: https://remember.dev/docs/start/how-it-works
 This page follows one document through RememberStack. The team in the
 example is working on a billing migration. Dana is the product lead and
 John is an engineer. The document is the notes from Thursday's stand-up.
+
+Follow the [Quickstart](https://remember.dev/docs/start/quickstart) to run the workflow yourself,
+or give your agent the [Remember skill](https://remember.dev/docs/start/skills) to run it through MCP.
 
 ## 1. You send the document
 
@@ -505,6 +513,8 @@ remember query "Who owns the invoice exporter?"
 
 - [Connect your coding agent](https://remember.dev/docs/start/connect-your-agent) so it can use this
   memory directly.
+- [Install the Remember skill](https://remember.dev/docs/start/skills) to let your agent run the
+  store-and-find workflow and recover a lost ingest reply.
 - [Give an agent context](https://remember.dev/docs/guides/agent-context): which operation to
   call for which kind of question.
 - [Ingest files](https://remember.dev/docs/guides/ingest-files): PDFs, HTML, bulk loads.
@@ -589,12 +599,15 @@ tools that change memory (`ingest`, `archive_document`, `unarchive_document`,
 
 ## Teach the agent the order
 
+[Install the Remember skill](https://remember.dev/docs/start/skills) to give your agent a first
+workflow and instructions for recovering failed requests.
+
 Agents use memory best when they follow one order: resolve the entity,
 then ask for facts, then fall back to claims and sources, then to SQL.
 `remember setup` writes this guidance as a Cursor rule
-(`.cursor/rules/remember.mdc`) and an Antigravity skill
-(`.agents/skills/remember/SKILL.md`). For other agents, put this in the
-system prompt or project instructions:
+(`.cursor/rules/remember.mdc`). For Antigravity, setup creates a starter skill
+(`.agents/skills/remember/SKILL.md`) if none is installed. You can also add
+this guidance to your agent's system prompt or project instructions:
 
 ```text
 You have a project memory available through the "remember" tools.
@@ -612,6 +625,76 @@ You have a project memory available through the "remember" tools.
 - [Give an agent context](https://remember.dev/docs/guides/agent-context): which operation fits
   which question.
 - [Handle unknowns and ambiguity](https://remember.dev/docs/guides/unknowns-and-ambiguity).
+
+---
+
+Source: https://remember.dev/docs/start/skills
+
+# Remember skill
+
+The Remember skill teaches a coding agent how to look up decisions, cite the
+source, save documents, and recover if it loses a write response. The skill
+provides instructions. Your agent calls the Remember MCP server to use them.
+
+## Install and discover
+
+You need Node.js 22.20 or later with `npx`, an agent that supports Agent
+Skills, and a self-hosted RememberStack engine. Follow the
+[Quickstart](https://remember.dev/docs/start/quickstart) to start the engine, then
+[connect your coding agent](https://remember.dev/docs/start/connect-your-agent) to give it MCP access.
+Run this in the project where you start your agent:
+
+```bash
+npx skills add writeitai/remember-stack --skill remember
+```
+
+Choose your agent in the installer's picker. Open a new session in that
+project so it discovers `remember`. In Claude Code, invoke `/remember`. In
+Codex, invoke `$remember`. The [skills CLI documentation](https://skills.sh/docs)
+covers other supported agents and their install paths.
+
+## Store and find a note
+
+Use a test deployment and ask your agent:
+
+> Use the Remember skill. Save a Markdown note called `billing-handoff.md`
+> with the text “John owns the invoice exporter for the billing migration.”
+> Use source kind `file` and source reference `examples/billing-handoff.md`.
+> Find the note by its returned document ID and tell me its file name and
+> version ID.
+
+On a fresh deployment, the ingest receipt has `created: true` and a
+`version_id`. The agent can use `search_documents` with the returned
+`doc_id` in `doc_ids` to find the stored document. Its file name and version
+ID should match the ingest.
+
+To ask who owns the invoice exporter, use the receipt's `pipeline.poll_with`
+to [check readiness](https://remember.dev/docs/guides/wait-for-readiness#over-mcp) first. Once the
+note is ready, the agent uses `resolve_entity` and `facts_context` to look up
+the answer. You should see John named with evidence from the note. If memory
+does not have a fact, the agent can check `claims_and_sources_context` and
+say what the source records.
+
+## Retry a request
+
+Reads such as `facts_context` and `pipeline_readiness` can be retried after a
+timeout or transient failure. On `429`, wait for `Retry-After` seconds. MCP
+exposes that delay as `retry_after` when available. If you hit the concurrency
+limit, also let your in-flight calls finish. Use bounded backoff when there
+is no server delay to follow. See [admission limits](https://remember.dev/docs/reference/http-api#admission-limits).
+
+If the ingest response goes missing, check whether another writer could have
+advanced the source. With no intervening writer, send the same bytes with
+the same source identity and metadata. If the first call stored the note,
+the retry matches the latest version by its content hash. The receipt has
+`created: false` and the existing `version_id`. Check readiness for that ID.
+A new `version_key` or a replay of older bytes can create a version. See
+[Re-ingesting the same bytes](https://remember.dev/docs/concepts/documents-and-sources#re-ingesting-the-same-bytes-createdfalse).
+
+For other writes with an unknown outcome, inspect current state before
+trying again. For example, check whether the document is already archived
+or whether a tag is already assigned. If you cannot verify the outcome,
+stop and report what you know.
 
 ---
 
@@ -21584,9 +21667,10 @@ are removed first; the rest of the file is kept. Codex loads a project's
 
 ### Antigravity
 
-`<project>/.agents/mcp_config.json`, always with a stdio
-`mcpServers.remember` entry like Cursor's, and a skill file `<project>/.agents/skills/remember/SKILL.md`,
-replacing any earlier version:
+Setup writes a stdio `mcpServers.remember` entry in
+`<project>/.agents/mcp_config.json`. If `<project>/.agents/skills/remember/SKILL.md`
+is missing, setup creates it with the starter guidance below. Setup preserves
+an existing skill, including one from the [skill installer](https://remember.dev/docs/start/skills).
 
 ```markdown
 ---

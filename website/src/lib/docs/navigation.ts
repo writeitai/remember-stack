@@ -23,6 +23,7 @@ export const docsNavigation: NavItem[] = [
         : []),
       { title: "Quickstart", href: "/docs/start/quickstart" },
       { title: "Connect your coding agent", href: "/docs/start/connect-your-agent" },
+      { title: "Remember skill", href: "/docs/start/skills" },
     ],
   },
   {

@@ -389,16 +389,19 @@ def configure_antigravity(*, cwd: Path, entry: Entry, dry_run: bool = False) -> 
     """``.agents/mcp_config.json`` and the skill ``.agents/skills/remember/SKILL.md``."""
     mcp_file = cwd / ".agents" / "mcp_config.json"
     skill_file = cwd / ".agents" / "skills" / "remember" / "SKILL.md"
+    install_skill = not (skill_file.exists() or skill_file.is_symlink())
     merged = _merged_json(mcp_file, entry)
     if dry_run:
         _print_dry_run(
             mcp_file, json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2)
         )
-        print(f"[dry-run] Would write {skill_file}")
+        if install_skill:
+            print(f"[dry-run] Would write {skill_file}")
         return True
     _write_if_changed(mcp_file, merged)
-    _write_if_changed(skill_file, ANTIGRAVITY_SKILL_CONTENT)
-    print(f"[✓] Configured Antigravity, {_describe(entry)}: {mcp_file} & {skill_file}")
+    if install_skill:
+        _write_if_changed(skill_file, ANTIGRAVITY_SKILL_CONTENT)
+    print(f"[✓] Configured Antigravity, {_describe(entry)}: {mcp_file}")
     return True
 
 
