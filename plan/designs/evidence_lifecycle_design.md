@@ -512,8 +512,10 @@ meets it:
   repairs T4 anchors (D102) — cleared for an archived lineage, rebuilt from live testimony for
   a lineage that is live again, so a document that came back keeps the anchors its live
   version earned — runs this section's cascade over whatever the archived input still holds
-  current, recounting and closing every fact any of the lineage's claims touches, and ends the
-  chain.
+  current, recounting every fact any of the lineage's claims touches, and ends the chain. The
+  archive's first cascade closes every such fact left without support; a later sweep of a
+  settled archive closes only a fact whose last support it retired itself, or one no other
+  lineage ever evidenced — a shared fact is closed by whichever run drops its other support.
 - **Coming back.** `unarchive` is the exact undo: it makes current again the testimony that
   archive ended and reopens the facts it closed whose closure is still in force, when they have
   support again, as a new recorded event (`reopened_unarchive`); belief-as-of reads take a fact's

@@ -249,108 +249,322 @@ def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
     assert catalog.sweep_postgres(forget=forget).compiled_artifact_ids == ()
 
 
-_ID_COLUMNS = (
-    "doc_id",
-    "version_id",
-    "representation_id",
-    "section_id",
-    "chunk_id",
-    "claim_id",
-    "mention_id",
-    "from_doc_id",
-    "to_doc_id",
-    "from_version_id",
-    "current_version_id",
-    "claim_lineage_id",
+# The tables of a document's subtree (design §3.3 step 1). A column references
+# a document when it is a foreign key into this subtree (directly or through a
+# table that is itself in it), a ``uuid``/``uuid[]`` column named for one of
+# its IDs (a logical reference), or a polymorphic ``target_id``.
+_SUBTREE = (
+    "documents",
+    "document_versions",
+    "document_representations",
+    "document_sections",
+    "chunks",
+    "claims",
+    "mentions",
 )
-# Every public table with a column that names a document, version,
-# representation, section, chunk, claim or mention. "swept" rows are deleted or
-# unbound by the sweep; the others are reviewed content-free rows that keep the
-# IDs only (D159 §3.1). A new table fails this test until it is classified.
-_CLASSIFIED: dict[str, str] = {
-    "chunk_claims": "swept",
-    "chunk_search": "swept",
-    "chunks": "swept",
-    "claim_extraction_decisions": "swept",
-    "claims": "swept",
-    "document_crossrefs": "swept",
-    "document_effective_periods": "swept",
-    "document_effective_time_events": "swept",
-    "document_entity_bindings": "swept",
-    "document_metadata": "swept",
-    "document_names": "swept",
-    "document_people": "swept",
-    "document_reference_generations": "swept",
-    "document_representations": "swept",
-    "document_sections": "swept",
-    "document_skeleton_checks": "swept",
-    "document_structure_generations": "swept",
-    "document_tags": "swept",
-    "document_version_scope": "swept",
-    "document_versions": "swept",
-    "documents": "swept",
-    "fact_applications": "swept",
-    "grounding_audits": "swept",
-    "knowledge_artifact_evidence": "swept",
-    "mentions": "swept",
-    "normalization_outputs": "swept",
-    "normalize_observation_staging": "swept",
-    "obs_flush_entity_units": "swept",
-    "obs_flush_version_state": "swept",
-    "observation_evidence": "swept",
-    "processing_layer_gaps": "swept",
-    "relation_evidence": "swept",
-    "resolution_decisions": "swept",
-    "selection_results": "swept",
-    "forgets": "the forget record itself (IDs and hashes only)",
-    "managed_ingest_measurements": "metering receipt: counts and the UUIDs as billing metadata",
-    "testimony_currency_events": "content-free currency history (IDs, reason, time)",
+_DISCOVER_REFERENCES = text(
+    """
+    WITH RECURSIVE fk AS (
+        SELECT conrelid, confrelid, conkey FROM pg_constraint WHERE contype = 'f'
+    ), referencing(rel) AS (
+        SELECT oid FROM pg_class
+        WHERE relnamespace = 'public'::regnamespace
+          AND relname = ANY(CAST(:subtree AS text[]))
+        UNION
+        SELECT fk.conrelid FROM fk JOIN referencing ON fk.confrelid = referencing.rel
+    ), foreign_keys AS (
+        SELECT k.relname AS table_name, a.attname AS column_name
+        FROM fk
+        JOIN referencing ON fk.confrelid = referencing.rel
+        JOIN pg_class k ON k.oid = fk.conrelid
+        JOIN pg_attribute a ON a.attrelid = fk.conrelid AND a.attnum = ANY(fk.conkey)
+        WHERE NOT k.relispartition AND a.attname <> 'deployment_id'
+    ), logical AS (
+        SELECT k.relname, a.attname
+        FROM pg_attribute a JOIN pg_class k ON k.oid = a.attrelid
+        WHERE k.relnamespace = 'public'::regnamespace
+          AND k.relkind IN ('r', 'p') AND NOT k.relispartition
+          AND k.relname NOT LIKE 'template\\_%'
+          AND a.attnum > 0 AND NOT a.attisdropped
+          AND a.atttypid IN ('uuid'::regtype, 'uuid[]'::regtype)
+          AND (a.attname ~ '(doc|version|representation|section|chunk|claim|mention)(_lineage)?_ids?$'
+               OR a.attname = 'target_id')
+    )
+    SELECT table_name, column_name FROM foreign_keys
+    UNION SELECT relname, attname FROM logical
+    """
+)
+# Every discovered reference, classified column by column. "Swept": the sweep
+# deletes the row or unbinds the value, checked below for the seeded target.
+# _KEPT holds the reviewed content-free values the design keeps (§3.1). A new
+# column fails this test until it is listed in one of the two.
+_SWEPT_COLUMNS = frozenset(
+    {
+        "application_context_bindings.application_id",
+        "chunk_claims.chunk_id",
+        "chunk_claims.claim_id",
+        "chunk_search.chunk_id",
+        "chunks.chunk_id",
+        "chunks.doc_id",
+        "chunks.representation_id",
+        "chunks.section_id",
+        "chunks.version_id",
+        "claim_extraction_decisions.chunk_id",
+        "claim_extraction_decisions.claim_id",
+        "claim_extraction_decisions.doc_id",
+        "claims.chunk_id",
+        "claims.claim_id",
+        "claims.doc_id",
+        "claims.section_id",
+        "document_crossrefs.from_doc_id",
+        "document_crossrefs.from_representation_id",
+        "document_crossrefs.from_version_id",
+        "document_crossrefs.generation_id",
+        "document_crossrefs.to_doc_id",
+        "document_effective_periods.doc_id",
+        "document_effective_periods.version_id",
+        "document_effective_time_events.doc_id",
+        "document_entity_bindings.doc_id",
+        "document_metadata.doc_id",
+        "document_metadata.version_id",
+        "document_names.version_id",
+        "document_people.version_id",
+        "document_reference_generations.doc_id",
+        "document_reference_generations.representation_id",
+        "document_reference_generations.version_id",
+        "document_representations.current_structure_generation_id",
+        "document_representations.representation_id",
+        "document_representations.version_id",
+        "document_sections.doc_id",
+        "document_sections.parent_section_id",
+        "document_sections.representation_id",
+        "document_sections.section_id",
+        "document_sections.structure_generation_id",
+        "document_sections.version_id",
+        "document_skeleton_checks.doc_id",
+        "document_skeleton_checks.representation_id",
+        "document_skeleton_checks.version_id",
+        "document_structure_generations.doc_id",
+        "document_structure_generations.representation_id",
+        "document_structure_generations.selecting_check_id",
+        "document_structure_generations.version_id",
+        "document_tags.doc_id",
+        "document_version_scope.doc_id",
+        "document_version_scope.version_id",
+        "document_versions.current_representation_id",
+        "document_versions.doc_id",
+        "document_versions.version_id",
+        "documents.current_version_id",
+        "documents.doc_id",
+        "fact_applications.claim_id",
+        "fact_applications.input_claim_ids",
+        "fact_applications.normalizer_version",
+        "grounding_audits.claim_id",
+        "knowledge_artifact_evidence.claim_lineage_id",
+        "knowledge_artifact_evidence.doc_id",
+        "mentions.chunk_id",
+        "mentions.claim_id",
+        "mentions.doc_id",
+        "mentions.mention_id",
+        "normalization_outputs.claim_id",
+        "normalize_observation_staging.application_id",
+        "normalize_observation_staging.claim_id",
+        "normalize_observation_staging.doc_id",
+        "normalize_observation_staging.version_id",
+        "obs_flush_entity_units.doc_id",
+        "obs_flush_entity_units.representation_id",
+        "obs_flush_entity_units.version_id",
+        "obs_flush_version_state.representation_id",
+        "obs_flush_version_state.version_id",
+        "observation_adjudications.consumed_claim_ids",
+        "observation_adjudications.triggering_claim_id",
+        "observation_evidence.claim_id",
+        "observation_evidence.doc_id",
+        "observations.window_claim_ids",
+        "processing_layer_gaps.doc_id",
+        "processing_layer_gaps.version_id",
+        "relation_adjudications.consumed_claim_ids",
+        "relation_adjudications.triggering_claim_id",
+        "relation_evidence.claim_id",
+        "relation_evidence.doc_id",
+        "relations.window_claim_ids",
+        "resolution_decisions.mention_id",
+        "selection_results.chunk_id",
+        "selection_results.representation_id",
+    }
+)
+_KEPT: dict[str, str] = {
+    "forgets.doc_id": "the forget record itself (IDs and hashes only)",
+    "forgets.version_ids": "the forget record itself (IDs and hashes only)",
+    "managed_ingest_measurements.doc_id": "metering receipt: the UUID as billing metadata",
+    "managed_ingest_measurements.version_id": "metering receipt: the UUID as billing metadata",
+    "testimony_currency_events.claim_id": "content-free currency history",
+    "testimony_currency_events.doc_id": "content-free currency history",
+    "testimony_currency_events.from_version_id": "content-free currency history",
+    "processing_state.target_id": "work-ledger row: status and IDs, error text cleared",
+    "cost_ledger.target_id": "cost row: counts and the UUID as billing metadata",
+}
+# Payload columns (text and JSON) of rows the sweep keeps that may still name
+# a forgotten ID, by design: the record and content-free history.
+# Every table, classified, so a new table (one holding a payload with no ID
+# column, say) fails this test until someone decides what a forget does to it.
+_SUBTREE_TABLES = frozenset(name.split(".")[0] for name in _SWEPT_COLUMNS)
+_OTHER_TABLES: dict[str, str] = {
+    # Content-free rows the sweep keeps (§3.1).
+    "forgets": "kept: the forget record (IDs and hashes)",
+    "managed_ingest_measurements": "kept: metering receipt, counts and UUIDs",
+    "managed_ingest_outcomes": "kept: metering outcome, counts and UUIDs",
+    "testimony_currency_events": "kept: content-free currency history",
+    "processing_state": "kept: work-ledger rows, error text cleared",
+    "cost_ledger": "kept: costs and UUIDs",
+    "surface_cost_ledger": "kept: request-time costs, no document content",
+    "surface_cost_meter_state": "kept: meter cursor",
+    # Shared state the sweep deletes, retires or recomputes from survivors.
+    "entities": "swept: exclusive entities retired content-free, shared reworded",
+    "aliases": "swept: aliases only the document used are deleted",
+    "merge_events": "swept: merge evidence and lemmas of touched entities cleared",
+    "predicates": "swept: source-generated predicates no relation uses are deleted",
+    "review_queue": "swept: reviews of the document's facts deleted",
+    "fact_window_review_attempts": "swept: attempts on swept facts deleted",
+    "resolution_exclusions": "swept: reasons of touched entity pairs cleared",
+    "content_objects": "swept: originals no surviving version uses are retired",
+    "knowledge_artifacts": "swept: citing compiled pages marked stale and rebuilt",
+    "knowledge_compilations": "swept: compilations of rebuilt pages deleted",
+    "knowledge_plan_decisions": "swept: rationale citing the document cleared",
+    "knowledge_plan_runs": "swept: transcripts collected and purged",
+    "knowledge_dispatches": "swept: dispatches of rebuilt pages deleted",
+    "knowledge_page_rules": "unrelated: owner rules, no document content",
+    "knowledge_page_watches": "unrelated: page watches, no document content",
+    "knowledge_quarantines": "kept: owner edits; decisions they cite are kept",
+    "knowledge_refresh_queue": "swept: queued refreshes of rebuilt pages deleted",
+    "knowledge_rule_keys": "unrelated: rule keys",
+    "knowledge_subscriptions": "unrelated: subscriptions",
+    "connector_sync_cycles": "kept: cycle counts and times",
+    "projection_snapshots": "kept: projection markers, no document content",
+    "scopes": "unrelated: retrieval scopes",
+    "scope_interests": "unrelated: scope interests",
+    # Deployment configuration and registries with no per-document content.
+    "alembic_version": "unrelated: schema version",
+    "assured_operations": "unrelated: operation registry",
+    "deployment_extension_packs": "unrelated: configuration",
+    "deployment_processing_layers": "unrelated: configuration",
+    "deployments": "unrelated: configuration",
+    "entity_types": "unrelated: type registry",
+    "extension_packs": "unrelated: registry",
+    "ingest_principals": "unrelated: who ingests, not what",
+    "p1_search_channels": "unrelated: search configuration",
+    "part_config": "unrelated: partition maintenance",
+    "part_config_sub": "unrelated: partition maintenance",
+    "perimeter_state": "unrelated: credential state",
+    "pipeline_component_versions": "unrelated: component registry",
+    "resolver_versions": "unrelated: component registry",
+    "saved_queries": "unrelated: query registry",
+    "saved_query_audit": "unrelated: query registry audit",
+    "saved_query_registry_state": "unrelated: query registry",
+    "saved_query_versions": "unrelated: query registry",
+    "tags": "unrelated: tag registry (assignments are document_tags)",
+    "canary_cases": "unrelated: evaluation fixtures",
+    "eval_runs": "unrelated: evaluation runs",
+    "golden_claim_labels": "unrelated: evaluation fixtures",
+    "golden_pairs": "unrelated: evaluation fixtures",
+}
+_DISCOVER_TABLES = text(
+    """
+    SELECT relname FROM pg_class
+    WHERE relnamespace = 'public'::regnamespace AND relkind IN ('r', 'p')
+      AND NOT relispartition AND relname NOT LIKE 'template\\_%'
+    """
+)
+_PAYLOAD_KEPT: dict[str, str] = {
+    "forgets.collected": "the forget record's content-free IDs and opaque keys",
+    "processing_state.content_hash": "work-ledger key: a document's publication work is keyed by its ID",
 }
 
 
 def test_schema_coverage_classifies_every_document_reference(
     seeded_engine: Engine,
 ) -> None:
-    """§5 test 2: every referencing table is swept or on the reviewed allow-list."""
+    """§5 test 2, discovered from the PostgreSQL catalog: every foreign key into
+    a document's subtree, every column named for one of its IDs and every
+    polymorphic target is swept or a reviewed content-free value; after the
+    sweep no swept column and no text, array or JSON payload still names the
+    document's IDs. (The token itself is scanned in a full database dump by
+    the end-to-end canary.)"""
     with seeded_engine.connect() as connection:
-        rows = connection.execute(
-            text(
-                """
-                SELECT c.table_name, c.column_name
-                FROM information_schema.columns c
-                JOIN pg_class k ON k.relname = c.table_name
-                JOIN pg_namespace n ON n.oid = k.relnamespace
-                 AND n.nspname = c.table_schema
-                WHERE c.table_schema = 'public' AND k.relkind IN ('r', 'p')
-                  AND NOT k.relispartition
-                  AND c.table_name NOT LIKE 'template\\_%'
-                  AND c.column_name = ANY(CAST(:columns AS text[]))
-                """
-            ),
-            {"columns": list(_ID_COLUMNS)},
-        ).all()
-    columns: dict[str, list[str]] = {}
-    for table, column in rows:
-        columns.setdefault(table, []).append(column)
-    assert set(columns) == set(_CLASSIFIED), (
-        "classify every table that references a document in _CLASSIFIED"
+        discovered = {
+            f"{table}.{column}"
+            for table, column in connection.execute(
+                _DISCOVER_REFERENCES, {"subtree": list(_SUBTREE)}
+            ).all()
+        }
+        tables = set(connection.execute(_DISCOVER_TABLES).scalars().all())
+    unclassified = discovered - _SWEPT_COLUMNS - set(_KEPT)
+    assert not unclassified, f"classify these references: {sorted(unclassified)}"
+    stale = (_SWEPT_COLUMNS | set(_KEPT)) - discovered
+    assert not stale, f"classified but no longer references: {sorted(stale)}"
+    assert not _SUBTREE_TABLES & set(_OTHER_TABLES)
+    classified_tables = _SUBTREE_TABLES | set(_OTHER_TABLES)
+    assert not tables - classified_tables, (
+        f"classify these tables: {sorted(tables - classified_tables)}"
     )
+    assert not classified_tables - tables, (
+        f"classified tables that no longer exist: {sorted(classified_tables - tables)}"
+    )
+    swept = _SWEPT_COLUMNS
+
     catalog = ForgetCatalog(engine=seeded_engine)
     forget = _hide(engine=seeded_engine)
     catalog.sweep_postgres(forget=forget)
+    ids = [str(value) for value in _TARGET_IDS]
     with seeded_engine.connect() as connection:
-        for table, names in sorted(columns.items()):
-            if _CLASSIFIED[table] != "swept":
+        for name in sorted(swept):
+            table, column = name.split(".")
+            kind = connection.execute(
+                text(
+                    "SELECT format_type(atttypid, atttypmod)"
+                    " FROM pg_attribute WHERE attrelid = CAST(:t AS regclass)"
+                    " AND attname = :c"
+                ),
+                {"t": table, "c": column},
+            ).scalar_one()
+            if kind not in {"uuid", "uuid[]"}:
+                continue  # a composite key's other part; its uuid part is checked
+            match = "&&" if kind == "uuid[]" else "= ANY"
+            remaining = connection.execute(
+                text(
+                    f"SELECT count(*) FROM {table}"
+                    f" WHERE {column} {match}(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": ids},
+            ).scalar_one()
+            assert remaining == 0, f"{name} still names the document"
+        payloads = connection.execute(
+            text(
+                """
+                SELECT k.relname, a.attname
+                FROM pg_attribute a JOIN pg_class k ON k.oid = a.attrelid
+                WHERE k.relnamespace = 'public'::regnamespace
+                  AND k.relkind IN ('r', 'p') AND NOT k.relispartition
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND a.atttypid IN ('text'::regtype, 'varchar'::regtype,
+                                     'jsonb'::regtype, 'json'::regtype,
+                                     'text[]'::regtype, 'uuid[]'::regtype)
+                ORDER BY 1, 2
+                """
+            )
+        ).all()
+        assert payloads
+        for table, column in payloads:
+            if f"{table}.{column}" in _PAYLOAD_KEPT or f"{table}.{column}" in _KEPT:
                 continue
-            for column in names:
-                remaining = connection.execute(
-                    text(
-                        f"SELECT count(*) FROM {table}"
-                        f" WHERE {column} = ANY(CAST(:ids AS uuid[]))"
-                    ),
-                    {"ids": list(_TARGET_IDS)},
-                ).scalar_one()
-                assert remaining == 0, f"{table}.{column} still names the document"
+            hits = connection.execute(
+                text(
+                    f'SELECT count(*) FROM "{table}"'
+                    f' WHERE CAST("{column}" AS text) LIKE ANY(CAST(:needles AS text[]))'
+                ),
+                {"needles": [f"%{value}%" for value in ids]},
+            ).scalar_one()
+            assert hits == 0, f"{table}.{column} still names the document"
 
 
 def test_late_writer_residue_is_removed_by_the_next_sweep(
@@ -2378,3 +2592,195 @@ def test_a_shared_entity_keeps_only_surviving_spellings(seeded_engine: Engine) -
         )
     assert _TOKEN not in name
     assert all(_TOKEN not in alias for alias in aliases)
+
+
+def test_a_rationale_citing_an_entity_merged_into_a_touched_one_is_cleared(
+    seeded_engine: Engine,
+) -> None:
+    """§3.3 through redirects: a surviving decision whose T4 rationale cites an
+    entity merged into one the document touched loses the prose (top level
+    and nested) and keeps its verdict."""
+    absorbed = UUID("75000000-0000-0000-0000-0000000000d1")
+    mention = UUID("75000000-0000-0000-0000-0000000000d2")
+    decision = UUID(int=mention.int + 100)
+    phrase = f"{_TOKEN}-rationale"
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name, status, merged_into) VALUES (:e, :d,"
+                " 'Absorbed', 'absorbed', 'merged', :survivor)"
+            ),
+            {"e": absorbed, "d": _DEPLOYMENT_ID, "survivor": _SHARED_ENTITY_ID},
+        )
+        _record_merge(
+            connection=connection, survivor=_SHARED_ENTITY_ID, absorbed=absorbed
+        )
+        _seed_mention(
+            connection=connection,
+            mention_id=mention,
+            doc_id=_CONTROL_DOC_ID,
+            claim_id=_CONTROL_CLAIM_ID,
+            entity_id=_CONTROL_ENTITY_ID,
+            surface="control redirect mention",
+        )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET features = jsonb_build_object("
+                "'candidates', jsonb_build_array(CAST(:absorbed AS text)),"
+                " 'rationale', CAST(:phrase AS text),"
+                " 't4_selection', jsonb_build_object('rationale', CAST(:phrase AS text),"
+                " 'choice', 'kept'))"
+                " WHERE decision_id = :decision"
+            ),
+            {"absorbed": str(absorbed), "phrase": phrase, "decision": decision},
+        )
+
+    forget = _hide(engine=seeded_engine)
+    ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+
+    with seeded_engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT entity_id, features FROM resolution_decisions"
+                    " WHERE decision_id = :decision"
+                ),
+                {"decision": decision},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["entity_id"] == _CONTROL_ENTITY_ID  # the verdict stays
+    assert "rationale" not in row["features"]
+    assert "rationale" not in row["features"]["t4_selection"]
+    assert row["features"]["t4_selection"]["choice"] == "kept"
+    assert phrase not in str(row["features"])
+
+
+def test_a_rationale_recording_only_the_survivor_of_an_undone_merge_is_cleared(
+    seeded_engine: Engine,
+) -> None:
+    """The entity the document touched was merged into a survivor, a decision
+    on another document recorded only the survivor while its T4 prose quoted
+    the merged entity's evidence, and the merge was then undone. The merge
+    history still links them: the prose goes, the verdict stays."""
+    survivor = UUID("75000000-0000-0000-0000-0000000000d3")
+    mention = UUID("75000000-0000-0000-0000-0000000000d4")
+    decision = UUID(int=mention.int + 100)
+    phrase = f"{_TOKEN}-survivor-rationale"
+    with seeded_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:e, :d, 'Survivor', 'survivor')"
+            ),
+            {"e": survivor, "d": _DEPLOYMENT_ID},
+        )
+        merge = _record_merge(
+            connection=connection, survivor=survivor, absorbed=_SHARED_ENTITY_ID
+        )
+        # the unmerge: the redirect is gone, the history stays
+        unmerge = _record_merge(
+            connection=connection, survivor=_SHARED_ENTITY_ID, absorbed=survivor
+        )
+        connection.execute(
+            text("UPDATE merge_events SET reversed_by = :u WHERE merge_id = :m"),
+            {"u": unmerge, "m": merge},
+        )
+        _seed_mention(
+            connection=connection,
+            mention_id=mention,
+            doc_id=_CONTROL_DOC_ID,
+            claim_id=_CONTROL_CLAIM_ID,
+            entity_id=_CONTROL_ENTITY_ID,
+            surface="control survivor mention",
+        )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET features = jsonb_build_object("
+                "'candidates', jsonb_build_array(CAST(:survivor AS text)),"
+                " 'rationale', CAST(:phrase AS text),"
+                " 't4_selection', jsonb_build_object('rationale', CAST(:phrase AS text)))"
+                " WHERE decision_id = :decision"
+            ),
+            {"survivor": str(survivor), "phrase": phrase, "decision": decision},
+        )
+
+    forget = _hide(engine=seeded_engine)
+    ForgetCatalog(engine=seeded_engine).sweep_postgres(forget=forget)
+
+    with seeded_engine.connect() as connection:
+        row = (
+            connection.execute(
+                text(
+                    "SELECT entity_id, features FROM resolution_decisions"
+                    " WHERE decision_id = :decision"
+                ),
+                {"decision": decision},
+            )
+            .mappings()
+            .one()
+        )
+    assert row["entity_id"] == _CONTROL_ENTITY_ID
+    assert phrase not in str(row["features"])
+    assert row["features"]["candidates"] == [str(survivor)]
+
+
+def _record_merge(*, connection: Connection, survivor: UUID, absorbed: UUID) -> UUID:
+    """One merge_events row linking two entities (the merge history)."""
+    merge_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO merge_events (merge_id, deployment_id, survivor_id,"
+            " absorbed_id, pre_merge_membership_snapshot) VALUES"
+            " (:m, :d, :survivor, :absorbed, '{}'::jsonb)"
+        ),
+        {
+            "m": merge_id,
+            "d": _DEPLOYMENT_ID,
+            "survivor": survivor,
+            "absorbed": absorbed,
+        },
+    )
+    return merge_id
+
+
+def test_a_fresh_rationale_is_cleared_without_keeping_the_forget_erasing(
+    seeded_engine: Engine,
+) -> None:
+    """A T4 decision written after the first sweep about an entity the
+    document touched loses its prose on the next sweep, and that sweep is
+    still clean: clearing prose is never residue, so the forget completes."""
+    catalog = ForgetCatalog(engine=seeded_engine)
+    forget = _hide(engine=seeded_engine)
+    assert catalog.sweep_postgres(forget=forget).removed
+    mention = UUID("75000000-0000-0000-0000-0000000000d5")
+    decision = UUID(int=mention.int + 100)
+    phrase = f"{_TOKEN}-fresh-rationale"
+    with seeded_engine.begin() as connection:
+        _seed_mention(
+            connection=connection,
+            mention_id=mention,
+            doc_id=_CONTROL_DOC_ID,
+            claim_id=_CONTROL_CLAIM_ID,
+            entity_id=_SHARED_ENTITY_ID,
+            surface="control fresh mention",
+        )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET features = jsonb_build_object("
+                "'rationale', CAST(:phrase AS text)) WHERE decision_id = :decision"
+            ),
+            {"phrase": phrase, "decision": decision},
+        )
+
+    findings = catalog.sweep_postgres(forget=forget)
+
+    assert not findings.removed  # a clean sweep: the forget can complete
+    with seeded_engine.connect() as connection:
+        features = connection.execute(
+            text("SELECT features FROM resolution_decisions WHERE decision_id = :d"),
+            {"d": decision},
+        ).scalar_one()
+    assert "rationale" not in features

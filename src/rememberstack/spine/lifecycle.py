@@ -1139,6 +1139,66 @@ class LifecycleCatalog:
                 {"doc_id": doc_id, "since": since},
             ).scalar_one_or_none()
 
+    def settle_archive_cycle(self, *, doc_id: UUID) -> bool:
+        """Mark a source archive settled; whether this is its first settlement.
+
+        ``archived_cycle_id`` names the cycle a source archive waits for; it
+        is cleared when the finalizer first settles the archive, so later
+        sweeps know the episode's full cascade has run (D159).
+        """
+        with self._engine.begin() as connection:
+            return (
+                connection.execute(
+                    text(
+                        "UPDATE documents SET archived_cycle_id = NULL"
+                        " WHERE doc_id = :doc_id AND archived_cycle_id IS NOT NULL"
+                    ),
+                    {"doc_id": doc_id},
+                ).rowcount
+                == 1
+            )
+
+    def late_archive_facts(
+        self,
+        *,
+        doc_id: UUID,
+        retired_claim_ids: tuple[UUID, ...],
+        relation_ids: tuple[UUID, ...],
+        observation_ids: tuple[UUID, ...],
+    ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
+        """The facts a settled archive's sweep may close (D159).
+
+        A fact a claim this sweep itself retired evidences (it removed the
+        last support), or one no other lineage ever evidenced. A shared fact
+        is the business of whichever run drops its other support.
+        """
+        params = {
+            "doc_id": doc_id,
+            "retired": [str(item) for item in retired_claim_ids],
+        }
+        with self._engine.connect() as connection:
+            relations = (
+                tuple(
+                    connection.execute(
+                        _LATE_ARCHIVE_FACTS["relation"],
+                        {**params, "ids": [str(item) for item in relation_ids]},
+                    ).scalars()
+                )
+                if relation_ids
+                else ()
+            )
+            observations = (
+                tuple(
+                    connection.execute(
+                        _LATE_ARCHIVE_FACTS["observation"],
+                        {**params, "ids": [str(item) for item in observation_ids]},
+                    ).scalars()
+                )
+                if observation_ids
+                else ()
+            )
+        return relations, observations
+
     def archive_waits_for_cycle(self, *, doc_id: UUID) -> bool:
         """Whether the lineage's source archive waits for its observing cycle."""
         with self._engine.connect() as connection:
@@ -1180,10 +1240,11 @@ class LifecycleCatalog:
         """Archived lineages whose cascade still has work left (D159).
 
         A source archive defers its cascade until its observing cycle is
-        finalized, and work still in flight can attach support after any
-        archive: a lineage is pending while
-        one of its claims is current, or evidences an open fact that has no
-        current support and no live review holding it open. Each row is
+        finalized and is then pending once for its first, full cascade.
+        Work still in flight can attach support after any archive: a
+        settled lineage is pending while one of its claims is current, or
+        evidences an open fact only it ever evidenced that has no current
+        support and no live review holding it open. Each row is
         ``(doc_id, archived_at)``, which names the archive episode.
         Deployment-wide, not per cycle: the cascade re-derives from current
         state, so a finalizer crash self-heals on the next pass.
@@ -2026,7 +2087,7 @@ _INSERT_BINDING = text(
 
 _SELECT_LINEAGE_STATE = text(
     """
-    SELECT archived_at, archived_by, deleted_at
+    SELECT archived_at, archived_by, archived_cycle_id, deleted_at
     FROM documents
     WHERE deployment_id = :deployment_id AND doc_id = :doc_id
     """
@@ -2183,6 +2244,35 @@ def archive_cycle_open(*, doc: str) -> str:
       )"""
 
 
+def _exclusive_to_lineage(*, evidence: str, column: str, fact: str, doc: str) -> str:
+    """SQL predicate: no lineage but ``doc`` ever evidenced fact ``fact``.
+
+    ``column`` is the evidence table's fact column, ``fact`` the outer fact id.
+    """
+    return f"""NOT EXISTS (SELECT 1 FROM {evidence} other
+                    WHERE other.{column} = {fact} AND other.doc_id <> {doc})"""
+
+
+_LATE_ARCHIVE_FACTS = {
+    kind: text(
+        f"""
+        SELECT f.{kind}_id FROM {table} f
+        WHERE f.{kind}_id = ANY(CAST(:ids AS uuid[]))
+          AND (
+              EXISTS (SELECT 1 FROM {evidence} retired
+                      WHERE retired.{kind}_id = f.{kind}_id
+                        AND retired.claim_id = ANY(CAST(:retired AS uuid[])))
+              OR {_exclusive_to_lineage(evidence=evidence, column=f"{kind}_id", fact=f"f.{kind}_id", doc="CAST(:doc_id AS uuid)")}
+          )
+        ORDER BY f.{kind}_id
+        """
+    )
+    for kind, table, evidence in (
+        ("relation", "relations", "relation_evidence"),
+        ("observation", "observations", "observation_evidence"),
+    )
+}
+
 _SELECT_PENDING_ARCHIVES = text(
     f"""
     SELECT d.doc_id, d.archived_at
@@ -2193,7 +2283,9 @@ _SELECT_PENDING_ARCHIVES = text(
       -- a source archive waits for its observing cycle's finalization (the
       -- retract-timing barrier): a move resolves as a support swap
       AND NOT {archive_cycle_open(doc="d")}
-      AND EXISTS (
+      -- a source archive its cycle has released is settled once, whatever
+      -- work it has (its first, full cascade); then only work left over
+      AND (d.archived_cycle_id IS NOT NULL OR EXISTS (
           SELECT 1 FROM claims cl
           WHERE cl.deployment_id = d.deployment_id
             AND cl.doc_id = d.doc_id
@@ -2205,6 +2297,9 @@ _SELECT_PENDING_ARCHIVES = text(
                     WHERE e.claim_id = cl.claim_id
                       AND r.invalidated_at IS NULL AND r.evidence_count = 0
                       AND NOT {_review_holds(kind="relation", fact="r.relation_id", deployment="r.deployment_id")}
+                      -- a settled archive waits only on facts no other
+                      -- lineage evidences
+                      AND {_exclusive_to_lineage(evidence="relation_evidence", column="relation_id", fact="r.relation_id", doc="d.doc_id")}
                 )
                 OR EXISTS (
                     SELECT 1 FROM observation_evidence e
@@ -2212,9 +2307,10 @@ _SELECT_PENDING_ARCHIVES = text(
                     WHERE e.claim_id = cl.claim_id
                       AND o.invalidated_at IS NULL AND o.evidence_count = 0
                       AND NOT {_review_holds(kind="observation", fact="o.observation_id", deployment="o.deployment_id")}
+                      AND {_exclusive_to_lineage(evidence="observation_evidence", column="observation_id", fact="o.observation_id", doc="d.doc_id")}
                 )
             )
-      )
+      ))
     ORDER BY d.doc_id
     """
 )

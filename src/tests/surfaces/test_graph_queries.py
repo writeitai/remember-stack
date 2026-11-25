@@ -67,7 +67,10 @@ def database_engine() -> Iterator[Engine]:
     config.set_main_option("sqlalchemy.url", database_url)
     reset_database(config=config)
     command.upgrade(config=config, revision="head")
-    engine = create_engine(database_url)
+    # JIT compilation costs tens of milliseconds per statement on a loaded CI
+    # runner and spends the traversal's clock budget before any edge is read;
+    # these proofs are about plans and budgets, not JIT.
+    engine = create_engine(database_url, connect_args={"options": "-c jit=off"})
     try:
         yield engine
     finally:
@@ -870,7 +873,7 @@ def test_one_hop_read_matches_canonical_helper_under_budget(
             "max_results": 500,
             "expansion_budget": 2000,
             "frontier_budget": 1000,
-            "time_budget_ms": 1000,
+            "time_budget_ms": 10000,  # the clock never decides this comparison
             "after": None,
         }
         one_hop = graph_queries_module._shallow_neighborhood_rows(  # noqa: SLF001
@@ -911,7 +914,8 @@ def test_recursive_helper_null_depth_uses_default_and_truthful_data_status(
                 text(
                     "SELECT * FROM memory_v1.graph_neighborhood("
                     ":deployment_id, :anchor_id, NULL, NULL, :operation_at, "
-                    ":operation_at, 100, 2000, 1000, 1000)"
+                    # a clock budget no loaded runner reaches on this corpus
+                    ":operation_at, 100, 2000, 1000, 10000)"
                 ),
                 {
                     "deployment_id": _DEPLOYMENT_ID,
@@ -926,7 +930,7 @@ def test_recursive_helper_null_depth_uses_default_and_truthful_data_status(
     data = [row for row in rows if row["row_kind"] == "data"]
     assert data
     assert status["effective_depth"] == 2
-    assert status["truncated"] is False
+    assert status["truncated"] is False, status["truncation_reason"]
     assert status["truncation_reason"] is None
     assert all(row["truncated"] == status["truncated"] for row in data)
     assert all(row["truncation_reason"] == status["truncation_reason"] for row in data)
@@ -951,7 +955,8 @@ def test_dense_hub_refuses_one_hop_over_budget_and_helper_returns_whole_prefix(
             "max_results": 500,
             "expansion_budget": 1,
             "frontier_budget": 1000,
-            "time_budget_ms": 1000,
+            # the expansion budget must be what stops it, never the clock
+            "time_budget_ms": 10000,
             "after": None,
         }
         guard = (
@@ -1019,7 +1024,7 @@ def test_shallow_guard_plan_is_endpoint_anchored(
         ).scalar_one()
 
     plan_text = str(plan)
-    assert "ix_relations_block_subj" in plan_text
+    assert "ix_relations_block_subj" in plan_text, plan_text
     assert "ix_relations_block_obj" in plan_text, plan_text
     assert not (
         "'Node Type': 'Seq Scan'" in plan_text

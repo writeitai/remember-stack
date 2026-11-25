@@ -108,9 +108,12 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     caller = rig.observe(source_ref="caller.md", content=f"{_FACT_SENTENCE}\n")
     source = rig.observe(source_ref="source.md", content="Acme opened an office.\n")
     forgotten = rig.observe(source_ref="d74.md", content="Bob runs the depot.\n")
+    waiting = rig.observe(source_ref="waiting.md", content="Carol paints boats.\n")
+    reopened = rig.observe(source_ref="reopened.md", content="Dan fixes clocks.\n")
+    pending = rig.observe(source_ref="pending.md", content="Eve bakes bread.\n")
     rig.drain()
     assert rig.relation()["invalidated_at"] is None
-    for added in (caller, source, forgotten):
+    for added in (caller, source, forgotten, waiting, reopened):
         rig.deletion.delete_lineage(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
     assert rig.relation()["invalidated_at"] is not None
     deleted_at = _scalar(
@@ -119,12 +122,40 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     assert isinstance(deleted_at, datetime)
 
     command.downgrade(config=config, revision=_PREVIOUS)
+    finalized, open_cycle, backfilled = uuid4(), uuid4(), uuid4()
     with engine.begin() as connection:
+        # D135 tombstoned this source deletion; its cascade has not run yet
+        for table in ("documents", "document_versions"):
+            connection.execute(
+                text(f"UPDATE {table} SET deleted_at = :at WHERE doc_id = :d"),
+                {"at": deleted_at, "d": pending.doc_id},
+            )
+        for cycle, finalized_at, reopened_at, doc_id in (
+            (finalized, "now()", "NULL", source.doc_id),  # D135's cascade ran
+            # the cycle never finalized, but an earlier finalizer already
+            # cascaded the stranded deletion
+            (open_cycle, "NULL", "NULL", waiting.doc_id),
+            # finalized (the cascade ran), then reopened by a D143 backfill
+            (backfilled, "NULL", "now()", reopened.doc_id),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO connector_sync_cycles (cycle_id, deployment_id,"
+                    " source_kind, completed_at, finalized_at, layers_reopened_at)"
+                    f" VALUES (:c, :d, 'watched_directory', now(), {finalized_at},"
+                    f" {reopened_at})"
+                ),
+                {"c": cycle, "d": _DEPLOYMENT_ID},
+            )
+            connection.execute(
+                text(
+                    "UPDATE documents SET deleted_sync_cycle_id = :c WHERE doc_id = :d"
+                ),
+                {"c": cycle, "d": doc_id},
+            )
         connection.execute(
-            text(
-                "UPDATE documents SET deleted_sync_cycle_id = :cycle WHERE doc_id = :d"
-            ),
-            {"cycle": uuid4(), "d": source.doc_id},
+            text("UPDATE documents SET deleted_sync_cycle_id = :c WHERE doc_id = :d"),
+            {"c": open_cycle, "d": pending.doc_id},
         )
         # D135 refused extraction publication once the source was gone: work
         # that failed then dead-lettered after the deletion instant
@@ -158,7 +189,8 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
             row["doc_id"]: row
             for row in connection.execute(
                 text(
-                    "SELECT doc_id, archived_at, archived_by, deleted_at FROM documents"
+                    "SELECT doc_id, archived_at, archived_by, archived_cycle_id,"
+                    " deleted_at FROM documents"
                 )
             ).mappings()
         }
@@ -166,6 +198,12 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     assert rows[caller.doc_id]["archived_by"] == "caller"
     assert rows[caller.doc_id]["deleted_at"] is None
     assert rows[source.doc_id]["archived_by"] == "source"
+    assert rows[source.doc_id]["archived_cycle_id"] is None  # settled
+    assert rows[waiting.doc_id]["archived_by"] == "source"
+    assert rows[waiting.doc_id]["archived_cycle_id"] is None  # cascaded: settled
+    assert rows[reopened.doc_id]["archived_cycle_id"] is None  # settled
+    assert rows[pending.doc_id]["archived_by"] == "source"
+    assert rows[pending.doc_id]["archived_cycle_id"] == open_cycle  # still waits
     assert (
         _scalar(
             engine,
