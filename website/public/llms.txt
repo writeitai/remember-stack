@@ -11,7 +11,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [A five-minute tour](https://remember.dev/docs/start/how-it-works): What happens to a document from the moment you send it to the moment your agent asks about it.
 - [Quickstart](https://remember.dev/docs/start/quickstart): Send a document to RememberStack and ask your first question.
 - [Connect your coding agent](https://remember.dev/docs/start/connect-your-agent): Give Claude Code, Cursor, Codex, Antigravity or Claude Desktop access to your memory over MCP.
-- [Remember skill](https://remember.dev/docs/start/skills): Install the Remember skill, then use it to save and recall a note with your coding agent.
+- [Remember skill](https://remember.dev/docs/start/skills): Install the Remember skill, then use it to store and find a note with your coding agent.
 
 ## Concepts
 

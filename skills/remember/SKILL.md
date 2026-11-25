@@ -16,7 +16,7 @@ Use the configured `remember` MCP server. If it is missing, follow [Connect your
 
 ## Store a document
 
-When the user asks you to save a document, call `ingest` with one body. Use `text` and `filename` for a short note, or follow the [MCP ingest reference](https://remember.dev/docs/reference/mcp#ingest) for a file. Keep `source_kind` and `source_ref` stable when updating a named source. Save the `doc_id`, `version_id`, and `content_hash` from the receipt. Follow `pipeline.poll_with` to check `pipeline_readiness` until it returns `ready: true` before you query the new content. Report a parked conversion or `dead_letter` stage with the affected version. See the [first workflow](https://remember.dev/docs/start/skills#save-and-recall-a-note).
+When the user asks you to save a document, call `ingest` with one body. Use `text` and `filename` for a short note, or follow the [MCP ingest reference](https://remember.dev/docs/reference/mcp#ingest) for a file. Keep `source_kind` and `source_ref` stable when updating a named source. Save the `doc_id`, `version_id`, and `content_hash` from the receipt. To confirm that the document is stored, call `search_documents` with its `doc_id` in `doc_ids`. Follow `pipeline.poll_with` to check `pipeline_readiness` until it returns `ready: true` before you query the new content. Report a parked conversion or `dead_letter` stage with the affected version. See the [first workflow](https://remember.dev/docs/start/skills#store-and-find-a-note).
 
 ## Recover from a failed request
 

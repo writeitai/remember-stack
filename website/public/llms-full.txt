@@ -172,7 +172,7 @@ New to memory systems? Start with
 any reader.
 
 Connecting an agent? [Install the Remember skill](https://remember.dev/docs/start/skills) and
-try saving and recalling a note. If you are reading as an agent, use the
+try storing and finding a note. If you are reading as an agent, use the
 [documentation index](https://remember.dev/llms.txt) to find a page or load
 the [full documentation in text](https://remember.dev/llms-full.txt).
 
@@ -514,7 +514,7 @@ remember query "Who owns the invoice exporter?"
 - [Connect your coding agent](https://remember.dev/docs/start/connect-your-agent) so it can use this
   memory directly.
 - [Install the Remember skill](https://remember.dev/docs/start/skills) to let your agent run the
-  save-and-recall workflow and recover a lost ingest reply.
+  store-and-find workflow and recover a lost ingest reply.
 - [Give an agent context](https://remember.dev/docs/guides/agent-context): which operation to
   call for which kind of question.
 - [Ingest files](https://remember.dev/docs/guides/ingest-files): PDFs, HTML, bulk loads.
@@ -653,21 +653,25 @@ project so it discovers `remember`. In Claude Code, invoke `/remember`. In
 Codex, invoke `$remember`. The [skills CLI documentation](https://skills.sh/docs)
 covers other supported agents and their install paths.
 
-## Save and recall a note
+## Store and find a note
 
 Use a test deployment and ask your agent:
 
 > Use the Remember skill. Save a Markdown note called `billing-handoff.md`
 > with the text “John owns the invoice exporter for the billing migration.”
 > Use source kind `file` and source reference `examples/billing-handoff.md`.
-> Wait until the note is queryable. Then look up who owns the invoice
-> exporter and cite the evidence.
+> Find the note by its returned document ID and tell me its file name and
+> version ID.
 
 On a fresh deployment, the ingest receipt has `created: true` and a
-`version_id`. Your agent can use the receipt's `pipeline.poll_with` to
-[check readiness](https://remember.dev/docs/guides/wait-for-readiness#over-mcp). When the note is
-ready, the agent uses `resolve_entity` and `facts_context` to look up the
-answer. You should see John named with evidence from the note. If memory
+`version_id`. The agent can use `search_documents` with the returned
+`doc_id` in `doc_ids` to find the stored document. Its file name and version
+ID should match the ingest.
+
+To ask who owns the invoice exporter, use the receipt's `pipeline.poll_with`
+to [check readiness](https://remember.dev/docs/guides/wait-for-readiness#over-mcp) first. Once the
+note is ready, the agent uses `resolve_entity` and `facts_context` to look up
+the answer. You should see John named with evidence from the note. If memory
 does not have a fact, the agent can check `claims_and_sources_context` and
 say what the source records.
 

@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Remember skill",
-  description: "Install the Remember skill, then use it to save and recall a note with your coding agent.",
+  description: "Install the Remember skill, then use it to store and find a note with your coding agent.",
 };
 
 # Remember skill
@@ -28,21 +28,25 @@ project so it discovers `remember`. In Claude Code, invoke `/remember`. In
 Codex, invoke `$remember`. The [skills CLI documentation](https://skills.sh/docs)
 covers other supported agents and their install paths.
 
-## Save and recall a note
+## Store and find a note
 
 Use a test deployment and ask your agent:
 
 > Use the Remember skill. Save a Markdown note called `billing-handoff.md`
 > with the text “John owns the invoice exporter for the billing migration.”
 > Use source kind `file` and source reference `examples/billing-handoff.md`.
-> Wait until the note is queryable. Then look up who owns the invoice
-> exporter and cite the evidence.
+> Find the note by its returned document ID and tell me its file name and
+> version ID.
 
 On a fresh deployment, the ingest receipt has `created: true` and a
-`version_id`. Your agent can use the receipt's `pipeline.poll_with` to
-[check readiness](/docs/guides/wait-for-readiness#over-mcp). When the note is
-ready, the agent uses `resolve_entity` and `facts_context` to look up the
-answer. You should see John named with evidence from the note. If memory
+`version_id`. The agent can use `search_documents` with the returned
+`doc_id` in `doc_ids` to find the stored document. Its file name and version
+ID should match the ingest.
+
+To ask who owns the invoice exporter, use the receipt's `pipeline.poll_with`
+to [check readiness](/docs/guides/wait-for-readiness#over-mcp) first. Once the
+note is ready, the agent uses `resolve_entity` and `facts_context` to look up
+the answer. You should see John named with evidence from the note. If memory
 does not have a fact, the agent can check `claims_and_sources_context` and
 say what the source records.
 
