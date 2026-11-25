@@ -38,6 +38,11 @@ from rememberstack.model.storage_capture import Digest
 class ProviderCaptureUnavailable(RuntimeError):
     """A non-secret refused/lost original provider operation."""
 
+    def __init__(self, code: str) -> None:
+        """Carry the caller's declared, content-free refusal code."""
+        super().__init__(code)
+        self.code = code
+
 
 class ProviderScopeUnavailable(ProviderCaptureUnavailable):
     """One matched non-complete scope result; other original groups survive."""
