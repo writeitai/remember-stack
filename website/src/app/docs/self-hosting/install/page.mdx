@@ -187,7 +187,6 @@ Compose names volumes after the project, `rememberstack`:
 | `rememberstack_postgres-data` | `/var/lib/postgresql` in `postgres` | The database: every document, version, claim, fact and entity, the work queue and the cost ledger |
 | `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and corpus copies |
 | `rememberstack_app-state` | `/var/lib/rememberstack` in the app containers | Working directories; the optional debug capture of invalid model output |
-| `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Portable hard-forget intent, replayed before serving restored data. |
 
 The first two hold the memory. Back them up together; see
 [Upgrades and migrations](/docs/self-hosting/upgrades#back-up).

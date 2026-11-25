@@ -15,10 +15,6 @@
         },
         {
           "filesystem_id": "aibaeaqcaibaeaqcaibaeaqcai",
-          "role": "forget"
-        },
-        {
-          "filesystem_id": "ambqgaydambqgaydambqgaydam",
           "role": "raw"
         }
       ],
@@ -73,10 +69,6 @@
         {
           "native_class_id": "18f5abc52e6326573821085782bcf289518e66761b590414771d19f0cee58ace",
           "purpose": "truth_provenance"
-        },
-        {
-          "native_class_id": "19ca460a0b58bf873c77199ee43157903fa692056b0877125b7ddc2c4fe77901",
-          "purpose": "privacy_control"
         },
         {
           "native_class_id": "1a9686dddb81706f19a92dcd0622c56444dfe1d15e9b521cbbf3d3330a59c615",
@@ -163,6 +155,10 @@
           "purpose": "truth_provenance"
         },
         {
+          "native_class_id": "3e6a7d7c3f88d6a314c1cd038739f92309a9ed443b43e3f7ec631d6ddb3f48fd",
+          "purpose": "privacy_control"
+        },
+        {
           "native_class_id": "3f9882bd5a51113017a54698652c0547627ac325253d2be7eced60827d1383f5",
           "purpose": "truth_provenance"
         },
@@ -313,10 +309,6 @@
         {
           "native_class_id": "8f1c9de220f26cfa48b14bc08749cd495e3d8bb930d2adcc072fffe266b630ed",
           "purpose": "truth_provenance"
-        },
-        {
-          "native_class_id": "92b0cc803816c4985c4ddea87165192e2facf463af56b5463a65514737c903c3",
-          "purpose": "privacy_control"
         },
         {
           "native_class_id": "94dbbf109e06061786430bc767111f0ceb499717bfe1a428346bf3a33a0de6a1",
@@ -523,13 +515,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "6e23bbaf452f931748b45c1afcded6d78512ac47c045d9fc613118814232fe5d",
-      "source_digest": "a862b602906a9dff598b70086630c5b10c6ca3c1a42b3bc9d18ba68b32e44bdf"
+      "schema_profile_digest": "05fef4cec127d8001b3b871ea4f9e5c33a8005e70c84c2114342b8f62735eb69",
+      "source_digest": "7ac68d5e75221c8a13e761e59b31a9a2b5180d6e201597b821eae8e85fcf8f4f"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "24063cf1e2d73308b874ac1dec6352657381246a35b6b307974ca08906ba744c",
+      "classification_digest": "309e48953fe73a178aa2a9ebbf7f3bf1bef94dc05a553f7f857aff21ce6aa194",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -586,11 +578,6 @@
           "component": "postgres_allocated",
           "native_class_id": "18f5abc52e6326573821085782bcf289518e66761b590414771d19f0cee58ace",
           "store_binding_id": "postgres"
-        },
-        {
-          "component": null,
-          "native_class_id": "19ca460a0b58bf873c77199ee43157903fa692056b0877125b7ddc2c4fe77901",
-          "store_binding_id": "forget"
         },
         {
           "component": "postgres_allocated",
@@ -698,6 +685,11 @@
           "store_binding_id": "postgres"
         },
         {
+          "component": null,
+          "native_class_id": "3e6a7d7c3f88d6a314c1cd038739f92309a9ed443b43e3f7ec631d6ddb3f48fd",
+          "store_binding_id": "postgres"
+        },
+        {
           "component": "postgres_allocated",
           "native_class_id": "3f9882bd5a51113017a54698652c0547627ac325253d2be7eced60827d1383f5",
           "store_binding_id": "postgres"
@@ -889,11 +881,6 @@
         },
         {
           "component": null,
-          "native_class_id": "92b0cc803816c4985c4ddea87165192e2facf463af56b5463a65514737c903c3",
-          "store_binding_id": "postgres"
-        },
-        {
-          "component": null,
           "native_class_id": "94dbbf109e06061786430bc767111f0ceb499717bfe1a428346bf3a33a0de6a1",
           "store_binding_id": "artifacts"
         },
@@ -911,11 +898,6 @@
           "component": null,
           "native_class_id": "9a338a4086d8bb2cfa0f6719f0016c5c8dc23081f7b6d5a9c7516d279ff61bf7",
           "store_binding_id": "corpus"
-        },
-        {
-          "component": null,
-          "native_class_id": "9a338a4086d8bb2cfa0f6719f0016c5c8dc23081f7b6d5a9c7516d279ff61bf7",
-          "store_binding_id": "forget"
         },
         {
           "component": null,
@@ -1163,40 +1145,40 @@
           "store_binding_id": "postgres"
         }
       ],
-      "store_binding_digest": "e65a24fea35f132abbafaee8eb0f7421577234c011f86c911bcc1b0bf0c029ae"
+      "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
     },
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "68d06b800ea0b38488a4c2ab2f99a9db80724a2fe9ff9c6ace80efbef5db69eb",
+      "profile_digest": "628391a8a4f9f050c50a025a31a0f2561035b0a292bc8f487469c69a582ac9ec",
       "release_margin_us": 500000,
-      "schema_digest": "0385d36f91ae8f3616b8ece61a28840443acdfacb3e26c1059bdf1726850d543",
-      "schema_profile_digest": "6e23bbaf452f931748b45c1afcded6d78512ac47c045d9fc613118814232fe5d",
-      "source_digest": "a862b602906a9dff598b70086630c5b10c6ca3c1a42b3bc9d18ba68b32e44bdf",
+      "schema_digest": "00d0c5257934e18363fbad11c2686c4095a5ad90fad5a9e9c8619f2939a662c6",
+      "schema_profile_digest": "05fef4cec127d8001b3b871ea4f9e5c33a8005e70c84c2114342b8f62735eb69",
+      "source_digest": "7ac68d5e75221c8a13e761e59b31a9a2b5180d6e201597b821eae8e85fcf8f4f",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "24063cf1e2d73308b874ac1dec6352657381246a35b6b307974ca08906ba744c",
+    "classification_digest": "309e48953fe73a178aa2a9ebbf7f3bf1bef94dc05a553f7f857aff21ce6aa194",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "68d06b800ea0b38488a4c2ab2f99a9db80724a2fe9ff9c6ace80efbef5db69eb",
-    "operator_mapping_digest": "985a68beb7180e1e0198ef1a36174bdc920984dfff960274d6a57eccafc55236",
-    "schema_profile_digest": "6e23bbaf452f931748b45c1afcded6d78512ac47c045d9fc613118814232fe5d",
-    "store_binding_digest": "e65a24fea35f132abbafaee8eb0f7421577234c011f86c911bcc1b0bf0c029ae"
+    "native_capture_profile_digest": "628391a8a4f9f050c50a025a31a0f2561035b0a292bc8f487469c69a582ac9ec",
+    "operator_mapping_digest": "2a7df3d20228507c75118e59d3bfe29bd5f615dc862fe0f15479eba00ac3465a",
+    "schema_profile_digest": "05fef4cec127d8001b3b871ea4f9e5c33a8005e70c84c2114342b8f62735eb69",
+    "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },
   "schema": {
     "catalog": {
       "EXPECTED_CONSTRAINT_COUNTS": {
-        "c": 121,
+        "c": 120,
         "f": 150,
-        "n": 653,
+        "n": 656,
         "p": 87,
         "t": 7,
-        "u": 41
+        "u": 40
       },
       "EXPECTED_ENUMS": [
         "adjudication_method",
@@ -1217,7 +1199,7 @@
         "eval_suite",
         "evidence_stance",
         "extraction_decision_type",
-        "forget_manifest_status",
+        "forget_status",
         "golden_hardness",
         "golden_label",
         "grounding_audit_status",
@@ -1334,8 +1316,8 @@
         "ix_entities_redirect",
         "ix_entity_types_parent",
         "ix_eval_suite_ver",
-        "ix_forget_content_guard",
-        "ix_forget_source_guard",
+        "ix_forgets_content",
+        "ix_forgets_source",
         "ix_grounding_claim",
         "ix_kae_claim_coordinate",
         "ix_kae_doc",
@@ -1447,7 +1429,7 @@
         "entity_types",
         "eval_runs",
         "extension_packs",
-        "forget_manifests",
+        "forgets",
         "fact_applications",
         "fact_window_review_attempts",
         "normalization_outputs",
@@ -1564,7 +1546,7 @@
       "extension_packs",
       "fact_applications",
       "fact_window_review_attempts",
-      "forget_manifests",
+      "forgets",
       "golden_claim_labels",
       "golden_pairs",
       "grounding_audits",
@@ -1627,7 +1609,7 @@
       "template_public_testimony_currency_events",
       "testimony_currency_events"
     ],
-    "head": "p9_53_0074",
+    "head": "p9_54_0075",
     "migrations": {
       "__init__.py": "6c0a82ef11830b8d5cb49eac5ac1f0d2e967699377fab1cb34d751585c97366c",
       "p0_02_0001_extensions_enums.py": "d52a438d07c205fe7645249f286f1d7a8edde1215b0298cadc69d34eb999747d",
@@ -1703,7 +1685,8 @@
       "p9_50_0071_corpus_publication_work.py": "2e44caec296f2e2437a0b7176b9850398fb30467b819cf17c1cbc7d1b74ceaeb",
       "p9_51_0072_corpus_paths.py": "43840fe88f2a637bc48517174fadd273eb5eb88eeb51e60505824306a927d668",
       "p9_52_0073_corpus_reconcile.py": "2c5593ed0f388f835f8c08da880ee15e7825aca44208db41ef881291739f7255",
-      "p9_53_0074_document_tags.py": "82705ca088868fcd1b1f6d0a6d0fca4c9bc4d43688c18bf0bcfe583a371ac57a"
+      "p9_53_0074_document_tags.py": "82705ca088868fcd1b1f6d0a6d0fca4c9bc4d43688c18bf0bcfe583a371ac57a",
+      "p9_54_0075_forget_records.py": "5f8f128b349140a73e83e45aa65437281a6355b52e2a764f1a0ba4f128cf0acd"
     },
     "records": {
       "NativeCatalogAcquisition": {
@@ -2212,7 +2195,7 @@
           },
           "NativeStoreReference": {
             "additionalProperties": false,
-            "description": "One native store locator or journal intent, including unfinished state.\n\nA repository locator is a root to expand through qualified store\nevidence, never a fabricated object or a row-byte estimate. Only raw\nobjects record a native length; missing length remains explicit. A journal\nintent carries the actual forget UUID, not an invented store path. Its\nqualified adapter derives the concrete journal key and proves presence.",
+            "description": "One native store locator or journal intent, including unfinished state.\n\nA repository locator is a root to expand through qualified store\nevidence, never a fabricated object or a row-byte estimate. Only raw\nobjects record a native length; missing length remains explicit.",
             "properties": {
               "locator": {
                 "format": "password",
@@ -2223,8 +2206,7 @@
               "locator_kind": {
                 "enum": [
                   "object",
-                  "repository_path",
-                  "journal_intent"
+                  "repository_path"
                 ],
                 "title": "Locator Kind",
                 "type": "string"
@@ -2280,7 +2262,6 @@
                   "raw",
                   "artifacts",
                   "corpus",
-                  "forget",
                   "knowledge"
                 ],
                 "title": "Store Role",
@@ -2441,7 +2422,7 @@
             "type": "string"
           },
           "schema_head": {
-            "const": "p9_53_0074",
+            "const": "p9_54_0075",
             "title": "Schema Head",
             "type": "string"
           },
@@ -3158,7 +3139,7 @@
       null
     ],
     [
-      "postgres.public.forget_manifests",
+      "postgres.public.forgets",
       "postgres",
       "privacy_control",
       null
@@ -3326,12 +3307,6 @@
       "p3_origin"
     ],
     [
-      "forget_manifests.portable_intent",
-      "forget",
-      "privacy_control",
-      null
-    ],
-    [
       "raw.unregistered_upload",
       "raw",
       "staging",
@@ -3382,12 +3357,6 @@
     [
       "provider.directory",
       "corpus",
-      "adapter_metadata",
-      null
-    ],
-    [
-      "provider.directory",
-      "forget",
       "adapter_metadata",
       null
     ]

@@ -52,7 +52,9 @@ FORBIDDEN_CLAIMS: tuple[tuple[str, str], ...] = tuple(
 _LINK_PATTERN = re.compile(r"""\[([^\]]+)\]\((/docs/[^)#?\s]*)(?:#[^)]*)?\)""")
 
 
-_NAV_CLOUD = re.compile(r'process\.env\.DOCS_CLOUD === "1"\s*\?\s*\[(.*?)\]\s*:\s*\[\]\)', re.S)
+_NAV_CLOUD = re.compile(
+    r'process\.env\.DOCS_CLOUD === "1"\s*\?\s*\[(.*?)\]\s*:\s*\[\]\)', re.S
+)
 _NAV_HREF = re.compile(r'href: "(/docs[^"]*)"')
 
 
@@ -67,10 +69,14 @@ def check_navigation(docs_dir: Path) -> list[str]:
         folder = docs_dir / href.removeprefix("/docs").lstrip("/")
         if (folder / "page.mdx").exists():
             if in_cloud:
-                errors.append(f"navigation.ts: '{href}' is not a page.cloud.mdx but is in a DOCS_CLOUD branch")
+                errors.append(
+                    f"navigation.ts: '{href}' is not a page.cloud.mdx but is in a DOCS_CLOUD branch"
+                )
         elif (folder / "page.cloud.mdx").exists():
             if not in_cloud:
-                errors.append(f"navigation.ts: '{href}' is a page.cloud.mdx; list it in a DOCS_CLOUD branch")
+                errors.append(
+                    f"navigation.ts: '{href}' is a page.cloud.mdx; list it in a DOCS_CLOUD branch"
+                )
         else:
             errors.append(f"navigation.ts: no page for '{href}'")
     return errors
@@ -82,8 +88,12 @@ def check_typescript_reference(*, docs_dir: Path) -> list[str]:
     if not page.is_file():
         return ["TypeScript client reference page is missing"]
     text = page.read_text(encoding="utf-8")
-    inventory = json.loads((REPO_ROOT / "plan/designs/typescript_client_parity.json").read_text())
-    schemas = json.loads((REPO_ROOT / "packages/typescript-client/contracts/schemas.json").read_text())
+    inventory = json.loads(
+        (REPO_ROOT / "plan/designs/typescript_client_parity.json").read_text()
+    )
+    schemas = json.loads(
+        (REPO_ROOT / "packages/typescript-client/contracts/schemas.json").read_text()
+    )
     errors: list[str] = []
     for methods in inventory["classes"].values():
         for name in methods:
@@ -97,9 +107,18 @@ def check_typescript_reference(*, docs_dir: Path) -> list[str]:
             name = name[6:]
         if not re.search(r"\b" + re.escape(name) + r"\b", text):
             errors.append(f"typescript-sdk: missing documented model {name}")
-    for name in ("version", "pythonCompatibility", "HttpClient", "HttpTransport", "transport", "agents"):
+    for name in (
+        "version",
+        "pythonCompatibility",
+        "HttpClient",
+        "HttpTransport",
+        "transport",
+        "agents",
+    ):
         if not re.search(r"\b" + name + r"\b", text):
-            errors.append(f"typescript-sdk: missing documented support export/option {name}")
+            errors.append(
+                f"typescript-sdk: missing documented support export/option {name}"
+            )
     return errors
 
 
@@ -160,14 +179,20 @@ def check_docs(docs_dir: Path, *, cloud: bool = False) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Check docs truth, metadata, and links.")
+    parser = argparse.ArgumentParser(
+        description="Check docs truth, metadata, and links."
+    )
     parser.add_argument("--docs-dir", type=Path, default=DEFAULT_DOCS_DIR)
     parser.add_argument(
         "--cloud", action="store_true", help="check the cloud build (DOCS_CLOUD=1)"
     )
     args = parser.parse_args(argv)
 
-    errors = check_docs(args.docs_dir, cloud=args.cloud) + check_navigation(args.docs_dir) + check_typescript_reference(docs_dir=args.docs_dir)
+    errors = (
+        check_docs(args.docs_dir, cloud=args.cloud)
+        + check_navigation(args.docs_dir)
+        + check_typescript_reference(docs_dir=args.docs_dir)
+    )
     if errors:
         for err in errors:
             print(f"error: {err}", file=sys.stderr)

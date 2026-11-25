@@ -45,7 +45,6 @@ from rememberstack.adapters import BoundedPostgresReadPool
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import HashedBearerAuth
-from rememberstack.adapters.selfhost import LocalFSForgetManifestStore
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost import MinIOSettings
 from rememberstack.adapters.systemone import build_systemone_provider
@@ -95,7 +94,6 @@ if TYPE_CHECKING:
         ControlPlaneSpendLease,
     )
     from rememberstack.core import Converter
-    from rememberstack.ports.forget import ForgetManifestPort
     from rememberstack.ports.purge import CorpusCachePurgePort
     from rememberstack.ports.purge import KGitPurgePort
     from rememberstack.ports.queue import TaskQueuePort
@@ -125,7 +123,7 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.REVIEW_FACT_WINDOWS,
     PipelineStage.PUBLISH_CORPUS,
     PipelineStage.RECONCILE_CORPUS,
-    PipelineStage.HARD_FORGET,
+    PipelineStage.FORGET,
 )
 
 #: The worker classes (D146). ``convert`` is the one input-size-dependent,
@@ -226,11 +224,9 @@ class SelfHostSettings(BaseSettings):
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
     #: D155 digest verification through existing delayed work (default: daily).
     corpus_verify_interval_s: float = Field(default=86_400, gt=0, allow_inf_nan=False)
-    forget_manifest_root: Path = Path("/var/lib/rememberstack/forget-manifests")
-    #: D147: keep hard-forget manifests in this dedicated bucket instead of
-    #: ``forget_manifest_root``, so a process keeps no deployment state on
-    #: local disk. Never one of the ordinary data buckets above.
-    forget_manifest_bucket_name: str | None = Field(default=None, min_length=1)
+    #: D159: how long a forget waits between sweeps; longer than a work lease
+    #: plus the bounded object request time (starting value, to be measured).
+    forget_quiet_period_s: float = Field(default=900, ge=0, allow_inf_nan=False)
     #: Where customer SQL connects as the deployment's query role. Unset, the
     #: host and port of the database URL are used; set them when that URL
     #: points at a pooler the query role must bypass.
@@ -958,7 +954,6 @@ class SelfHostProfile:
         model_provider_settings: OpenRouterSettings | None = None,
         work_ledger_settings: WorkLedgerSettings | None = None,
         conversion_routes: Mapping[str, Converter] | None = None,
-        forget_manifests: ForgetManifestPort | None = None,
         corpus_caches: CorpusCachePurgePort | None = None,
         k_git: KGitPurgePort | None = None,
         knowledge_rebuilder: ForgetKnowledgeRebuilder | None = None,
@@ -973,8 +968,7 @@ class SelfHostProfile:
         ``work_ledger_settings`` (retry backoff, spend budgets) default to the
         environment's. ``conversion_routes`` (MIME type to converter) replace
         the routes named by ``settings.conversion_routes``, for a host that
-        runs conversion elsewhere. ``forget_manifests`` replaces the local
-        ``forget_manifest_root`` store.
+        runs conversion elsewhere.
 
         When fact adjudication uses Jev, the System One settings are read and
         checked here (route, ZDR and backup) against the deployment's
@@ -1000,7 +994,6 @@ class SelfHostProfile:
         self._model_provider_settings = model_provider_settings
         self._work_ledger_settings = work_ledger_settings or WorkLedgerSettings()
         self._conversion_routes = conversion_routes
-        self._forget_manifests = forget_manifests
         self._corpus_caches = corpus_caches
         self._k_git = k_git
         self._knowledge_rebuilder = knowledge_rebuilder
@@ -1098,11 +1091,8 @@ class SelfHostProfile:
         retrieval engines keep their bounded pools; they open nothing until
         an API read uses them.
         """
-        from rememberstack.adapters.selfhost import ObjectStoreForgetManifestStore
-
         profile_settings = settings.deployment
         database_url = settings.database.sqlalchemy_url()
-        forget_bucket = profile_settings.forget_manifest_bucket_name
         return cls(
             settings=profile_settings,
             engine=sqlalchemy.create_engine(
@@ -1140,13 +1130,6 @@ class SelfHostProfile:
             corpus_caches=corpus_caches,
             k_git=k_git,
             knowledge_rebuilder=knowledge_rebuilder,
-            forget_manifests=(
-                None
-                if forget_bucket is None
-                else ObjectStoreForgetManifestStore(
-                    store=settings.object_store_for(bucket=forget_bucket)
-                )
-            ),
         )
 
     def close(self) -> None:
@@ -1197,8 +1180,6 @@ class SelfHostProfile:
         self._raw_store.ensure_bucket()
         self._artifact_store.ensure_bucket()
         self._corpusfs_store.ensure_bucket()
-        if self._forget_manifests is None:
-            self._settings.forget_manifest_root.mkdir(parents=True, exist_ok=True)
         DeploymentBootstrapper(engine=self._engine).bootstrap_deployment(
             deployment_input=DeploymentBootstrapInput(
                 deployment_id=self._settings.deployment_id,
@@ -1211,7 +1192,6 @@ class SelfHostProfile:
             ),
             sole_deployment=True,
         )
-        self.hard_forget().ensure_ready(deployment_id=self._settings.deployment_id)
         self._reconcile_processing_layers()
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
@@ -1363,7 +1343,6 @@ class SelfHostProfile:
             trusted_principal_source=self._settings.trusted_principal_source,
             browser_origins=_browser_origins(self._settings.browser_origins),
             ingest_scope_routes=ingest_scope_routes,
-            readiness=self.hard_forget(),
         )
 
         if trust is not None:
@@ -1495,7 +1474,6 @@ class SelfHostProfile:
         return ApiDeployment(
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
-            admission=ForgetCatalog(engine=self._engine),
             processing_layers=ProcessingLayerCatalog(engine=self._engine),
             surface=OperationSurface(
                 registry=AssuredOperationRegistry(engine=self._engine),
@@ -1675,12 +1653,6 @@ class SelfHostProfile:
 
         return build_conversion_routes(route_names=self._settings.conversion_routes)
 
-    def _forget_manifest_store(self) -> ForgetManifestPort:
-        """The context's manifest store, or the local manifest root."""
-        if self._forget_manifests is not None:
-            return self._forget_manifests
-        return LocalFSForgetManifestStore(root=self._settings.forget_manifest_root)
-
     def _queue(self, *, ledger: WorkLedger) -> TaskQueuePort:
         """The context's task queue, or the ``pg_notify`` shell."""
         from rememberstack.adapters.selfhost import SelfHostTaskQueue
@@ -1714,7 +1686,6 @@ class SelfHostProfile:
 
     def run_worker(self, *, worker_class: str, concurrency: int) -> None:
         """Run one worker class until stopped or failed."""
-        self.hard_forget().ensure_ready(deployment_id=self._settings.deployment_id)
         loop = self.worker_loop(worker_class=worker_class, concurrency=concurrency)
         while True:
             loop.run_for(duration_s=self._settings.worker_session_s)
@@ -1756,29 +1727,28 @@ class SelfHostProfile:
             work=created,
         )
 
-    def hard_forget(self):  # noqa: ANN202
-        """Use the same D74 coordinator for ordinary tasks and startup replay."""
-        from rememberstack.profiles.selfhost_forget import SelfHostHardForget
+    def forget(self):  # noqa: ANN202
+        """The D159 forget entry point and sweep worker over this context's stores."""
+        from rememberstack.profiles.selfhost_forget import SelfHostForget
         from rememberstack.workers import P1Settings
 
-        return SelfHostHardForget.from_stores(
+        return SelfHostForget.from_stores(
             engine=self._engine,
             model_provider=self._model_provider,
             embedding_model=P1Settings().embedding_model,
-            manifest_store=self._forget_manifest_store(),
             object_purgers=(self._raw_store, self._artifact_store),
             corpus_store=self._corpusfs_store,
             publisher=self.corpus_publisher(),
             caches=self._corpus_caches,
             k_git=self._k_git,
             knowledge_rebuilder=self._knowledge_rebuilder,
+            quiet_period_s=self._settings.forget_quiet_period_s,
         )
 
     def run_projection(self, *, plane: str) -> dict[str, object]:
         """Reconcile the live P3 tree, verifying even matching publication markers."""
         if plane != "p3":
             raise ValueError(f"unknown projection plane {plane!r}")
-        self.hard_forget().ensure_ready(deployment_id=self._settings.deployment_id)
         return {
             "p3": self.corpus_publisher().reconcile(
                 deployment_id=self._settings.deployment_id, verify=True
@@ -1799,8 +1769,8 @@ class SelfHostProfile:
                 catalog=CorpusPublicationCatalog(engine=self._engine),
                 interval_s=self._settings.corpus_verify_interval_s,
             )
-        if stage is PipelineStage.HARD_FORGET:
-            return self.hard_forget().handler
+        if stage is PipelineStage.FORGET:
+            return self.forget().handler
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.core import chunker_version
         from rememberstack.core import ChunkerParams

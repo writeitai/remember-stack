@@ -34,17 +34,6 @@ from rememberstack.surfaces.route_scope import required_scope
 _DEPLOYMENT_ID = UUID("11111111-1111-1111-1111-111111111111")
 
 
-class _Ready:
-    """Open admission/readiness boundary."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept the configured deployment."""
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Accept the configured deployment."""
-
-
 class _Engine:
     """Capture the exact search arguments the route forwards."""
 
@@ -73,13 +62,10 @@ class _Engine:
 
 def _client(engine: _Engine) -> TestClient:
     """Build an API over the capturing engine."""
-    boundary = _Ready()
     return TestClient(
         build_api(
             engine=engine,  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
         )
     )
 

@@ -46,7 +46,7 @@ def test_resource_set_matches_independent_document_and_keeps_zero(
             payload_digest="0" * 64,
             component="canonical_object",
             purpose="privacy_control",
-            store_binding_id="forget",
+            store_binding_id="artifacts",
             resource_identity="a" * 64,
             version_identity="c" * 64,
             logical_bytes="9999",
@@ -58,7 +58,7 @@ def test_resource_set_matches_independent_document_and_keeps_zero(
         spool.member(member=excluded)
         spool.resource(
             component=None,
-            store="forget",
+            store="artifacts",
             identity=excluded.resource_identity,
             version=excluded.version_identity,
             evidence="d" * 64,

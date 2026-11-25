@@ -246,8 +246,6 @@ def test_cors_is_installed_outermost() -> None:
     app = build_api(
         engine=MagicMock(),
         deployment_id=UUID("11111111-1111-1111-1111-111111111111"),
-        admission=boundary,
-        readiness=boundary,
         # The body limiter is only installed when ingest is composed, so
         # without this stub the test asserts an order between CORS and nothing
         # — it passed with the bug present.

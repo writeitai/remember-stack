@@ -1,4 +1,4 @@
-"""Fast D74 proof that ingest checks admission before persisting bytes."""
+"""Fast D159 proof that ingest checks the re-ingest guard before persisting bytes."""
 
 from datetime import datetime
 from datetime import timedelta
@@ -9,8 +9,8 @@ from uuid import UUID
 from pydantic import ValidationError
 import pytest
 
+from rememberstack.model import DocumentForgottenError
 from rememberstack.model import DocumentUpload
-from rememberstack.model import ForgottenSourceError
 from rememberstack.model import ObjectKey
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.workers.e0 import UploadIngestor
@@ -29,8 +29,11 @@ class DenyingAdmission:
         source_ref: str,
         content_hash: str,
     ) -> None:
-        """Raise the typed irreversible guard result."""
-        raise ForgottenSourceError("fixture was forgotten")
+        """Raise the typed re-ingest guard result."""
+        raise DocumentForgottenError(
+            forget_id=UUID(int=1),
+            forgotten_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
 
 
 class AllowingAdmission:
@@ -76,7 +79,7 @@ def test_guard_runs_before_upload_and_observed_raw_writes(observed: bool) -> Non
         filename="forgotten.md", mime="text/markdown", content=b"forgotten"
     )
 
-    with pytest.raises(ForgottenSourceError):
+    with pytest.raises(DocumentForgottenError):
         if observed:
             ingestor.ingest_observed(
                 deployment_id=_DEPLOYMENT_ID,

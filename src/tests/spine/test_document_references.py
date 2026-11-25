@@ -62,6 +62,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
 from rememberstack.workers import CrossrefHandler
+from rememberstack.workers import ForgetService
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
@@ -992,7 +993,7 @@ def test_soft_deleted_lineages_are_unavailable_and_hide_their_references(
     assert rig.read(doc_id=expense.doc_id, direction="incoming").rows == ()
 
 
-def test_hard_forget_drops_own_rows_and_unbinds_incoming_ones(rig: _Rig) -> None:
+def test_forget_drops_own_rows_and_unbinds_incoming_ones(rig: _Rig) -> None:
     expense = rig.ingest(ref="policy/expense", body=_EXPENSE_1)
     travel = rig.ingest(ref="policy/travel", body=_TRAVEL)
     rig.put(version=travel, body=_ndjson(_ref()))
@@ -1007,30 +1008,11 @@ def test_hard_forget_drops_own_rows_and_unbinds_incoming_ones(rig: _Rig) -> None
     )
     rig.drain()
 
-    # The D74 scrub deletes structure generations before the representations
-    # that point at them (a pre-existing ordering gap with real E0 rows, not a
-    # reference concern); detach the pointer so the scrub can run here.
-    rig.execute(
-        "UPDATE document_representations SET current_structure_generation_id = NULL"
-        " WHERE version_id IN (SELECT version_id FROM document_versions"
-        " WHERE doc_id = :doc)",
-        doc=expense.doc_id,
-    )
-    forget = ForgetCatalog(engine=rig.engine)
-    forget_id = uuid4()
-    forget.prepare(
-        deployment_id=_DEPLOYMENT_ID, doc_id=expense.doc_id, forget_id=forget_id
-    )
-    manifest = forget.inventory_and_store_manifest(
-        deployment_id=_DEPLOYMENT_ID,
-        doc_id=expense.doc_id,
-        forget_id=forget_id,
-        requested_at=datetime.now(UTC),
-    )
-    assert any("/references/" in key.root for key in manifest.object_keys)
-    forget.accept_and_enqueue(manifest=manifest)
-    forget.scrub_postgres(manifest=manifest)
-    forget.verify_postgres_scrubbed(manifest=manifest)
+    forget, _ = ForgetService(
+        engine=rig.engine, catalog=ForgetCatalog(engine=rig.engine)
+    ).request(deployment_id=_DEPLOYMENT_ID, doc_id=expense.doc_id)
+    findings = ForgetCatalog(engine=rig.engine).sweep_postgres(forget=forget)
+    assert findings.removed
 
     with rig.engine.connect() as connection:
         for table, column in (

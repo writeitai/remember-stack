@@ -112,6 +112,7 @@ from rememberstack.model import ContentDetectionError
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model import DocumentDeletion
+from rememberstack.model import DocumentForgottenError
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
@@ -120,8 +121,6 @@ from rememberstack.model import DocumentVersionNotFoundError
 from rememberstack.model import EffectivePeriodConflictError
 from rememberstack.model import EffectiveTimeNotSupportedError
 from rememberstack.model import Envelope
-from rememberstack.model import ForgetInProgressError
-from rememberstack.model import ForgottenSourceError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import IngestPrincipalKind
@@ -273,22 +272,6 @@ class ConnectorManagementPort(Protocol):
     def status(
         self, *, deployment_id: UUID, connector_id: UUID
     ) -> ConnectorDescriptor: ...
-
-
-class AdmissionPort(Protocol):
-    """The deployment-wide fail-closed check applied before public traffic."""
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Raise ``ForgetInProgressError`` while D74 admission is closed."""
-        ...
-
-
-class ReadinessPort(Protocol):
-    """The mandatory restore replay completed before an API begins serving."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Re-honor every portable forget manifest or raise fail-closed."""
-        ...
 
 
 class PipelineReadinessPort(Protocol):
@@ -558,13 +541,11 @@ class ApiDeployment:
     :func:`deployment_context`, never from values captured when the app was
     built. A capability absent from the request's deployment answers 404,
     as an unmounted route would. Its perimeter (``auth``, ``direct_admission``,
-    ``spend_lease``) is applied per request too; only the startup readiness
-    check stays composed per app.
+    ``spend_lease``) is applied per request too.
     """
 
     deployment_id: UUID
     engine: QueryEngine
-    admission: AdmissionPort
     surface: OperationSurface | None = None
     open_query: OpenQueryFacade | None = None
     ingest: IngestPort | None = None
@@ -665,8 +646,6 @@ def build_api(
     *,
     engine: QueryEngine,
     deployment_id: UUID,
-    admission: AdmissionPort,
-    readiness: ReadinessPort,
     surface: OperationSurface | None = None,
     open_query: OpenQueryFacade | None = None,
     auth: AuthPerimeterPort | None = None,
@@ -738,7 +717,6 @@ def build_api(
     deployment = ApiDeployment(
         deployment_id=deployment_id,
         engine=engine,
-        admission=admission,
         surface=surface,
         open_query=open_query,
         ingest=ingest,
@@ -760,7 +738,6 @@ def build_api(
         direct_admission=direct_admission,
         spend_lease=spend_lease,
     )
-    readiness.ensure_ready(deployment_id=deployment_id)
     dependencies = [
         # The route's scope check; the gate has authenticated already. One
         # instance, so open-query principal injection reuses its result.
@@ -770,7 +747,6 @@ def build_api(
         # raises: the gate and `_perimeter` stay the enforcement points and
         # keep answering 401, so documenting the contract cannot change it.
         *([Depends(HTTPBearer(auto_error=False))] if auth is not None else []),
-        Depends(_admission),
         Depends(_announce_new_work),
     ]
     app = FastAPI(
@@ -1994,13 +1970,6 @@ def _mount_document_deletion(*, app: FastAPI) -> None:
             )
         except DocumentNotFoundError as error:
             raise HTTPException(status_code=404, detail="document_not_found") from error
-        except ForgetInProgressError as error:
-            # Admission was open when the request arrived, but a hard forget
-            # was already preparing when the delete took the D74 fence. The
-            # delete ran no statement; answer exactly as admission would.
-            raise HTTPException(
-                status_code=503, detail={"code": "forget_in_progress"}
-            ) from error
 
 
 def _effective_time_errors(error: Exception) -> HTTPException:
@@ -2422,9 +2391,16 @@ def _parse_ingest_principal(
         ) from error
 
 
-def _forgotten_source_http_error() -> HTTPException:
-    """A hard forget covers these bytes or this source identity; it is permanent."""
-    return HTTPException(status_code=409, detail="source_forgotten")
+def _forgotten_http_error(error: DocumentForgottenError) -> HTTPException:
+    """A forget record guards these bytes or this source identity (D159 §3.6)."""
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "document_forgotten",
+            "forget_id": str(error.forget_id),
+            "forgotten_at": error.forgotten_at.isoformat(),
+        },
+    )
 
 
 def _mount_ingest(
@@ -2633,8 +2609,8 @@ def _mount_ingest(
                 )
             except ContentDetectionError as error:
                 raise HTTPException(status_code=422, detail=error.code) from error
-            except ForgottenSourceError as error:
-                raise _forgotten_source_http_error() from error
+            except DocumentForgottenError as error:
+                raise _forgotten_http_error(error) from error
             except (UnknownTagError, TagLimitError) as error:
                 raise _tag_errors(error) from error
         try:
@@ -2651,8 +2627,8 @@ def _mount_ingest(
             )
         except ContentDetectionError as error:
             raise HTTPException(status_code=422, detail=error.code) from error
-        except ForgottenSourceError as error:
-            raise _forgotten_source_http_error() from error
+        except DocumentForgottenError as error:
+            raise _forgotten_http_error(error) from error
         except (
             EffectivePeriodConflictError,
             VersionKeyConflictError,
@@ -2825,16 +2801,6 @@ async def _announce_new_work(deployment: _Deployment) -> AsyncIterator[None]:
         yield
     if created:
         await run_in_threadpool(announce_new_work, queue=queue, work=tuple(created))
-
-
-def _admission(deployment: _Deployment) -> None:
-    """The request's deployment-wide D74 barrier, as one stable HTTP negative."""
-    try:
-        deployment.admission.assert_available(deployment_id=deployment.deployment_id)
-    except ForgetInProgressError as error:
-        raise HTTPException(
-            status_code=503, detail={"code": "forget_in_progress"}
-        ) from error
 
 
 _ADMISSION_MESSAGES: Final = {

@@ -42,13 +42,6 @@ _VERSION_ID = UUID("57000000-0000-0000-0000-000000000003")
 class _OpenBoundary:
     """Keep the SDK fixture open while satisfying readiness and admission."""
 
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
-
     def inspect(
         self,
         *,
@@ -163,8 +156,6 @@ def client_surface() -> tuple[MemoryClient, _Ingest, _Connectors]:
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         ingest=ingest,
         connectors=connectors,
         pipeline_readiness=boundary,
@@ -627,8 +618,6 @@ def capped_ingest_app() -> TestClient:
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=_OpenBoundary(),
-        readiness=_OpenBoundary(),
         ingest=_Ingest(),
         ingest_body_max_bytes=64,
     )
@@ -693,8 +682,6 @@ def test_body_cap_holds_when_the_app_is_mounted_under_a_prefix() -> None:
     inner = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=_OpenBoundary(),
-        readiness=_OpenBoundary(),
         ingest=_Ingest(),
         ingest_body_max_bytes=64,
     )

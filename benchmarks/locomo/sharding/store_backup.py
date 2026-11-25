@@ -34,12 +34,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
-EXPECTED_VOLUMES = (
-    "postgres-data",
-    "object-store-data",
-    "app-state",
-    "forget-manifests",
-)
+EXPECTED_VOLUMES = ("postgres-data", "object-store-data", "app-state")
 RUN_CHECKPOINT_FILES = ("run.json", "manifest.json", "documents.json", "state.json")
 RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
 LIVE_STORE_MARKER = Path(".locomo-live-store.json")
@@ -171,7 +166,7 @@ class BackupManifest(FrozenModel):
     run: RunIdentity
     sample_ingests_sha256: Sha256 | None = None
     run_files_sha256: dict[str, Sha256]
-    archives: Annotated[tuple[ArchiveRecord, ...], Field(min_length=6, max_length=6)]
+    archives: Annotated[tuple[ArchiveRecord, ...], Field(min_length=5, max_length=5)]
 
     @model_validator(mode="after")
     def _checkpoint_file_inventory_is_exact(self) -> "BackupManifest":
@@ -1083,7 +1078,6 @@ def _validate_manifest_inventory(manifest: BackupManifest) -> None:
         "postgres-data": "volume",
         "object-store-data": "volume",
         "app-state": "volume",
-        "forget-manifests": "volume",
         "run-directory": "run",
         "published-mount-root": "mounts",
     }

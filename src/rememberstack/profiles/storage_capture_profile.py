@@ -124,7 +124,7 @@ _PG_EXCLUDED: dict[StoragePurpose, tuple[str, ...]] = {
         "obs_flush_version_state",
         "processing_state",
     ),
-    "privacy_control": ("forget_manifests", "perimeter_state"),
+    "privacy_control": ("forgets", "perimeter_state"),
     "staging": ("normalize_observation_staging",),
     "adapter_metadata": (
         "alembic_version",
@@ -216,7 +216,6 @@ _OBJECT_RULES: tuple[tuple[str, str, StoragePurpose, StorageComponent | None], .
     ("documents.corpus_original", "corpus", "projection_origin", "p3_origin"),
     ("documents.corpus_derivative", "corpus", "projection_origin", "p3_origin"),
     ("corpus.navigation", "corpus", "projection_origin", "p3_origin"),
-    ("forget_manifests.portable_intent", "forget", "privacy_control", None),
     ("raw.unregistered_upload", "raw", "staging", None),
     ("raw.unregistered_original", "raw", "staging", None),
     ("artifacts.unregistered_representation", "artifacts", "staging", None),
@@ -237,12 +236,12 @@ class ProfileRecord(BaseModel):
 class ManagedFilesystemBinding(ProfileRecord):
     """One actual provider filesystem, never a UUID alias or display prefix."""
 
-    role: Literal["raw", "artifacts", "corpus", "forget"]
+    role: Literal["raw", "artifacts", "corpus"]
     filesystem_id: FilesystemID
 
 
 class ManagedStoreBindings(ProfileRecord):
-    """The exact native database and four distinct role stores for a deployment."""
+    """The exact native database and three distinct role stores for a deployment."""
 
     contract: Literal["rememberstack.storage_bindings.v1"] = (
         "rememberstack.storage_bindings.v1"
@@ -252,16 +251,15 @@ class ManagedStoreBindings(ProfileRecord):
     provider_organisation_id: UUID32
     provider_cell_id: str = Field(min_length=1, max_length=50)
     filesystems: tuple[ManagedFilesystemBinding, ...] = Field(
-        min_length=4, max_length=4
+        min_length=3, max_length=3
     )
     knowledge_repository: Literal["unconfigured"] = "unconfigured"
 
     def filesystem_for(self, *, role: str) -> str:
-        """Resolve an exact role only after validating all four distinct bindings."""
+        """Resolve an exact role only after validating all three distinct bindings."""
         if tuple(row.role for row in self.filesystems) != (
             "artifacts",
             "corpus",
-            "forget",
             "raw",
         ):
             raise ValueError("managed_store_roles")
@@ -395,7 +393,7 @@ def current_class_rules() -> tuple[
     rows.extend(_OBJECT_RULES)
     rows.extend(
         ("provider.directory", role, "adapter_metadata", None)
-        for role in ("raw", "artifacts", "corpus", "forget")
+        for role in ("raw", "artifacts", "corpus")
     )
     return tuple(rows)
 

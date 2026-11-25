@@ -186,16 +186,11 @@ from rememberstack.model.evaluation import CaseFailure
 from rememberstack.model.evaluation import EvalSuite
 from rememberstack.model.evaluation import LifecycleReport
 from rememberstack.model.evaluation import SuiteReport
+from rememberstack.model.forget import DocumentForgottenError
+from rememberstack.model.forget import Forget
 from rememberstack.model.forget import ForgetError
-from rememberstack.model.forget import ForgetInProgressError
-from rememberstack.model.forget import ForgetManifest
-from rememberstack.model.forget import ForgetManifestConflictError
-from rememberstack.model.forget import ForgetManifestNotFoundError
-from rememberstack.model.forget import ForgetManifestRecord
-from rememberstack.model.forget import ForgetManifestStatus
-from rememberstack.model.forget import ForgetRedactionRequiredError
-from rememberstack.model.forget import ForgetTargetNotFoundError
-from rememberstack.model.forget import ForgottenSourceError
+from rememberstack.model.forget import ForgetNotFoundError
+from rememberstack.model.forget import ForgetStatus
 from rememberstack.model.git import KRevision
 from rememberstack.model.knowledge import DocSetRuleParams
 from rememberstack.model.knowledge import EntityRuleParams
@@ -480,6 +475,7 @@ __all__ = (
     "DeploymentBootstrapInput",
     "DeploymentBootstrapResult",
     "DeploymentConflictError",
+    "DocumentForgottenError",
     "DocumentNotFoundError",
     "EffectivePeriodConflictError",
     "EffectiveTimeNotSupportedError",
@@ -514,16 +510,10 @@ __all__ = (
     "FactSupport",
     "FallbackAnchor",
     "FallbackStructureResponse",
+    "Forget",
     "ForgetError",
-    "ForgetInProgressError",
-    "ForgetManifest",
-    "ForgetManifestConflictError",
-    "ForgetManifestNotFoundError",
-    "ForgetManifestRecord",
-    "ForgetManifestStatus",
-    "ForgetRedactionRequiredError",
-    "ForgetTargetNotFoundError",
-    "ForgottenSourceError",
+    "ForgetNotFoundError",
+    "ForgetStatus",
     "ReadEmbeddingCost",
     "record_embedding_usage",
     "SpendLeaseRefused",

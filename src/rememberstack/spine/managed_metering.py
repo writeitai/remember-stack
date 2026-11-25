@@ -609,11 +609,15 @@ _DUE_MEASUREMENTS = text(
 
 _LOCK_MEASUREMENT = text(
     """
-    SELECT m.*, v.status::text AS version_status
+    SELECT m.*,
+           -- D159: a forgotten version's row is erased; its receipt keeps the
+           -- version UUID as billing metadata and reports it deleted.
+           COALESCE((SELECT v.status::text FROM document_versions v
+                     WHERE v.version_id = m.version_id FOR UPDATE),
+                    'deleted') AS version_status
     FROM managed_ingest_measurements m
-    JOIN document_versions v ON v.version_id = m.version_id
     WHERE m.measurement_id = :measurement_id
-    FOR UPDATE OF m, v
+    FOR UPDATE OF m
     """
 )
 
@@ -660,15 +664,15 @@ _AWAITING_OUTCOMES = text(
     """
     SELECT m.measurement_id, m.deployment_id, m.version_id,
            m.processing_profile_id,
-           v.status::text AS version_status
+           COALESCE(v.status::text, 'deleted') AS version_status
     FROM managed_ingest_measurements m
-    JOIN document_versions v ON v.version_id = m.version_id
+    LEFT JOIN document_versions v ON v.version_id = m.version_id
     LEFT JOIN managed_ingest_outcomes o ON o.measurement_id = m.measurement_id
     WHERE m.delivery_state = 'accepted'
       AND o.measurement_id IS NULL
       AND (m.outcome_next_attempt_at IS NULL
            OR m.outcome_next_attempt_at <= statement_timestamp()
-           OR v.status::text IN ('failed', 'deleted'))
+           OR COALESCE(v.status::text, 'deleted') IN ('failed', 'deleted'))
     ORDER BY m.accepted_at, m.measurement_id
     LIMIT :limit
     """

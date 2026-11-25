@@ -19,7 +19,8 @@ available through the version-addressed API.
 ## Mount the corpus
 
 Use an S3 filesystem tool with read-only credentials and options to mount the
-configured corpus bucket. Bound its stat, listing and data caches. The bucket
+configured corpus bucket. Bound its stat, listing and data caches: a forgotten
+document disappears from the mount only when those caches expire. The bucket
 root is the filesystem root; separate raw and artifact mounts are unnecessary.
 RememberStack does not provision a FUSE mount or enforce local permissions.
 Provider access logging must include reads of corpus originals.
@@ -120,20 +121,17 @@ Normal document deletion removes that document's recorded corpus folders and
 repairs navigation before reporting success. A store failure reports failure and
 leaves durable retry work.
 
-Before coordinating hard-forget on operator-managed processes, stop ordinary
-writers and wait for their outstanding storage calls. An expired work lease is
-not proof that an issued provider request has stopped.
+A forget erases every folder carrying the document's suffix, including
+unfinished uploads and retained object versions, and rewrites the navigation
+files that listed it from the database. It runs alongside ordinary publication,
+without stopping it, and repeats after a quiet period until nothing is left. It
+preserves other documents' files in place. When a provider does not implement
+multipart-upload listing, unfinished-part cleanup follows that provider's
+policy and a warning is logged.
 
-Hard-forget closes admission, drains work, erases every matching suffix folder,
-unfinished upload and retained object version, then regenerates navigation from
-scrubbed database authority. It preserves other document files in place. When a
-provider does not implement multipart-upload listing, purge records
-`provider_managed` coverage and logs a warning; unfinished-part cleanup follows
-that provider's policy. Published-object absence is still verified.
-
-Before restoring traffic, the startup gate replays every portable manifest,
-including ones previously marked complete. Keep that intent outside the ordinary
-restore set. A replay failure keeps admission closed. Engine-controlled sessions
-must stop serving and acknowledge cache erasure; operator-managed FUSE mounts
-must be stopped and remounted for forget. See
-[hard-forget recovery](/docs/self-hosting/upgrades#hard-forget-manifests).
+Mounts are not stopped. An operator-managed S3 FUSE mount stops listing the
+document, and new opens of its paths fail, when the tool's stat and listing
+caches expire, so keep them bounded. A file already open in such a tool may keep
+serving what it read until it is closed. Bytes a client copied out of a mount
+are outside the engine. After restoring the corpus bucket from a backup, run
+[`remember ops forget-reapply`](/docs/self-hosting/operating#after-restoring-a-backup).

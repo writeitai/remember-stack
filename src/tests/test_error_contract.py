@@ -90,7 +90,7 @@ BASELINE: dict[str, int] = {
     "adapters/vertex.py::_error_preview": 1,
     "adapters/vertex.py::_try_usage": 1,
     "core/content_detection.py::_office_zip_mime": 1,
-    "spine/corpus_publication.py::CorpusPublicationCatalog.locked": 2,
+    "spine/corpus_publication.py::CorpusPublicationCatalog.locked": 1,
     "spine/readiness.py::_live_graph_status": 2,
     "surfaces/http_api.py::_authenticate": 1,
     "surfaces/http_api.py::_install_spend_lease.spend_lease_middleware": 3,

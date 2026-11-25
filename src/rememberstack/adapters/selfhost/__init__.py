@@ -1,7 +1,5 @@
 """Self-host adapters: pg delivery shell, local-FS object store, local mounts (WP-0.4a)."""
 
-from rememberstack.adapters.selfhost.forget import LocalFSForgetManifestStore
-from rememberstack.adapters.selfhost.forget import ObjectStoreForgetManifestStore
 from rememberstack.adapters.selfhost.git import LocalGitRepository
 from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
 from rememberstack.adapters.selfhost.hashed_bearer_auth import HashedBearerAuth
@@ -29,8 +27,6 @@ __all__ = (
     "digest_bearer_secret",
     "parse_bearer_bind",
     "ControlPlaneMeterReceipts",
-    "LocalFSForgetManifestStore",
-    "ObjectStoreForgetManifestStore",
     "LocalGitRepository",
     "LocalDirectoryWatcher",
     "JsonLineTelemetry",

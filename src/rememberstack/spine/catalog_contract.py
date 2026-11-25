@@ -55,7 +55,7 @@ EXPECTED_ENUMS: Final = (
     "eval_suite",
     "evidence_stance",
     "extraction_decision_type",
-    "forget_manifest_status",
+    "forget_status",
     "golden_hardness",
     "golden_label",
     "grounding_audit_status",
@@ -140,7 +140,7 @@ EXPECTED_TABLES: Final = (
     "entity_types",
     "eval_runs",
     "extension_packs",
-    "forget_manifests",
+    "forgets",
     "fact_applications",
     "fact_window_review_attempts",
     "normalization_outputs",
@@ -246,8 +246,8 @@ EXPECTED_INDEXES: Final = (
     "ix_entities_redirect",
     "ix_entity_types_parent",
     "ix_eval_suite_ver",
-    "ix_forget_content_guard",
-    "ix_forget_source_guard",
+    "ix_forgets_content",
+    "ix_forgets_source",
     "ix_grounding_claim",
     "ix_kae_claim_coordinate",
     "ix_kae_doc",
@@ -336,7 +336,7 @@ UNLANED_STAGES: Final = frozenset(
         "reflect_knowledge",
         "lint_knowledge",
         "dispatch_knowledge",
-        "hard_forget",
+        "forget",
         "publish_corpus",
         "reconcile_corpus",
     }
@@ -383,12 +383,12 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 121,
+    "c": 120,
     "f": 150,
-    "n": 653,
+    "n": 656,
     "p": 87,
     "t": 7,
-    "u": 41,
+    "u": 40,
 }
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
@@ -411,7 +411,7 @@ DECISION_OBJECTS: Final = {
     "D145": ("processing_state", "ix_procstate_running_lease"),
     "D68": ("deployments", "ix_entities_name_trgm"),
     "D69": ("relations", "v_memory_entity_survivor"),
-    "D74": ("forget_manifests", "ix_forget_content_guard"),
+    "D159": ("forgets", "ix_forgets_content"),
     "D79": ("document_structure_generations", "document_skeleton_checks"),
     "D91": (
         "surface_cost_ledger",

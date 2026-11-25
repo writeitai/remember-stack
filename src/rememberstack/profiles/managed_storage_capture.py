@@ -472,8 +472,6 @@ class StorageCaptureCatalog:
             raise ManagedStorageCaptureUnavailable(
                 "capture_managed_k_profile_unsupported"
             )
-        if seed.locator_kind == "journal_intent":
-            key = "forget-manifests/" + key + ".json"
         self._reference(
             spool=spool,
             provider=provider,
@@ -955,7 +953,7 @@ def check_capture_configuration(
         cut_at_unix_us=request.cut_at_unix_us
     ):
         raise ManagedStorageCaptureUnavailable("capture_profile_document_mismatch")
-    if set(stores) != {"raw", "artifacts", "corpus", "forget"}:
+    if set(stores) != {"raw", "artifacts", "corpus"}:
         raise ManagedStorageCaptureUnavailable("capture_store_scope")
     for role, store in stores.items():
         if store.capture_store_identity() != profile.bindings.filesystem_for(role=role):
