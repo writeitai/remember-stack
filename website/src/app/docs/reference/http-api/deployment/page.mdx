@@ -119,7 +119,7 @@ print(info.build_revision, info.model_bindings)
 
 <Callout type="note">
 
-Self-hosted only, and not part of the documented API: it is absent from
+The self-hosted profile mounts this liveness probe outside the release
 `openapi.json`.
 
 </Callout>
@@ -127,7 +127,7 @@ Self-hosted only, and not part of the documented API: it is absent from
 Prove the engine process is up and can reach its PostgreSQL database. The
 Compose file uses it as the API container's health check.
 
-**Scope:** none. This is the one route that never asks for a credential.
+**Scope:** none. Compose calls this probe without a credential.
 
 ### Response
 

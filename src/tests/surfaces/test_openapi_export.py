@@ -14,11 +14,37 @@ valid, so a generated client simply would not have them.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from dataclasses import replace
 import inspect
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
+from unittest.mock import AsyncMock
+from unittest.mock import MagicMock
+from unittest.mock import Mock
+from uuid import UUID
+
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
+from fastapi.testclient import TestClient
+from pydantic import SecretStr
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
+
+from rememberstack.adapters import OpenRouterSettings
+from rememberstack.adapters.selfhost import MinIOObjectStore
+from rememberstack.ports.queue import TaskQueuePort
+from rememberstack.profiles.selfhost import SelfHostProfile
+from rememberstack.profiles.selfhost import SelfHostSettings
+from rememberstack.surfaces.direct_admission import DirectPathAdmission
+from rememberstack.surfaces.http_api import ApiDeployment
+from rememberstack.surfaces.http_api import build_api
+from rememberstack.surfaces.http_api import ConnectorManagementPort
+from rememberstack.surfaces.http_api import SpendLeasePort
 
 _ROOT = Path(__file__).parents[3]
 _SCHEMA = _ROOT / "openapi.json"
@@ -62,7 +88,7 @@ def test_this_file_still_defines_every_test_it_should() -> None:
         for line in source.splitlines()
         if line.startswith("def test_")
     }
-    assert len(defined) == 8, (
+    assert len(defined) == 10, (
         f"this file defines {len(defined)} tests: {sorted(defined)}. If you "
         f"added or removed one deliberately, update this count; if you did not, "
         f"an edit has silently dropped a test."
@@ -98,14 +124,8 @@ def test_the_checked_in_schema_matches_the_app() -> None:
 #: routes it remembered.
 #:
 #: This list is **reviewed, not derived**, and the distinction is load-bearing.
-#: Whether a route is one a real deployment serves cannot be settled by reading
-#: source: capabilities are resolved at run time from settings, so the profile
-#: names some it may not compose, and an attempt to check the call sites
-#: mechanically was defeated six different ways before it was abandoned. What
-#: a test *can* do is refuse to let the published surface change without a
-#: person editing this list and saying why — which is how the phantom
-#: `/connectors` routes, absent from every shipped deployment, would have been
-#: caught: not by the machine, but by the edit being visible.
+#: The list makes additions and removals explicit during review. The self-host
+#: test also checks what the shipped profile actually mounts.
 _SURFACE: frozenset[tuple[str, str]] = frozenset(
     (
         ("POST", "/documents/{doc_id}/archive"),
@@ -308,64 +328,171 @@ def test_the_schema_carries_the_shapes_those_routes_answer_with() -> None:
     )
 
 
-def test_documenting_the_credential_did_not_start_enforcing_it() -> None:
-    """The scheme must describe the contract without ever refusing a request.
+_DEPLOYMENT = UUID("11111111-2222-3333-4444-555555555555")
+_DIAGNOSTICS = {
+    ("GET", "/deployment"),
+    ("GET", "/processing-layers"),
+    ("POST", "/readiness"),
+}
+_LIVENESS = ("GET", "/healthz")
+_OPERATOR_ROUTES = {
+    ("GET", "/connectors"),
+    ("POST", "/connectors"),
+    ("GET", "/connectors/{connector_id}"),
+    ("POST", "/connectors/{connector_id}/pause"),
+}
 
-    `HTTPBearer` refuses a missing credential by default (401 on the pinned
-    FastAPI, 403 on some versions — the code varies, the refusal does not).
 
-    On a gated route that refusal is merely redundant, because `_perimeter` is
-    registered first and already answers 401, so a test checking only a gated
-    route would pass either way and prove nothing. The real damage is on the
-    one route the perimeter deliberately exempts: `GET /healthz` is the Compose
-    liveness probe and is reached without a credential by design. An
-    `auto_error=True` scheme sits outside that exemption and would refuse it,
-    failing the container's health check while every other route still worked —
-    the kind of breakage that reads as an infrastructure fault for a long time.
+@pytest.fixture
+def selfhost_api() -> Iterator[tuple[FastAPI, Engine]]:
+    """Compose the shipped profile with a real perimeter and no external services."""
+    store = Mock(spec=MinIOObjectStore)
+    database = create_engine("postgresql+psycopg://localhost/unused")
 
-    So the scheme is declared with `auto_error=False`: it never raises, and
-    `_perimeter` stays the sole enforcement point. This checks both routes,
-    because only the exempt one can tell the difference.
-    """
-    from uuid import UUID
+    def refuse_connect() -> None:
+        """Fail before opening any database connection."""
+        raise AssertionError(
+            "offline API boundary test tried to connect to the database"
+        )
 
-    from export_openapi import _Unused
-    from fastapi.testclient import TestClient
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(database, "connect", refuse_connect)
+        profile = SelfHostProfile(
+            settings=SelfHostSettings(
+                deployment_id=_DEPLOYMENT,
+                require_api_auth=True,
+                api_bearer_token=SecretStr("test-perimeter-token"),
+            ),
+            engine=database,
+            raw_store=store,
+            artifact_store=store,
+            corpusfs_store=store,
+            model_provider=Mock(),
+            model_provider_settings=OpenRouterSettings(api_key="unused-test-key"),
+        )
+        try:
+            yield profile.api(), database
+        finally:
+            database.dispose()
 
-    from rememberstack.model import AuthenticatedContext
-    from rememberstack.model import PerimeterCredential
-    from rememberstack.surfaces.http_api import build_api
 
-    served = UUID("11111111-2222-3333-4444-555555555555")
+def _app_routes(*, app: FastAPI) -> dict[tuple[str, str], APIRoute]:
+    """Inventory every registered operation, including ones hidden from OpenAPI."""
+    assert all(isinstance(route, APIRoute) for route in app.routes)
+    return {
+        (method, route.path_format): route
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for method in route.methods
+    }
 
-    class _Auth:
-        """Accepts exactly one credential for the deployment under test."""
 
-        def authenticate(
-            self, *, credential: PerimeterCredential
-        ) -> AuthenticatedContext:
-            """Authenticate `good`; refuse anything else."""
-            if credential.value.get_secret_value() == b"good":
-                return AuthenticatedContext(deployment_id=served, principal="agent")
-            raise ValueError("unknown credential")
-
-    app = build_api(
-        engine=_Unused(),  # type: ignore[arg-type]
-        deployment_id=served,
-        auth=_Auth(),  # type: ignore[arg-type]
-        documents=_Unused(),  # type: ignore[arg-type]
+def _assert_rejected_before_routing(
+    *, app: FastAPI, routes: set[tuple[str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the ASGI auth gate before routing, admission, spending or queueing."""
+    deployment: ApiDeployment = app.state.api_deployment
+    admission = Mock(spec=DirectPathAdmission)
+    lease = Mock(spec=SpendLeasePort)
+    queue = Mock(spec=TaskQueuePort)
+    app.state.api_deployment = replace(
+        deployment, direct_admission=admission, spend_lease=lease, task_queue=queue
     )
-
-    # The self-host profile adds this route to the built app; the liveness
-    # probe's exemption lives in `_perimeter`, so reproduce the shape here.
-    @app.get("/healthz", include_in_schema=False)
-    def healthz() -> dict[str, str]:
-        """Stand in for the profile's probe, which needs no credential."""
-        return {"status": "ok"}
+    router = AsyncMock(side_effect=AssertionError("request reached the router"))
+    monkeypatch.setattr(app.router, "middleware_stack", router)
 
     client = TestClient(app)
+    for method, template in sorted(routes):
+        path = re.sub(r"\{[^}]+\}", str(_DEPLOYMENT), template)
+        for headers, detail in (
+            ({}, "a perimeter credential is required"),
+            (
+                {"Authorization": "Bearer wrong-token"},
+                "perimeter authentication failed",
+            ),
+        ):
+            response = client.request(
+                method, path, headers=headers, follow_redirects=False
+            )
+            assert (response.status_code, response.json()) == (
+                401,
+                {"detail": detail},
+            ), (method, path, detail)
 
-    # Gated route: refused, and with the code clients already handle.
-    assert client.get("/documents").status_code == 401
-    # Exempt route: still reachable with no credential at all.
-    assert client.get("/healthz").status_code == 200
+    router.assert_not_awaited()
+    assert not admission.mock_calls
+    assert not lease.mock_calls
+    assert not queue.mock_calls
+
+
+def test_selfhost_inventory_and_auth_match_the_export(
+    selfhost_api: tuple[FastAPI, Engine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Check audience and bearer metadata and reject both credential cases on every route."""
+    app, _ = selfhost_api
+    routes = _app_routes(app=app)
+    assert set(routes) == _SURFACE | {_LIVENESS}
+
+    exported = _exported()
+    assert {
+        operation for operation, route in routes.items() if route.include_in_schema
+    } == _routes(exported)
+    assert app.openapi() == exported
+    for method, path in _SURFACE:
+        expected_tags = (
+            ["client", "diagnostics"] if (method, path) in _DIAGNOSTICS else ["client"]
+        )
+        operation = exported["paths"][path][method.lower()]
+        assert routes[method, path].tags == operation["tags"] == expected_tags
+        assert operation["security"] == [{"HTTPBearer": []}]
+
+    _assert_rejected_before_routing(
+        app=app, routes=set(_SURFACE), monkeypatch=monkeypatch
+    )
+
+
+def test_selfhost_liveness_is_a_public_probe(
+    selfhost_api: tuple[FastAPI, Engine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Compose probe can reach PostgreSQL without a perimeter credential."""
+    app, database = selfhost_api
+    route = _app_routes(app=app)[_LIVENESS]
+    assert route.tags == ["liveness"]
+    assert not route.include_in_schema
+
+    connect = MagicMock()
+    monkeypatch.setattr(database, "connect", connect)
+    client = TestClient(app)
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    execute = connect.return_value.__enter__.return_value.execute
+    execute.assert_called_once()
+    assert str(execute.call_args.args[0]) == "SELECT 1"
+    assert client.post("/healthz").status_code == 401
+
+
+def test_opt_in_connector_routes_are_protected_operator_operations(
+    selfhost_api: tuple[FastAPI, Engine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A host can mount connector management without publishing it to stock clients."""
+    stock, _ = selfhost_api
+    deployment: ApiDeployment = stock.state.api_deployment
+    connectors = Mock(spec=ConnectorManagementPort)
+    app = build_api(
+        engine=deployment.engine,
+        deployment_id=deployment.deployment_id,
+        auth=deployment.auth,
+        connectors=connectors,
+    )
+    routes = _app_routes(app=app)
+    assert set(routes) - _SURFACE == _OPERATOR_ROUTES
+    exported = app.openapi()
+    for method, path in _OPERATOR_ROUTES:
+        operation = exported["paths"][path][method.lower()]
+        assert routes[method, path].tags == operation["tags"] == ["operator"]
+        assert operation["security"] == [{"HTTPBearer": []}]
+    _assert_rejected_before_routing(
+        app=app, routes=_OPERATOR_ROUTES, monkeypatch=monkeypatch
+    )
+    assert not connectors.mock_calls
