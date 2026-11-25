@@ -19,6 +19,8 @@ a test asserts. Tests needing them set them explicitly with
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 #: Optional pins that alter provider request payloads when present.
@@ -54,10 +56,16 @@ FACT_ENGINE_TEST_PIN = ("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "prompt")
 
 
 @pytest.fixture(autouse=True)
-def pin_prompt_fact_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run the fake-provider suite on the ``prompt`` fact engine."""
-    monkeypatch.delenv("REMEMBERSTACK_FACT_ENGINE", raising=False)
-    monkeypatch.setenv(*FACT_ENGINE_TEST_PIN)
+def pin_prompt_fact_engine() -> Iterator[None]:
+    """Run the fake-provider suite on the ``prompt`` fact engine.
+
+    Its own patch context, so a test's ``monkeypatch.undo()`` keeps the pin;
+    a test's ``monkeypatch.delenv`` still reads the real default.
+    """
+    with pytest.MonkeyPatch.context() as pin:
+        pin.delenv("REMEMBERSTACK_FACT_ENGINE", raising=False)
+        pin.setenv(*FACT_ENGINE_TEST_PIN)
+        yield
 
 
 #: The client connection variables (D136 §8.2). A developer's own key, engine
