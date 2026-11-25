@@ -1,7 +1,8 @@
 """Always-OCR-plus-description image conversion route (D65/D115).
 
-Every supported static image runs two independent lanes on the original
-pixels: dedicated OCR (the existing Mistral OCR adapter) and one vision-LLM
+Every supported static image runs two independent lanes on the same pixels
+(PNG, JPEG and WebP as uploaded; GIF, TIFF, BMP, HEIC, AVIF and PSD converted to
+one PNG first): dedicated OCR (the existing Mistral OCR adapter) and one vision-LLM
 description call. There is no classifier, conditional budget, or LLM
 substitution of OCR. The lanes assemble into one D65 representation:
 
@@ -41,6 +42,8 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.adapters.converters.image_png import convert_isolated
+from rememberstack.adapters.converters.image_png import decode_isolated
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrConverter
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrProviderError
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
@@ -68,12 +71,37 @@ from rememberstack.model import SourceMapEntry
 IMAGE_OCR_DESCRIPTION_CONVERTER_VERSION: Final = "image-ocr-description-2026.09"
 """Pins assembly, prompts, and lane-checkpoint behavior for this route."""
 
-SUPPORTED_IMAGE_MIMES: Final[frozenset[str]] = frozenset(("image/png", "image/jpeg"))
-"""Static JPEG and PNG only. Both Mistral OCR ``image_url`` and OpenRouter
-image-input document these types. WebP is not in the shipped set."""
+NATIVE_IMAGE_MIMES: Final[frozenset[str]] = frozenset(
+    ("image/png", "image/jpeg", "image/webp")
+)
+"""Static PNG, JPEG and WebP go to both lanes as uploaded. Mistral OCR
+``image_url`` and OpenRouter image input both accept these types."""
 
-_PIL_FORMATS: Final[tuple[str, ...]] = ("PNG", "JPEG")
-_FORMAT_TO_MIME: Final[dict[str, str]] = {"PNG": "image/png", "JPEG": "image/jpeg"}
+PNG_CONVERTED_IMAGE_MIMES: Final[dict[str, tuple[str, ...]]] = {
+    "image/gif": ("GIF",),
+    "image/tiff": ("TIFF",),
+    "image/bmp": ("BMP", "DIB"),
+    "image/heic": ("HEIF",),
+    "image/avif": ("AVIF",),
+    "image/vnd.adobe.photoshop": ("PSD",),
+}
+"""Formats converted to one PNG before both lanes, with the Pillow formats each
+may decode as: the first frame or page, EXIF orientation applied, in sRGB.
+One simple path for both lanes, even where a provider reads the format."""
+
+SUPPORTED_IMAGE_MIMES: Final[frozenset[str]] = NATIVE_IMAGE_MIMES | frozenset(
+    PNG_CONVERTED_IMAGE_MIMES
+)
+"""Every image type this route reads."""
+
+PNG_CONVERSION_VERSION: Final = "png-first-frame-exif-srgb-v1"
+"""Pins the conversion of the other formats to PNG; part of their lane keys."""
+
+_FORMAT_TO_MIME: Final[dict[str, str]] = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "WEBP": "image/webp",
+}
 _CHECKPOINT_BYTES_KEY: Final = "$bytes_b64"
 
 DEFAULT_VISION_MODEL: Final = "openai/gpt-6-luna"
@@ -340,10 +368,16 @@ class ImageOcrDescriptionConverter:
         record_usage: LaneUsageRecorder | None = None,
     ) -> ConversionResult:
         """Run both required lanes and assemble one attributed representation."""
-        self._require_supported_input(content=content, mime=mime)
+        source_mime = mime
+        content, mime, more_frames = self._lane_input(content=content, mime=mime)
+        key_mime = (
+            source_mime
+            if source_mime == mime
+            else f"{source_mime}+{PNG_CONVERSION_VERSION}"
+        )
         store = checkpoints if checkpoints is not None else MemoryLaneCheckpoints()
-        ocr_fingerprint = self._ocr_fingerprint(mime=mime)
-        description_fingerprint = self._description_fingerprint(mime=mime)
+        ocr_fingerprint = self._ocr_fingerprint(mime=key_mime)
+        description_fingerprint = self._description_fingerprint(mime=key_mime)
         cached_ocr = _load_ocr_checkpoint(store=store, fingerprint=ocr_fingerprint)
         cached_description = _load_description_checkpoint(
             store=store, fingerprint=description_fingerprint
@@ -395,6 +429,8 @@ class ImageOcrDescriptionConverter:
                     settings=self._description_settings,
                 ),
             )
+            if source_mime != mime:
+                assembled = _with_png_conversion(result=assembled, partial=more_frames)
             return assembled.model_copy(update={"usage_events": usage_events})
         raise _lane_failure(
             ocr_outcome=ocr_outcome,
@@ -415,19 +451,57 @@ class ImageOcrDescriptionConverter:
         """Description checkpoint identity, including MIME and endpoint bounds."""
         return f"{self._description_settings.version_fingerprint()}:mime-{mime}"
 
-    def _require_supported_input(self, *, content: bytes, mime: str) -> None:
-        """Reject unsupported, oversized, or spoofed inputs before any call."""
+    def _lane_input(self, *, content: bytes, mime: str) -> tuple[bytes, str, bool]:
+        """The bytes and MIME both lanes receive, and whether frames were left out.
+
+        PNG, JPEG and WebP pass unchanged. The other supported formats become
+        one PNG in a resource-capped process (``image_png``); a GIF, TIFF or
+        HEIC with more frames, pages or images reports that only the first
+        was read. Every input is checked against the byte and pixel bounds
+        before any call.
+        """
+        more = False
+        source_mime = mime
         if mime not in SUPPORTED_IMAGE_MIMES:
             raise ConversionError(
                 f"image_ocr_description does not accept mime {mime!r}; "
                 f"supported types: {sorted(SUPPORTED_IMAGE_MIMES)}"
             )
+        self._require_within_ceiling(content=content)
+        if mime in PNG_CONVERTED_IMAGE_MIMES:
+            content, more = convert_isolated(
+                content=content,
+                formats=PNG_CONVERTED_IMAGE_MIMES[mime],
+                max_pixels=self._description_settings.max_image_pixels,
+                max_width=self._description_settings.max_image_width,
+                max_height=self._description_settings.max_image_height,
+                max_png_bytes=self.provider_limit_bytes,
+            )
+            mime = "image/png"
+            self._require_within_ceiling(content=content)
+        self._require_supported_input(content=content, mime=mime)
+        if source_mime == "image/webp":
+            # Pillow's structure check does not decode WebP pixels.
+            decode_isolated(
+                content=content,
+                formats=("WEBP",),
+                max_pixels=self._description_settings.max_image_pixels,
+                max_width=self._description_settings.max_image_width,
+                max_height=self._description_settings.max_image_height,
+            )
+        return content, mime, more
+
+    def _require_within_ceiling(self, *, content: bytes) -> None:
+        """Refuse an image (or its PNG) larger than both lanes accept."""
         ceiling = self.provider_limit_bytes
         if len(content) > ceiling:
             raise ConversionError(
                 f"image of {len(content)} bytes exceeds the configured "
                 f"image_ocr_description ceiling of {ceiling}"
             )
+
+    def _require_supported_input(self, *, content: bytes, mime: str) -> None:
+        """Reject unsupported or spoofed lane inputs before any call."""
         _inspect_static_jpeg_or_png(
             content=content,
             declared_mime=mime,
@@ -764,6 +838,62 @@ def _empty_ocr_is_success(*, result: ConversionResult) -> ConversionResult:
     )
 
 
+def _with_png_conversion(
+    *, result: ConversionResult, partial: bool
+) -> ConversionResult:
+    """Record the PNG conversion stage, and a frame or page that was not read."""
+    manifest = result.manifest
+    coverage = manifest.coverage
+    if partial:
+        coverage = ConversionCoverage(
+            policy=coverage.policy,
+            complete=False,
+            gaps=(*coverage.gaps, "only the first frame, page or image was read"),
+        )
+    return result.model_copy(
+        update={
+            "manifest": manifest.model_copy(
+                update={
+                    "components": (
+                        ManifestComponent(
+                            name="png-conversion",
+                            version=PNG_CONVERSION_VERSION,
+                            execution="library-local",
+                        ),
+                        *manifest.components,
+                    ),
+                    "coverage": coverage,
+                }
+            )
+        }
+    )
+
+
+def _webp_canvas(*, content: bytes) -> tuple[int, int, bool] | None:
+    """A WebP's canvas width, height and animation flag, read from its header.
+
+    Read before Pillow opens the file, which allocates an animation decoder
+    for the whole canvas. ``None`` when the header is not a known WebP one.
+    """
+    if len(content) < 25 or content[:4] != b"RIFF" or content[8:12] != b"WEBP":
+        return None
+    chunk = content[12:16]
+    if chunk != b"VP8L" and len(content) < 30:
+        return None
+    if chunk == b"VP8X":
+        width = 1 + int.from_bytes(content[24:27], "little")
+        height = 1 + int.from_bytes(content[27:30], "little")
+        return width, height, bool(content[20] & 0x02)
+    if chunk == b"VP8L" and content[20] == 0x2F:
+        bits = int.from_bytes(content[21:25], "little")
+        return 1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF), False
+    if chunk == b"VP8 ":
+        width = int.from_bytes(content[26:28], "little") & 0x3FFF
+        height = int.from_bytes(content[28:30], "little") & 0x3FFF
+        return width, height, False
+    return None
+
+
 def _inspect_static_jpeg_or_png(
     *,
     content: bytes,
@@ -773,8 +903,23 @@ def _inspect_static_jpeg_or_png(
     max_height: int,
 ) -> None:
     """Bounded Pillow header/structure check; never re-encodes the original bytes."""
+    if declared_mime == "image/webp":
+        canvas = _webp_canvas(content=content)
+        if canvas is None:
+            raise ConversionError(
+                "input is not a supported static PNG, JPEG or WebP image"
+            )
+        width, height, animated = canvas
+        if animated:
+            raise ConversionError("animated PNG or WebP images are not accepted")
+        if width * height > max_pixels or width > max_width or height > max_height:
+            raise ConversionError(
+                f"image of {width}x{height} pixels exceeds the configured ceiling"
+            )
+        # Pillow opens and decodes a WebP only in the capped child.
+        return
     try:
-        with Image.open(io.BytesIO(content), formats=_PIL_FORMATS) as inspected:
+        with Image.open(io.BytesIO(content), formats=("PNG", "JPEG")) as inspected:
             detected_format = inspected.format
             width, height = inspected.size
             if width * height > max_pixels:
@@ -789,20 +934,20 @@ def _inspect_static_jpeg_or_png(
         raise ConversionError("image exceeds Pillow's pixel safety ceiling") from err
     except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as err:
         raise ConversionError(
-            "input is not a supported static JPEG or PNG image"
+            "input is not a supported static PNG, JPEG or WebP image"
         ) from err
 
     detected_mime = _FORMAT_TO_MIME.get(detected_format or "")
     if detected_mime is None:
         raise ConversionError(
-            f"image format {detected_format!r} is not a supported static JPEG or PNG"
+            f"image format {detected_format!r} is not a supported static PNG, JPEG or WebP"
         )
     if detected_mime != declared_mime:
         raise ConversionError(
             f"declared mime {declared_mime!r} does not match detected {detected_mime!r}"
         )
     if animated:
-        raise ConversionError("animated images are not accepted as static JPEG or PNG")
+        raise ConversionError("animated PNG or WebP images are not accepted")
     if width > max_width or height > max_height:
         raise ConversionError(
             f"image dimensions {width}x{height} exceed the configured "

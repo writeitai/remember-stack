@@ -1006,6 +1006,10 @@ def test_shallow_guard_plan_is_endpoint_anchored(
         "frontier_budget": 1000,
     }
     with database_engine.connect() as connection:
+        # Current statistics, as the other plan tests here take them: the
+        # shared suite database's autovacuum timing must not pick the plan.
+        for table in ("relations", "relation_evidence", "entities", "documents"):
+            connection.exec_driver_sql(f"ANALYZE {table}")
         connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
         plan = connection.execute(
             text(

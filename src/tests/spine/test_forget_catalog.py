@@ -210,10 +210,11 @@ def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
 
     assert findings.removed
     assert findings.compiled_artifact_ids == (_ARTIFACT_ID,)
+    # The document's own original is covered by its prefix; no file name lands
+    # on the record.
     assert {key.root for key in findings.object_keys} == {
-        f"{_TARGET_DOC_ID}/{_TARGET_CONTENT_HASH}/original.txt",
         # the transcript of the rebuilt page's compilation
-        "mem://artifacts/writer-transcript.json",
+        "mem://artifacts/writer-transcript.json"
     }
     # Plan-run transcripts go with the deployment's plan runs, uncounted.
     assert {key.root for key in findings.fixture_keys} == {

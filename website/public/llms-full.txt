@@ -417,8 +417,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.21.2](https://github.com/writeitai/remember-stack/releases/tag/v0.21.2)
-([on PyPI](https://pypi.org/project/remember/0.21.2/)).
+[v0.21.3](https://github.com/writeitai/remember-stack/releases/tag/v0.21.3)
+([on PyPI](https://pypi.org/project/remember/0.21.3/)).
 
 ## 3. Point the client at your endpoint
 
@@ -3410,7 +3410,7 @@ On a self-hosted deployment:
 | Jupyter notebooks (`.ipynb`) | Markdown cells read (claims extracted); code cells searchable, no claims; outputs dropped | Same |
 | Code, configuration, logs (`.py`, `.ts`, `.json`, `.yaml`, `.log`, `Dockerfile`, …) | Read and searchable; no claims | Same |
 | Text files of unknown kind | Read and searchable; no claims | Same |
-| Images | File card (name, path, size, dimensions) | Read with `image_ocr_description` (PNG and JPEG; OCR plus a written description) |
+| Images | File card (name, path, size, dimensions) | Read with `image_ocr_description` (OCR plus a written description; PNG, JPEG, WebP, GIF, TIFF, BMP, HEIC, AVIF and PSD) |
 | Audio and video | File card | Same |
 | Archives (`.zip`, `.tar`, `.tar.gz`, `.7z`, …) | File card; zip and tar list their members | Same |
 | Other binary files | File card | Same |
@@ -7202,8 +7202,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.21.2` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.2` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.21.3` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.3` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -7394,7 +7394,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.21.2
+git checkout v0.21.3
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -7406,7 +7406,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.21.2`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.21.3`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -8324,7 +8324,7 @@ works for files sent with that type.
 | `dataset` | In the worker | Parquet, Arrow, Feather, SPSS, SAS, Stata and SQLite files, as a profile | Nothing |
 | `passthrough` | In the worker | Markdown and plain text, always read in full and always extracted | Nothing |
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
-| `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
+| `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG, JPEG and WebP as uploaded; GIF, TIFF, BMP, HEIC, AVIF and PSD converted to PNG first | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 
 `office`, `pdf` page counting, `email`, `notebook` and `markitdown` stop after 120
 seconds and fail the file with a timeout reason.
@@ -8419,9 +8419,20 @@ Other provider errors are retried.
 
 ## image_ocr_description
 
-`image_ocr_description` runs two calls on every PNG or JPEG: Mistral OCR
+`image_ocr_description` runs two calls on every image it accepts: Mistral OCR
 reads the visible text, and a vision model on OpenRouter describes what
-the image shows. The Markdown has two sections, `## Visible text (OCR)` and
+the image shows. PNG, JPEG and WebP go to both calls as uploaded (an animated
+PNG or WebP is refused). GIF, TIFF, BMP, HEIC, AVIF and PSD are first
+converted to one PNG: the first frame of an animated GIF, the first page of a
+multi-page TIFF or a PSD's composite, read as opaque if a TIFF or PSD, turned upright by its EXIF orientation
+(not for PSD, nor for a HEIC or AVIF rotated only by EXIF) and converted to
+sRGB. A PSD is read from its raw or RLE 8-bit composite, as opaque, when its channel
+count is its colour mode's own (grey or indexed 1, RGB 3 or 4, CMYK 4); other PSDs, BigTIFF, big-endian 16-bit white-is-zero TIFF and signed, 32-bit or
+floating-point TIFF samples are not read. Colour signalled only as metadata (HEIC NCLX, AVIF CICP,
+such as HDR or wide-gamut AVIF) is passed on as decoded, not converted to sRGB.
+Route each type you want read, for example `"image/webp"`, `"image/gif"`,
+`"image/tiff"`, `"image/bmp"`, `"image/heic"`, `"image/avif"` and
+`"image/vnd.adobe.photoshop"`. The Markdown has two sections, `## Visible text (OCR)` and
 `## Visual description`. Both calls must succeed. A finished call is saved,
 so a retry does not repeat it.
 
@@ -10543,7 +10554,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.2/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.3/openapi.json).
 
 ## Base URL
 
@@ -11180,7 +11191,7 @@ for it; it will not become ready on its own.
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or a malformed reference. |
 | `422` | `content_type_mismatch` | The declared MIME contradicts a content class identified from the bytes. No original or catalog row is written. |
-| `422` | `ambiguous_office_format` | Legacy Office container bytes have no declared Word, Excel or PowerPoint subtype. |
+| `422` | `ambiguous_office_format` | Legacy Office container bytes name no single Word, Excel or PowerPoint document. |
 | `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
 
 A self-hosted deployment has no body cap unless you set
@@ -19759,7 +19770,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
-This page describes the `remember` CLI (v0.21.2), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.21.3), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -21616,7 +21627,7 @@ their code in `code`. `wait_for_readiness` raises
 | `413` | `body_too_large` | The ingest body is over the cap. | Split the document. |
 | `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
 | `422` | `content_type_mismatch` | The ingest MIME hint contradicts the detected byte class. Nothing was stored. | Send the correct file and a compatible MIME hint. |
-| `422` | `ambiguous_office_format` | A legacy Office container needs a Word, Excel or PowerPoint subtype. | Supply the matching legacy Office MIME. |
+| `422` | `ambiguous_office_format` | A legacy Office container names no single Word, Excel or PowerPoint document. | Save the file again from its Office application, or in a current format. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
 | `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
 | `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |
@@ -22355,6 +22366,44 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## 0.21.3 (November 2026)
+
+**More image formats.** The `image_ocr_description` route now reads static
+WebP as uploaded, and converts GIF, TIFF, BMP, HEIC, AVIF and PSD to one PNG
+before OCR and the description. One image per file is read (the first frame
+or page, or a HEIC's primary image), and the result says when more were left
+out. The conversion runs in a separate process limited to 1.5 GiB
+of memory and 60 seconds; a file that exceeds either limit fails as
+unreadable. Route each type you want read in
+`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`.
+[File formats and converters](https://remember.dev/docs/self-hosting/converters) lists what each
+format keeps and its limits.
+
+**Zero-data-retention routing for embeddings and Jev.**
+`REMEMBERSTACK_OPENROUTER_ZDR` now also adds `zdr: true` to embedding
+requests, and the new `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`
+restricts embeddings to the hosts you list. Jev fact adjudication can run
+through OpenRouter with each deployment's own key
+(`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`), under the same setting. To also
+exclude endpoints with safety retention, enable ZDR only in your OpenRouter
+account or key settings. **Action needed:** a deployment that sets
+`REMEMBERSTACK_OPENROUTER_ZDR=true` and uses Jev now refuses to start unless
+Jev runs on the `openrouter` route, against `https://openrouter.ai`, with
+`REMEMBERSTACK_TYPESAFE_BACKUP=none`. Otherwise turn ZDR off.
+
+**Upload detection.** UTF-16 CSV and TSV files that start with a byte-order
+mark, `.eml` messages with an 8-bit body, legacy `.xls`, `.doc` and `.ppt`
+files uploaded without a type, and SPSS Portable (`.por`) files are now
+recognized and read instead of refused or carded. **Action needed:** a legacy
+Office file whose internal streams do not identify Word, Excel or PowerPoint
+is now refused with `ambiguous_office_format` even when its type is declared.
+Re-save it in Office, or export it to a current format.
+
+**Error codes.** More failures log one record with a stable `error_code`: the
+worker, the lease reaper, provider errors, the live graph and managed metering.
+[Observability](https://remember.dev/docs/self-hosting/observability) shows how to send them to
+Sentry, PostHog or OpenTelemetry.
 
 ## 0.21.2 (November 2026)
 

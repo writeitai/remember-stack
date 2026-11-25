@@ -6088,6 +6088,13 @@ the benchmark owner's call and not a side effect of a media design. The catalog 
 `source_open` is implemented and exposed; that exposure carries the protocol bump. Sequencing
 lives in `plan/plans/`.
 
+*Amended 2026-11-24 (owner, image formats).* The image route reads WebP natively
+beside PNG and JPEG, and converts GIF, TIFF, BMP, HEIC (pillow-heif), AVIF and PSD
+to one PNG for both lanes: the first frame or page for now, EXIF orientation
+applied (not to PSD), sRGB. Multi-frame and multi-page reading is a later decision.
+[media design](plan/designs/media_design.md).
+
+
 ## D116. Originals sit on the navigation path, alongside their representation
 
 **Status:** navigation intent retained; original placement and mount mechanism
@@ -6646,6 +6653,25 @@ binary is stored with a binary card rather than refused.
 Recognized binary signatures override filename hints; PDF always remains PDF
 and follows D139's every-page OCR route.
 
+**Refined 2026-11-24 (content sniffing for formats the readers already
+decode).** A legacy OLE container takes its Word, Excel or PowerPoint subtype
+from its root storage's streams (`WordDocument`, `Workbook` or `Book`,
+`PowerPoint Document`, compared without case; MS-CFB, bounded and strict
+reads). When they name none, more than one, or the compound file is
+malformed, the upload is `ambiguous_office_format`; a declaration never
+decides it. Two text encodings that are not UTF-8 are admitted
+for the families whose readers decode them: UTF-16 with a byte-order mark,
+without control characters to the end of the file, for delimited files (as
+with UTF-8 text, the name or declaration picks the family within the
+class); and an Internet message (a header block without binary controls or
+message-level parse defects, holding a `From` field without defects naming
+a mailbox, and a non-empty To, Date, Subject, Message-ID or Received field;
+a body without binary controls to the end) for email with an 8-bit body. Bytes starting with the UTF-16 little-endian
+byte-order mark (FF FE, also an MPEG-1 Layer I frame sync) are never taken
+for audio. A declaration spelled as a registry alias of the detected
+family (Office templates and slideshows, SVG, XHTML) is compatible. The file
+name still never decides a class the bytes do not establish.
+
 **Status:** accepted. **Date:** 2026-09-23.
 
 **Context.** Declared MIME could select conversion, metering, and storage for a
@@ -6658,7 +6684,8 @@ legacy OLE signatures identify office; strict UTF-8 identifies text. A
 declaration contradicting a recognizable byte class raises a typed client
 error. For formats indistinguishable within a class, the filename and
 declaration select the D133/D138 registry family and posture, while
-legacy OLE needs a declared office subtype. Store the resulting MIME, and use
+legacy OLE takes its office subtype from its root streams (refined below;
+originally a declared subtype). Store the resulting MIME, and use
 it consistently for the conversion route, original storage class, and (through
 the route) the managed meter's cost class (D150). Every object-store write must provide a class: raw media hot,
 other raw originals cold; query-facing derived objects and P3 snapshots hot;

@@ -429,3 +429,25 @@ def test_a_mapped_package_never_inflates_an_unboundable_mimetype(
             tracemalloc.stop()
     assert verdict == "application/octet-stream"
     assert peak < 8 << 20
+
+
+def _ftyp(*brands: bytes) -> bytes:
+    """A file-type box: the major brand, a zero minor version, compatible brands."""
+    body = brands[0] + b"\x00" * 4 + b"".join(brands[1:])
+    return (8 + len(body)).to_bytes(4, "big") + b"ftyp" + body
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (_ftyp(b"avif", b"avif", b"mif1", b"miaf"), "image/avif"),
+        (_ftyp(b"mif1", b"mif1", b"avif"), "image/avif"),
+        (_ftyp(b"mif1", b"mif1", b"heic"), "image/heic"),
+        (_ftyp(b"mif1", b"mif1"), "image/heic"),
+    ],
+)
+def test_avif_with_the_generic_brand_is_recognized(
+    content: bytes, expected: str
+) -> None:
+    """AVIF files carry ``mif1`` too, and a codec brand wins over it."""
+    assert detect_content_mime(content=content, declared_mime=expected) == expected

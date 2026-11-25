@@ -275,7 +275,7 @@ for it; it will not become ready on its own.
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or a malformed reference. |
 | `422` | `content_type_mismatch` | The declared MIME contradicts a content class identified from the bytes. No original or catalog row is written. |
-| `422` | `ambiguous_office_format` | Legacy Office container bytes have no declared Word, Excel or PowerPoint subtype. |
+| `422` | `ambiguous_office_format` | Legacy Office container bytes name no single Word, Excel or PowerPoint document. |
 | `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
 
 <Cloud>

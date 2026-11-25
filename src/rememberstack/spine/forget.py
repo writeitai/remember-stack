@@ -12,6 +12,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
 import json
+import re
 from typing import Any
 from typing import Final
 from uuid import NAMESPACE_URL
@@ -392,6 +393,30 @@ class ForgetCatalog:
                 },
             )
 
+    def hashes_in_use(
+        self, *, forget: Forget, hashes: tuple[str, ...]
+    ) -> frozenset[str]:
+        """Content hashes a surviving version of any lineage still uses.
+
+        A version row of a lineage that has a forget record does not count;
+        an archived or D135-deleted lineage's version does.
+        """
+        if not hashes:
+            return frozenset()
+        with self._engine.connect() as connection:
+            return frozenset(
+                str(value)
+                for value in connection.execute(
+                    text("""SELECT DISTINCT v.content_hash FROM document_versions v
+                    WHERE v.deployment_id = :d
+                      AND v.content_hash = ANY(CAST(:hashes AS text[]))
+                      AND NOT EXISTS (SELECT 1 FROM forgets f
+                                      WHERE f.deployment_id = v.deployment_id
+                                        AND f.doc_id = v.doc_id)"""),
+                    {"d": forget.deployment_id, "hashes": list(hashes)},
+                ).scalars()
+            )
+
     def collected_artifact_ids(self, *, forget: Forget) -> tuple[UUID, ...]:
         """The compiled K artifacts the record names, for a reapply."""
         with self._engine.connect() as connection:
@@ -558,6 +583,32 @@ def _identity(*, deployment_id: UUID, source_kind: str, source_ref: str) -> str:
     return source_identity_hash(
         deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
     )
+
+
+_LINEAGE_ORIGINAL = re.compile(r"(?P<owner>[0-9a-f-]{36})/(?P<hash>[0-9a-f]{64})/.+")
+
+
+def locator_hash(*, locator: str) -> str | None:
+    """The content hash of an ``<owner>/<hash>/`` locator, else ``None``."""
+    match = _LINEAGE_ORIGINAL.fullmatch(locator + "x")
+    return match["hash"] if match is not None and locator.endswith("/") else None
+
+
+def original_locator(*, key: str, doc_id: UUID) -> str | None:
+    """The content-free locator a record keeps for one object key.
+
+    A key under the document's own prefix needs none (the prefix purge covers
+    it). An original under another lineage's prefix is kept as that
+    ``<owner>/<hash>/`` prefix, so the file name it was stored with (its
+    extension) never lands on the record. Other keys (D147 ``uploads/<id>``,
+    transcripts) are opaque and kept as they are. A locator ending in ``/``
+    is purged as a prefix.
+    """
+    if key.startswith(f"{doc_id}/"):
+        return None
+    if match := _LINEAGE_ORIGINAL.fullmatch(key):
+        return f"{match['owner']}/{match['hash']}/"
+    return key
 
 
 def retry_delay(*, quiet_period_s: float, failures: int) -> timedelta:
@@ -759,10 +810,13 @@ class _Sweep:
             key=str,
         )
         object_keys = {
-            str(value)
+            locator
             for statement in (_OWNED_ORIGINALS, _TRANSCRIPTS)
             for value in self._c.execute(statement, p).scalars()
             if value is not None
+            and (
+                locator := original_locator(key=str(value), doc_id=self._forget.doc_id)
+            )
         }
         collected["fact_ids"] = sorted(
             {*collected["fact_ids"], *map(str, p["fact_ids"])}
@@ -913,7 +967,19 @@ class _Sweep:
         )
         self._removed += len(retired)
         collected["object_keys"] = sorted(
-            {*collected["object_keys"], *(str(key) for key in retired if key)}
+            {
+                *collected["object_keys"],
+                *(
+                    locator
+                    for key in retired
+                    if key
+                    and (
+                        locator := original_locator(
+                            key=str(key), doc_id=self._forget.doc_id
+                        )
+                    )
+                ),
+            }
         )
 
     def _stale_labels(self, *, p: dict[str, Any], collected: dict[str, Any]) -> None:
@@ -1464,13 +1530,22 @@ _PRUNE_PREDICATES = text(
     """
 )
 
-# Exact spellings surviving mentions resolved to one entity use.
+# Exact spellings surviving mentions use, resolved to one entity or to any
+# entity redirected into it (its merge closure).
 _SURVIVING_FORMS = """
     SELECT v.form, m.normalized_lemma AS lemma
     FROM resolution_decisions d JOIN mentions m
       ON m.deployment_id=d.deployment_id AND m.mention_id=d.mention_id
     CROSS JOIN LATERAL (VALUES (m.surface_form), (m.canonical_name_form)) v(form)
-    WHERE d.deployment_id=:deployment_id AND d.entity_id={entity}
+    WHERE d.deployment_id=:deployment_id
+      AND d.entity_id IN (
+        WITH RECURSIVE closure(entity_id) AS (
+          SELECT {entity}
+          UNION
+          SELECT x.entity_id FROM entities x JOIN closure c ON x.merged_into=c.entity_id
+          WHERE x.deployment_id=:deployment_id
+        )
+        SELECT entity_id FROM closure)
       AND d.superseded_by IS NULL AND m.doc_id<>:doc_id
       AND NOT m.doc_id=ANY(CAST(:forgotten_doc_ids AS uuid[]))
       AND v.form IS NOT NULL
@@ -1574,6 +1649,19 @@ _ENTITY_STATEMENTS = (
                        LIKE '%' || CAST(ids.value AS text) || '%'))
           AND (cardinality(trigger_lemmas) > 0 OR evidence IS NOT NULL
                OR pre_merge_membership_snapshot <> '{}'::jsonb)
+        """
+    ),
+    # A surviving decision's T4 rationale may quote a candidate this
+    # document named; the verdict stays, the prose goes.
+    text(
+        """
+        UPDATE resolution_decisions d
+        SET features = (d.features - 'rationale') #- '{t4_selection,rationale}'
+        WHERE d.deployment_id=:deployment_id
+          AND (d.features ? 'rationale' OR d.features->'t4_selection' ? 'rationale')
+          AND EXISTS (
+            SELECT 1 FROM unnest(CAST(:resolved_entity_ids AS uuid[])) ids(value)
+            WHERE d.features::text LIKE '%' || CAST(ids.value AS text) || '%')
         """
     ),
     text(
