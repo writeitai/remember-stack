@@ -249,108 +249,194 @@ def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
     assert catalog.sweep_postgres(forget=forget).compiled_artifact_ids == ()
 
 
-_ID_COLUMNS = (
-    "doc_id",
-    "version_id",
-    "representation_id",
-    "section_id",
-    "chunk_id",
-    "claim_id",
-    "mention_id",
-    "from_doc_id",
-    "to_doc_id",
-    "from_version_id",
-    "current_version_id",
-    "claim_lineage_id",
+# The tables of a document's subtree (design §3.3 step 1). A column references
+# a document when it is a foreign key into this subtree (directly or through a
+# table that is itself in it), a ``uuid``/``uuid[]`` column named for one of
+# its IDs (a logical reference), or a polymorphic ``target_id``.
+_SUBTREE = (
+    "documents",
+    "document_versions",
+    "document_representations",
+    "document_sections",
+    "chunks",
+    "claims",
+    "mentions",
 )
-# Every public table with a column that names a document, version,
-# representation, section, chunk, claim or mention. "swept" rows are deleted or
-# unbound by the sweep; the others are reviewed content-free rows that keep the
-# IDs only (D159 §3.1). A new table fails this test until it is classified.
-_CLASSIFIED: dict[str, str] = {
-    "chunk_claims": "swept",
-    "chunk_search": "swept",
-    "chunks": "swept",
-    "claim_extraction_decisions": "swept",
-    "claims": "swept",
-    "document_crossrefs": "swept",
-    "document_effective_periods": "swept",
-    "document_effective_time_events": "swept",
-    "document_entity_bindings": "swept",
-    "document_metadata": "swept",
-    "document_names": "swept",
-    "document_people": "swept",
-    "document_reference_generations": "swept",
-    "document_representations": "swept",
-    "document_sections": "swept",
-    "document_skeleton_checks": "swept",
-    "document_structure_generations": "swept",
-    "document_tags": "swept",
-    "document_version_scope": "swept",
-    "document_versions": "swept",
-    "documents": "swept",
-    "fact_applications": "swept",
-    "grounding_audits": "swept",
-    "knowledge_artifact_evidence": "swept",
-    "mentions": "swept",
-    "normalization_outputs": "swept",
-    "normalize_observation_staging": "swept",
-    "obs_flush_entity_units": "swept",
-    "obs_flush_version_state": "swept",
-    "observation_evidence": "swept",
-    "processing_layer_gaps": "swept",
-    "relation_evidence": "swept",
-    "resolution_decisions": "swept",
-    "selection_results": "swept",
-    "forgets": "the forget record itself (IDs and hashes only)",
-    "managed_ingest_measurements": "metering receipt: counts and the UUIDs as billing metadata",
-    "testimony_currency_events": "content-free currency history (IDs, reason, time)",
+_DISCOVER_REFERENCES = text(
+    """
+    WITH RECURSIVE fk AS (
+        SELECT conrelid, confrelid, conkey FROM pg_constraint WHERE contype = 'f'
+    ), referencing(rel) AS (
+        SELECT oid FROM pg_class
+        WHERE relnamespace = 'public'::regnamespace
+          AND relname = ANY(CAST(:subtree AS text[]))
+        UNION
+        SELECT fk.conrelid FROM fk JOIN referencing ON fk.confrelid = referencing.rel
+    ), foreign_keys AS (
+        SELECT k.relname AS table_name, a.attname AS column_name
+        FROM fk
+        JOIN referencing ON fk.confrelid = referencing.rel
+        JOIN pg_class k ON k.oid = fk.conrelid
+        JOIN pg_attribute a ON a.attrelid = fk.conrelid AND a.attnum = ANY(fk.conkey)
+        WHERE NOT k.relispartition AND a.attname <> 'deployment_id'
+    ), logical AS (
+        SELECT k.relname, a.attname
+        FROM pg_attribute a JOIN pg_class k ON k.oid = a.attrelid
+        WHERE k.relnamespace = 'public'::regnamespace
+          AND k.relkind IN ('r', 'p') AND NOT k.relispartition
+          AND k.relname NOT LIKE 'template\\_%'
+          AND a.attnum > 0 AND NOT a.attisdropped
+          AND a.atttypid IN ('uuid'::regtype, 'uuid[]'::regtype)
+          AND (a.attname ~ '(doc|version|representation|section|chunk|claim|mention)(_lineage)?_ids?$'
+               OR a.attname = 'target_id')
+    )
+    SELECT table_name, column_name FROM foreign_keys
+    UNION SELECT relname, attname FROM logical
+    """
+)
+# Every discovered reference, classified. "swept": the sweep deletes the row or
+# unbinds the value, checked below for the seeded target. Anything else is a
+# reviewed content-free value the design keeps (§3.1): its reason is the text.
+# A new table or column fails this test until it is classified here.
+_SWEPT_TABLES = frozenset(
+    {
+        "application_context_bindings",
+        "chunk_claims",
+        "chunk_search",
+        "chunks",
+        "claim_extraction_decisions",
+        "claims",
+        "document_crossrefs",
+        "document_effective_periods",
+        "document_effective_time_events",
+        "document_entity_bindings",
+        "document_metadata",
+        "document_names",
+        "document_people",
+        "document_reference_generations",
+        "document_representations",
+        "document_sections",
+        "document_skeleton_checks",
+        "document_structure_generations",
+        "document_tags",
+        "document_version_scope",
+        "document_versions",
+        "documents",
+        "fact_applications",
+        "grounding_audits",
+        "knowledge_artifact_evidence",
+        "mentions",
+        "normalization_outputs",
+        "normalize_observation_staging",
+        "obs_flush_entity_units",
+        "obs_flush_version_state",
+        "observation_adjudications",
+        "observation_evidence",
+        "observations",
+        "processing_layer_gaps",
+        "relation_adjudications",
+        "relation_evidence",
+        "relations",
+        "resolution_decisions",
+        "selection_results",
+    }
+)
+_KEPT: dict[str, str] = {
+    "forgets.doc_id": "the forget record itself (IDs and hashes only)",
+    "forgets.version_ids": "the forget record itself (IDs and hashes only)",
+    "managed_ingest_measurements.doc_id": "metering receipt: the UUID as billing metadata",
+    "managed_ingest_measurements.version_id": "metering receipt: the UUID as billing metadata",
+    "testimony_currency_events.claim_id": "content-free currency history",
+    "testimony_currency_events.doc_id": "content-free currency history",
+    "testimony_currency_events.from_version_id": "content-free currency history",
+    "processing_state.target_id": "work-ledger row: status and IDs, error text cleared",
+    "cost_ledger.target_id": "cost row: counts and the UUID as billing metadata",
+}
+# Payload columns (text and JSON) of rows the sweep keeps that may still name
+# a forgotten ID, by design: the record and content-free history.
+_PAYLOAD_KEPT: dict[str, str] = {
+    "forgets.collected": "the forget record's content-free IDs and opaque keys",
+    "processing_state.content_hash": "work-ledger key: a document's publication work is keyed by its ID",
 }
 
 
 def test_schema_coverage_classifies_every_document_reference(
     seeded_engine: Engine,
 ) -> None:
-    """§5 test 2: every referencing table is swept or on the reviewed allow-list."""
+    """§5 test 2, discovered from the PostgreSQL catalog: every foreign key into
+    a document's subtree, every column named for one of its IDs and every
+    polymorphic target is swept or a reviewed content-free value; after the
+    sweep no swept column and no text, array or JSON payload still names the
+    document's IDs. (The token itself is scanned in a full database dump by
+    the end-to-end canary.)"""
     with seeded_engine.connect() as connection:
-        rows = connection.execute(
-            text(
-                """
-                SELECT c.table_name, c.column_name
-                FROM information_schema.columns c
-                JOIN pg_class k ON k.relname = c.table_name
-                JOIN pg_namespace n ON n.oid = k.relnamespace
-                 AND n.nspname = c.table_schema
-                WHERE c.table_schema = 'public' AND k.relkind IN ('r', 'p')
-                  AND NOT k.relispartition
-                  AND c.table_name NOT LIKE 'template\\_%'
-                  AND c.column_name = ANY(CAST(:columns AS text[]))
-                """
-            ),
-            {"columns": list(_ID_COLUMNS)},
-        ).all()
-    columns: dict[str, list[str]] = {}
-    for table, column in rows:
-        columns.setdefault(table, []).append(column)
-    assert set(columns) == set(_CLASSIFIED), (
-        "classify every table that references a document in _CLASSIFIED"
+        discovered = {
+            f"{table}.{column}"
+            for table, column in connection.execute(
+                _DISCOVER_REFERENCES, {"subtree": list(_SUBTREE)}
+            ).all()
+        }
+    swept = {name for name in discovered if name.split(".")[0] in _SWEPT_TABLES}
+    unclassified = discovered - swept - set(_KEPT)
+    assert not unclassified, f"classify these references: {sorted(unclassified)}"
+    stale = (set(_KEPT) - discovered) | (
+        _SWEPT_TABLES - {name.split(".")[0] for name in swept}
     )
+    assert not stale, f"classified but no longer in the schema: {sorted(stale)}"
+
     catalog = ForgetCatalog(engine=seeded_engine)
     forget = _hide(engine=seeded_engine)
     catalog.sweep_postgres(forget=forget)
+    ids = [str(value) for value in _TARGET_IDS]
     with seeded_engine.connect() as connection:
-        for table, names in sorted(columns.items()):
-            if _CLASSIFIED[table] != "swept":
+        for name in sorted(swept):
+            table, column = name.split(".")
+            kind = connection.execute(
+                text(
+                    "SELECT format_type(atttypid, atttypmod)"
+                    " FROM pg_attribute WHERE attrelid = CAST(:t AS regclass)"
+                    " AND attname = :c"
+                ),
+                {"t": table, "c": column},
+            ).scalar_one()
+            if kind not in {"uuid", "uuid[]"}:
+                continue  # a composite key's other part; its uuid part is checked
+            match = "&&" if kind == "uuid[]" else "= ANY"
+            remaining = connection.execute(
+                text(
+                    f"SELECT count(*) FROM {table}"
+                    f" WHERE {column} {match}(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": ids},
+            ).scalar_one()
+            assert remaining == 0, f"{name} still names the document"
+        payloads = connection.execute(
+            text(
+                """
+                SELECT k.relname, a.attname
+                FROM pg_attribute a JOIN pg_class k ON k.oid = a.attrelid
+                WHERE k.relnamespace = 'public'::regnamespace
+                  AND k.relkind IN ('r', 'p') AND NOT k.relispartition
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND a.atttypid IN ('text'::regtype, 'varchar'::regtype,
+                                     'jsonb'::regtype, 'json'::regtype,
+                                     'text[]'::regtype, 'uuid[]'::regtype)
+                ORDER BY 1, 2
+                """
+            )
+        ).all()
+        assert payloads
+        for table, column in payloads:
+            if f"{table}.{column}" in _PAYLOAD_KEPT or f"{table}.{column}" in _KEPT:
                 continue
-            for column in names:
-                remaining = connection.execute(
-                    text(
-                        f"SELECT count(*) FROM {table}"
-                        f" WHERE {column} = ANY(CAST(:ids AS uuid[]))"
-                    ),
-                    {"ids": list(_TARGET_IDS)},
-                ).scalar_one()
-                assert remaining == 0, f"{table}.{column} still names the document"
+            hits = connection.execute(
+                text(
+                    f'SELECT count(*) FROM "{table}"'
+                    f' WHERE CAST("{column}" AS text) LIKE ANY(CAST(:needles AS text[]))'
+                ),
+                {"needles": [f"%{value}%" for value in ids]},
+            ).scalar_one()
+            assert hits == 0, f"{table}.{column} still names the document"
 
 
 def test_late_writer_residue_is_removed_by_the_next_sweep(

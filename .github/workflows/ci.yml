@@ -192,6 +192,9 @@ jobs:
     env:
       REMEMBERSTACK_TEST_MINIO_ENDPOINT_URL: http://127.0.0.1:59000
       REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://rememberstack:rememberstack_test@localhost:5432/rememberstack_test
+      # D159 §5 test 1: the canary scan dumps the database with the server's
+      # own pg_dump, inside the container start-postgres.sh runs.
+      REMEMBERSTACK_TEST_PG_DUMP: docker exec rememberstack-postgres-ci pg_dump -U rememberstack -d rememberstack_test
     steps:
       - uses: actions/checkout@v4
       - name: Start PostgreSQL 18 with required extensions
