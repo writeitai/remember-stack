@@ -104,7 +104,7 @@ def capture() -> dict[str, object]:
                 .rstrip("=")
                 .lower(),
             )
-            for number, role in enumerate(("artifacts", "corpus", "forget", "raw"))
+            for number, role in enumerate(("artifacts", "corpus", "raw"))
         ),
     )
     profile = build_managed_storage_profile(

@@ -47,17 +47,6 @@ _JAN = datetime(2026, 1, 1, tzinfo=UTC)
 _JUL = datetime(2026, 7, 1, tzinfo=UTC)
 
 
-class _Boundary:
-    """Open admission and readiness for the one deployment under test."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
-
-
 class _Ingest:
     """Record observed uploads; refuse the key ``taken``."""
 
@@ -157,12 +146,9 @@ def surface() -> tuple[MemoryClient, _Ingest, _EffectiveTime]:
     """The real HTTP app with only ingest and the period routes composed."""
     ingest = _Ingest()
     effective_time = _EffectiveTime()
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         ingest=ingest,
         effective_time=effective_time,
     )

@@ -23,9 +23,8 @@ from rememberstack.core import source_identity_hash
 from rememberstack.model import ClaimedWork
 from rememberstack.model import CostBudget
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import DocumentForgottenError
 from rememberstack.model import EnqueueWork
-from rememberstack.model import ForgetInProgressError
-from rememberstack.model import ForgottenSourceError
 from rememberstack.model import LaneRouteError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
@@ -680,57 +679,74 @@ def test_scheduled_retry_is_announced_through_the_queue_port(
     assert announcement.route_snapshot.stage is PipelineStage.EXTRACT_CLAIMS
 
 
-def test_active_forget_blocks_ordinary_claims_but_authorizes_its_worker(
+def test_a_forget_stops_nothing_but_its_own_document(
     ledger: WorkLedger, database_engine: Engine
 ) -> None:
-    """Apply the D74 barrier without deadlocking the unlaned coordinator."""
-    ordinary = ledger.enqueue(work=_work())
-    forget_id = uuid4()
-    hard_forget = ledger.enqueue(
-        work=EnqueueWork(
-            deployment_id=_DEPLOYMENT_ID,
-            target_kind=ProcessingTarget.DOCUMENT,
-            target_id=uuid4(),
-            stage=PipelineStage.HARD_FORGET,
-            component_version="hard-forget-v1",
-            content_hash="a" * 64,
-            lane=None,
-        )
-    )
+    """D159: no barrier; a forget record blocks only its own document's work."""
+    forget_id, forgotten_doc = uuid4(), uuid4()
     with database_engine.begin() as connection:
         connection.execute(
             text(
                 """
-                INSERT INTO forget_manifests (
-                    forget_id, deployment_id, doc_id, schema_version, status
-                ) VALUES (:forget_id, :deployment_id, :doc_id, 1, 'preparing')
+                INSERT INTO forgets (
+                    forget_id, deployment_id, doc_id, version_ids, content_hashes
+                ) VALUES (:forget_id, :deployment_id, :doc_id, '{}', '{}')
                 """
             ),
             {
                 "forget_id": forget_id,
                 "deployment_id": _DEPLOYMENT_ID,
-                "doc_id": uuid4(),
+                "doc_id": forgotten_doc,
             },
         )
+    refused = ledger.enqueue(
+        work=EnqueueWork(
+            deployment_id=_DEPLOYMENT_ID,
+            target_kind=ProcessingTarget.DOCUMENT,
+            target_id=forgotten_doc,
+            stage=PipelineStage.EXTRACT_CLAIMS,
+            component_version="forgotten",
+            content_hash="a" * 64,
+            lane=ProcessingLane.STEADY,
+        )
+    )
+    ordinary = ledger.enqueue(work=_work())
+    sweep = ledger.enqueue(
+        work=EnqueueWork(
+            deployment_id=_DEPLOYMENT_ID,
+            target_kind=ProcessingTarget.FORGET,
+            target_id=forget_id,
+            stage=PipelineStage.FORGET,
+            component_version="forget-v1/1",
+            content_hash=str(forget_id),
+            lane=None,
+        )
+    )
 
-    with pytest.raises(ForgetInProgressError):
+    claimed = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.EXTRACT_CLAIMS,
+        lane=ProcessingLane.STEADY,
+    )
+    assert isinstance(claimed, ClaimedWork)
+    assert claimed.processing_id == ordinary.processing_id
+    assert (
         ledger.claim_one(
             deployment_id=_DEPLOYMENT_ID,
             stage=PipelineStage.EXTRACT_CLAIMS,
             lane=ProcessingLane.STEADY,
         )
-    claimed = ledger.claim_one(
-        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.HARD_FORGET, lane=None
+        is None
     )
+    assert refused.created
+    forget_work = ledger.claim_one(
+        deployment_id=_DEPLOYMENT_ID, stage=PipelineStage.FORGET, lane=None
+    )
+    assert isinstance(forget_work, ClaimedWork)
+    assert forget_work.processing_id == sweep.processing_id
 
-    assert ordinary.created is True
-    assert isinstance(claimed, ClaimedWork)
-    assert claimed.processing_id == hard_forget.processing_id
 
-
-def test_completed_manifest_is_an_irreversible_exact_ingest_guard(
-    database_engine: Engine,
-) -> None:
+def test_forget_record_is_an_exact_ingest_guard(database_engine: Engine) -> None:
     """Reject both source identity and raw hash while admitting unrelated input."""
     forgotten_content_hash = "b" * 64
     forgotten_identity_hash = source_identity_hash(
@@ -740,14 +756,12 @@ def test_completed_manifest_is_an_irreversible_exact_ingest_guard(
         connection.execute(
             text(
                 """
-                INSERT INTO forget_manifests (
-                    forget_id, deployment_id, doc_id, schema_version,
-                    manifest_hash, manifest, source_identity_hash, content_hashes,
-                    status, accepted_at, completed_at
+                INSERT INTO forgets (
+                    forget_id, deployment_id, doc_id, version_ids,
+                    source_identity_hash, content_hashes, status, completed_at
                 ) VALUES (
-                    :forget_id, :deployment_id, :doc_id, 1,
-                    :manifest_hash, '{}'::jsonb, :source_identity_hash,
-                    ARRAY[:content_hash], 'complete', now(), now()
+                    :forget_id, :deployment_id, :doc_id, '{}',
+                    :source_identity_hash, ARRAY[:content_hash], 'complete', now()
                 )
                 """
             ),
@@ -755,21 +769,20 @@ def test_completed_manifest_is_an_irreversible_exact_ingest_guard(
                 "forget_id": uuid4(),
                 "deployment_id": _DEPLOYMENT_ID,
                 "doc_id": uuid4(),
-                "manifest_hash": "a" * 64,
                 "source_identity_hash": forgotten_identity_hash,
                 "content_hash": forgotten_content_hash,
             },
         )
     catalog = ForgetCatalog(engine=database_engine)
 
-    with pytest.raises(ForgottenSourceError):
+    with pytest.raises(DocumentForgottenError):
         catalog.guard_ingest(
             deployment_id=_DEPLOYMENT_ID,
             source_kind="drive",
             source_ref="file-1",
             content_hash="c" * 64,
         )
-    with pytest.raises(ForgottenSourceError):
+    with pytest.raises(DocumentForgottenError):
         catalog.guard_ingest(
             deployment_id=_DEPLOYMENT_ID,
             source_kind="drive",

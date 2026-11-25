@@ -131,9 +131,7 @@ Compose file uses it as the API container's health check.
 ### Response
 
 `200` with `{"status": "ok"}` after a `SELECT 1` succeeds. If the database
-cannot be reached, the request fails with `500`. While a hard forget runs, it
-answers `503` with `{"detail": {"code": "forget_in_progress"}}` like every
-other route.
+cannot be reached, the request fails with `500`.
 
 ### Example
 

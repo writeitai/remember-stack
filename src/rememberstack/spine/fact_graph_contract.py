@@ -60,7 +60,7 @@ def rebuild_fact_graphs(*, connection: Connection, archive: bool | None = None) 
         ).scalar_one()
     if archive:
         # D159: belief clocks read close/reopen events once facts can reopen.
-        from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+        from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
             belief_interval_helper,
         )
 
@@ -166,7 +166,7 @@ def _rebuild(
         position = statements.index(sources) + 1
         projection = GRAPH_CROSSREFS_PROJECTION_DDL
         if archive:
-            from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+            from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
                 archived_target_projection,
             )
 
@@ -184,10 +184,10 @@ def _rebuild(
         # D159: the belief predicate lives in the schema dropped above; the
         # traversal helpers call it, so it precedes them, and its grants
         # follow the graph role's creation.
-        from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+        from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
             FACT_BELIEVED_AT_DDL,
         )
-        from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+        from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
             FACT_BELIEVED_AT_GRANTS,
         )
 

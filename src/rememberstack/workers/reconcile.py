@@ -19,6 +19,7 @@ archive and unarchive (D159), and `DeletionService` the internal version
 removal and the operator forget's cascade through the same §8 rules.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
 import logging
@@ -26,7 +27,6 @@ from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid5
 
-from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
@@ -38,7 +38,6 @@ from rememberstack.model import DocumentArchive
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentUnarchive
 from rememberstack.model import EnqueueWork
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
@@ -46,10 +45,9 @@ from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
-from rememberstack.spine.admission import active_forget_id_on
-from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.lifecycle import archive_reconciliation_id
 from rememberstack.spine.lifecycle import LifecycleCatalog
+from rememberstack.spine.processing_layers import lineage_changed_on
 from rememberstack.spine.processing_layers import take_layer_fence_on
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.workers.base import HandlerOutcome
@@ -892,19 +890,13 @@ class DocumentArchiver:
         another path started (a source archive awaiting finalization) is
         finished, and the answer reports what this call did.
         """
-        try:
-            with self._engine.begin() as connection:
-                delta, archived_at = archive_lineage_on(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    doc_id=doc_id,
-                    archived_by="caller",
-                )
-        except ApplicationInputChanged as error:
-            # Only the D74 forget fence raises this inside the archive.
-            raise ForgetInProgressError(
-                f"deployment {deployment_id} is honoring a hard forget"
-            ) from error
+        with self._engine.begin() as connection:
+            delta, archived_at = archive_lineage_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                archived_by="caller",
+            )
         self._refresh_profiles(
             deployment_id=deployment_id,
             doc_id=doc_id,
@@ -934,20 +926,13 @@ class DocumentArchiver:
         ``only_source`` undoes only a source archive: a connector seeing the
         file again never undoes a caller's archive.
         """
-        try:
-            with self._engine.begin() as connection:
-                restored, relation_ids, observation_ids, reopened, run_id = (
-                    _unarchive_on(
-                        connection=connection,
-                        deployment_id=deployment_id,
-                        doc_id=doc_id,
-                        only_source=only_source,
-                    )
-                )
-        except ApplicationInputChanged as error:
-            raise ForgetInProgressError(
-                f"deployment {deployment_id} is honoring a hard forget"
-            ) from error
+        with self._engine.begin() as connection:
+            restored, relation_ids, observation_ids, reopened, run_id = _unarchive_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                only_source=only_source,
+            )
         if run_id is not None:
             self._refresh_profiles(
                 deployment_id=deployment_id,
@@ -998,7 +983,6 @@ def archive_lineage_on(
     then runs the lineage cascade under the archive reconciliation id.
     Returns the delta and the archive instant.
     """
-    _hard_forget_fence(connection=connection, deployment_id=deployment_id)
     # D143 §3.3 lock order: the layer fence before the lineage lock.
     take_layer_fence_on(connection=connection, deployment_id=deployment_id)
     catalog = LifecycleCatalog.on_connection(connection=connection)
@@ -1028,7 +1012,6 @@ def _unarchive_on(
     anchors from live testimony, and repeats every reconcile the archive may
     have cut short (completed work is reused, D56).
     """
-    _hard_forget_fence(connection=connection, deployment_id=deployment_id)
     take_layer_fence_on(connection=connection, deployment_id=deployment_id)
     catalog = LifecycleCatalog.on_connection(connection=connection)
     seen = catalog.lineage_state(deployment_id=deployment_id, doc_id=doc_id)
@@ -1111,16 +1094,76 @@ def _unarchive_on(
     )
 
 
-def _hard_forget_fence(*, connection: Connection, deployment_id: UUID) -> None:
-    """The D74 hard-forget fence (shared), held until the caller commits."""
-    connection.execute(
-        text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"),
-        {"key": f"hard-forget:{deployment_id}"},
+@dataclass(frozen=True)
+class LineageRemoval:
+    """What one lineage removal transaction did (D135 delete, D159 hide)."""
+
+    delta: ReconciliationDelta
+    deleted_at: datetime
+    already_deleted: bool
+    changed: bool
+
+
+def remove_lineage_on(
+    *, connection: Connection, deployment_id: UUID, doc_id: UUID
+) -> LineageRemoval | None:
+    """Tombstone a lineage and run or finish its cascade in the caller's transaction.
+
+    Takes the lineage row lock (the lock ingest takes) before reading its
+    state. ``None`` when the deployment never held the lineage. A lineage
+    already tombstoned has its unfinished cascade finished (D135's
+    finish-or-refuse rerun); ``changed`` says whether anything was left.
+    """
+    # D143 §3.3 lock order: the layer fence before the lineage lock.
+    take_layer_fence_on(connection=connection, deployment_id=deployment_id)
+    catalog = LifecycleCatalog.on_connection(connection=connection)
+    # Lock the lineage BEFORE reading its state: a concurrent removal of the
+    # same document waits here, then reads the committed tombstone.
+    catalog.lock_lineage(doc_id=doc_id)
+    state = catalog.lineage_state(deployment_id=deployment_id, doc_id=doc_id)
+    if state is None:
+        return None
+    already_deleted = state["deleted_at"] is not None
+    deleted_at = catalog.delete_lineage(doc_id=doc_id)
+    # One run id per deletion EPISODE: stable across a repeat of the same
+    # deletion (the tombstone instant does not move), new for a later
+    # deletion after the document was added back — so each episode gets
+    # its own ledger rows and its own evidence_changed event.
+    reconciliation_id = _derived_run_id(
+        kind="delete-lineage", id_=doc_id, at=deleted_at.isoformat()
     )
-    if active_forget_id_on(connection=connection, deployment_id=deployment_id):
-        raise ForgetInProgressError(
-            f"deployment {deployment_id} is honoring a hard forget"
-        )
+    delta = _cascade_run(
+        catalog=catalog,
+        deployment_id=deployment_id,
+        transitions=_with_recorded(
+            catalog=catalog,
+            transitions=catalog.stale_for_lineage_removal(
+                deployment_id=deployment_id, doc_id=doc_id
+            ),
+            reconciliation_id=reconciliation_id,
+        ),
+        reconciliation_id=reconciliation_id,
+        boundary=None,
+        scope_claim_ids=catalog.lineage_claim_ids(
+            deployment_id=deployment_id, doc_id=doc_id
+        ),
+        archive=False,
+    )
+    changed = bool(
+        delta.transitions or delta.relations_closed or delta.observations_closed
+    )
+    # D140 §8.2: catalog.delete_lineage queued the window review in this
+    # transaction (only for a lineage that ever had periods)
+    # D143: the deleted lineage's gaps go in the same transaction.
+    lineage_changed_on(
+        connection=connection, deployment_id=deployment_id, doc_id=doc_id
+    )
+    return LineageRemoval(
+        delta=delta,
+        deleted_at=deleted_at,
+        already_deleted=already_deleted,
+        changed=changed,
+    )
 
 
 def _archive_cascade(

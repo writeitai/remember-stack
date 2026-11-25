@@ -40,16 +40,6 @@ from fastapi.testclient import TestClient
 _DEPLOYMENT = UUID("d1430000-0000-0000-0000-0000000def01")
 
 
-class _OpenBoundary:
-    """Readiness and admission that let every request through."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[()]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
 class _UnconfiguredLayers:
     """What ``ProcessingLayerCatalog.states`` reports with no configuration row."""
 
@@ -107,7 +97,6 @@ def _http(
     from rememberstack.model import DeploymentBuildInfo
     from rememberstack.surfaces.http_api import build_api
 
-    boundary = _OpenBoundary()
     build_info = MagicMock()
     build_info.build_info.return_value = DeploymentBuildInfo(
         build_revision="d143-defaults", model_bindings={"embedding": "fixture"}
@@ -118,8 +107,6 @@ def _http(
     app = build_api(
         engine=MagicMock(),
         deployment_id=_DEPLOYMENT,
-        admission=boundary,
-        readiness=boundary,
         build_info=build_info,
         **ports,
         **extra,

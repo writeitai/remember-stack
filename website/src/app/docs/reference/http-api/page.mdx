@@ -33,7 +33,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.2/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.3/openapi.json).
 
 ## Base URL
 
@@ -227,7 +227,7 @@ A failed request returns a non-2xx status and a JSON body with a single
 | Form | Example | Where |
 |---|---|---|
 | Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph<Cloud>, spend</Cloud>. |
-| Object with `code` | `{"detail": {"code": "forget_in_progress"}}` | `503` while a hard forget runs. |
+| Object with `code` | `{"detail": {"code": "document_forgotten", "forget_id": "…", "forgotten_at": "…"}}` | `409` when an ingest names forgotten content. |
 | Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
 | List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |
 
@@ -253,7 +253,6 @@ do about it.
 | `422` | validation list | A parameter or body is missing, has the wrong type, or is out of bounds. |
 | `429` | `{"code": "rate_limited", …}` / `{"code": "concurrency_limited", …}` | An [admission limit](#admission-limits) was reached. Wait the `Retry-After` seconds, then retry. |
 | `500` | `Internal Server Error` | An unhandled failure: a defect. Report it. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Every route except the credential check is closed until it finishes. Retry later. |
 
 <Cloud>
 

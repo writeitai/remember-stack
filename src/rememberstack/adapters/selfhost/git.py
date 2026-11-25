@@ -1,4 +1,4 @@
-"""Plain local-Git remote plus D74 affected-path history erasure."""
+"""Plain local-Git remote plus forget affected-path history erasure."""
 
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -11,11 +11,7 @@ from rememberstack.model import KRevision
 
 
 class KPathCatalog(Protocol):
-    """Resolve synced owner blockers and manifest-nominated Git paths."""
-
-    def blocking_k_paths(self, *, deployment_id: UUID, doc_id: UUID) -> tuple[str, ...]:
-        """Return owner-controlled paths with standing lineage citations."""
-        ...
+    """Resolve the Git paths of the K artifacts a forget nominates."""
 
     def k_paths_for_artifacts(
         self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
@@ -128,14 +124,6 @@ class LocalGitRepository:
             root=_output(arguments=("git", "-C", str(worktree), "rev-parse", "HEAD"))
         )
 
-    def blocking_redaction_paths(
-        self, *, deployment_id: UUID, doc_id: UUID
-    ) -> tuple[str, ...]:
-        """Delegate to current synced K ownership/citation state."""
-        return self._path_catalog.blocking_k_paths(
-            deployment_id=deployment_id, doc_id=doc_id
-        )
-
     def purge_artifacts(
         self, *, deployment_id: UUID, forget_id: UUID, artifact_ids: tuple[UUID, ...]
     ) -> None:
@@ -227,7 +215,7 @@ class LocalGitRepository:
                     "commit",
                     "--quiet",
                     "-m",
-                    f"hard-forget {forget_id}",
+                    f"forget {forget_id}",
                 )
             )
         head = _output(

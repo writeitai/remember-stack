@@ -1,44 +1,53 @@
-"""Straight-line D74 request admission and portable-manifest acceptance."""
+"""D159 forget: hide at once, then sweep until clean.
 
-from datetime import datetime
+``ForgetService.request`` hides the document in one transaction under the
+lineage row lock: the lineage cascade, the tombstone, the record and the first
+sweep's work row. ``ForgetHandler`` runs one sweep per work row (PostgreSQL,
+objects, corpus, K) and schedules the next one after a quiet period, until a
+sweep after the quiet period finds nothing left. ``ForgetService.reapply`` re-runs the
+sweeps of every record after an operator restores a store from a backup.
+"""
+
+from dataclasses import dataclass
+import logging
 from typing import Protocol
 from uuid import UUID
+from uuid import uuid4
+
+from sqlalchemy.engine import Engine
 
 from rememberstack.model import ClaimedWork
-from rememberstack.model import ForgetInProgressError
-from rememberstack.model import ForgetManifest
-from rememberstack.model import ForgetManifestStatus
-from rememberstack.model import ForgetRedactionRequiredError
+from rememberstack.model import DocumentNotFoundError
+from rememberstack.model import EnqueueWork
+from rememberstack.model import Forget
+from rememberstack.model import ForgetStatus
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
-from rememberstack.ports import ForgetManifestPort
 from rememberstack.ports import KGitPurgePort
 from rememberstack.ports import ObjectPurgePort
 from rememberstack.ports import ProjectionPurgePort
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
-from rememberstack.spine import ForgetCatalog
+from rememberstack.spine.forget import ForgetCatalog
+from rememberstack.spine.forget import locator_hash
+from rememberstack.spine.forget import retry_delay
+from rememberstack.spine.forget import sweep_work
+from rememberstack.spine.forget import utc_now
+from rememberstack.spine.work_ledger import enqueue_on
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.knowledge_driver import KnowledgeCommitDriver
-from rememberstack.workers.reconcile import DeletionService
+from rememberstack.workers.reconcile import remove_lineage_on
 
+_logger = logging.getLogger(__name__)
 
-def conversion_checkpoint_prefixes(
-    *, doc_id: UUID, content_hashes: tuple[str, ...]
-) -> tuple[ObjectKey, ...]:
-    """Private dual-lane conversion checkpoints under each source identity.
-
-    These objects are not search authority. Hard-forget must purge the prefix
-    so successful OCR/description output cannot outlive the forgotten source.
-    """
-    return tuple(
-        ObjectKey(f"{doc_id}/{content_hash}/conversion-checkpoints")
-        for content_hash in content_hashes
-    )
+DEFAULT_QUIET_PERIOD_S = 900.0
+"""Starting value (15 minutes, to be measured): longer than a D145 work lease
+plus the bounded object request time, so a worker that lost its lease at the
+hide has stopped writing before the sweep that may complete the forget."""
 
 
 class ForgetKnowledgeRebuilder(Protocol):
-    """Recompile affected machine-owned K pages after source removal."""
+    """Recompile compiled K pages after their citations to a document went."""
 
     def recompile_without_lineage(
         self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
@@ -57,252 +66,316 @@ class KnowledgeCycleForgetRebuilder:
     def recompile_without_lineage(
         self, *, deployment_id: UUID, artifact_ids: tuple[UUID, ...]
     ) -> None:
-        """Run one K commit only when the manifest names affected artifacts."""
+        """Run one K commit only when the sweep names affected artifacts."""
         if artifact_ids:
             self._driver.run_cycle(
                 deployment_id=deployment_id, exclusions_by_artifact={}
             )
 
 
-class HardForgetService:
-    """Prepare, freeze, durably append, and enqueue one lineage forget."""
+class ForgetService:
+    """The hide: one transaction under the lineage row lock (D159 §3.2)."""
 
-    def __init__(
-        self,
-        *,
-        catalog: ForgetCatalog,
-        manifest_store: ForgetManifestPort,
-        k_git: KGitPurgePort,
-    ) -> None:
-        """Bind the local materialization and the two portable boundaries."""
+    def __init__(self, *, engine: Engine, catalog: ForgetCatalog) -> None:
+        """Bind the spine database and the record catalog."""
+        self._engine = engine
         self._catalog = catalog
-        self._manifest_store = manifest_store
-        self._k_git = k_git
 
     def request(
-        self,
-        *,
-        deployment_id: UUID,
-        doc_id: UUID,
-        forget_id: UUID,
-        requested_at: datetime,
-    ) -> ForgetManifest:
-        """Accept one request only after its exact manifest is durably appended."""
-        existing = self._catalog.record_for_doc(
-            deployment_id=deployment_id, doc_id=doc_id
-        )
-        if existing is None:
-            self._require_redacted(deployment_id=deployment_id, doc_id=doc_id)
-        progress = self._catalog.prepare(
-            deployment_id=deployment_id, doc_id=doc_id, forget_id=forget_id
-        )
-        if progress.status in (
-            ForgetManifestStatus.ACCEPTED,
-            ForgetManifestStatus.COMPLETE,
-        ):
-            if progress.manifest is None:
-                raise RuntimeError(
-                    f"accepted forget_id {forget_id} has no local manifest"
-                )
-            self._manifest_store.append(manifest=progress.manifest)
-            return progress.manifest
-        manifest = progress.manifest
-        if manifest is None:
-            if not self._catalog.ordinary_work_is_drained(deployment_id=deployment_id):
-                raise ForgetInProgressError(
-                    f"forget_id {forget_id} is waiting for ordinary work to drain"
-                )
-            try:
-                self._require_redacted(deployment_id=deployment_id, doc_id=doc_id)
-            except ForgetRedactionRequiredError:
-                self._catalog.cancel_unstored_preparation(
-                    deployment_id=deployment_id, forget_id=forget_id
-                )
-                raise
-            manifest = self._catalog.inventory_and_store_manifest(
+        self, *, deployment_id: UUID, doc_id: UUID, forget_id: UUID | None = None
+    ) -> tuple[Forget, bool]:
+        """Hide a document and start its sweeps; a repeat returns the same record.
+
+        Returns the record and whether this call created it. An unknown
+        document is ``DocumentNotFoundError``. From the commit the document,
+        its versions, passages and testimony are gone from every engine read,
+        and its work can no longer be claimed or renew a lease.
+        """
+        with self._engine.begin() as connection:
+            existing = self._catalog.record_for_doc_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
+            )
+            if existing is not None:
+                return existing, False
+            removal = remove_lineage_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
+            )
+            if removal is None:
+                raise DocumentNotFoundError(str(doc_id))
+            forget, created = self._catalog.insert_on(
+                connection=connection,
                 deployment_id=deployment_id,
                 doc_id=doc_id,
-                forget_id=forget_id,
-                requested_at=requested_at,
+                forget_id=forget_id or uuid4(),
             )
-        self._manifest_store.append(manifest=manifest)
-        self._catalog.accept_and_enqueue(manifest=manifest)
-        return manifest
-
-    def _require_redacted(self, *, deployment_id: UUID, doc_id: UUID) -> None:
-        """Refuse owner-controlled K citations without rewriting their prose."""
-        paths = tuple(
-            sorted(
-                set(
-                    self._k_git.blocking_redaction_paths(
-                        deployment_id=deployment_id, doc_id=doc_id
-                    )
+            if created:
+                enqueue_on(
+                    connection=connection,
+                    work=sweep_work(
+                        deployment_id=deployment_id,
+                        forget_id=forget.forget_id,
+                        sweep=1,
+                        failures=0,
+                        not_before=None,
+                        first=True,
+                    ),
                 )
+            return forget, created
+
+    def rehide(self, *, forget: Forget) -> None:
+        """Hide again (finish the cascade) when a restored database holds the lineage."""
+        with self._engine.begin() as connection:
+            remove_lineage_on(
+                connection=connection,
+                deployment_id=forget.deployment_id,
+                doc_id=forget.doc_id,
             )
-        )
-        if paths:
-            raise ForgetRedactionRequiredError(paths=paths)
+
+    def reapply(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        """``remember ops forget-reapply``: re-run every record's sweeps (§3.8).
+
+        For each record: hide the document again if a restored database holds
+        it, mark the record ``erasing`` and enqueue a new series of sweeps.
+        Ordinary workers run them; nothing waits for them.
+        """
+        reapplied: list[UUID] = []
+        for forget in self._catalog.records(deployment_id=deployment_id):
+            with self._engine.begin() as connection:
+                remove_lineage_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    doc_id=forget.doc_id,
+                )
+                series = self._catalog.rearm_on(connection=connection, forget=forget)
+                enqueue_on(
+                    connection=connection,
+                    work=sweep_work(
+                        deployment_id=deployment_id,
+                        forget_id=forget.forget_id,
+                        sweep=1,
+                        failures=0,
+                        not_before=None,
+                        first=True,
+                        reapply=True,
+                        series=series,
+                    ),
+                )
+            reapplied.append(forget.forget_id)
+        return tuple(reapplied)
 
 
-class HardForgetHandler:
-    """Run one accepted manifest through the single resumable purge sequence."""
+@dataclass(frozen=True)
+class _SweepPayload:
+    forget_id: UUID
+    sweep: int
+    failures: int
+    first: bool
+    reapply: bool
+    series: str
+
+
+class ForgetHandler:
+    """Run one sweep; schedule the next until a sweep finds nothing (D159 §3.4).
+
+    The work item has no practical attempt cap: a failed sweep records a
+    content-free error code on the record and schedules the next sweep with
+    backoff, and a sweep whose worker died is retried when its lease expires.
+    The document stays hidden throughout.
+    """
 
     def __init__(
         self,
         *,
+        service: ForgetService,
         catalog: ForgetCatalog,
-        deletion: DeletionService,
         profile_refresher: ProfileRefresherPort,
         object_purgers: tuple[ObjectPurgePort, ...],
         projection_purger: ProjectionPurgePort,
         knowledge_rebuilder: ForgetKnowledgeRebuilder,
         k_git: KGitPurgePort,
+        quiet_period_s: float = DEFAULT_QUIET_PERIOD_S,
     ) -> None:
-        """Bind existing lifecycle/rebuild services and narrow purge capabilities."""
+        """Bind the record catalog and the selected stores' erasure capabilities."""
         if not object_purgers:
-            raise ValueError("hard-forget requires at least one object-store purger")
+            raise ValueError("forget requires at least one object-store purger")
+        if quiet_period_s < 0:
+            raise ValueError("the forget quiet period cannot be negative")
+        self._service = service
         self._catalog = catalog
-        self._deletion = deletion
         self._profile_refresher = profile_refresher
         self._object_purgers = object_purgers
         self._projection_purger = projection_purger
         self._knowledge_rebuilder = knowledge_rebuilder
         self._k_git = k_git
+        self._quiet_period_s = quiet_period_s
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
-        """Honor every idempotent stage in order and reopen only after verification."""
-        forget_id = _forget_id(work=work)
-        manifest = self._catalog.manifest_for(
-            deployment_id=work.deployment_id, forget_id=forget_id
+        """Sweep once and return the next sweep as a follow-up, unless clean."""
+        payload = _payload(work=work)
+        forget = self._catalog.record(
+            deployment_id=work.deployment_id, forget_id=payload.forget_id
         )
-        self.honor(manifest=manifest, meter=meter)
-        return HandlerOutcome()
-
-    def honor(
-        self, *, manifest: ForgetManifest, meter: CostMeterPort | None = None
-    ) -> None:
-        """Run the shared purge path used by both the worker and readiness replay."""
-        # A duplicate queued coordinator may arrive after a completed replay.
-        # Re-arm admission for it too, before any erasure or cache acknowledgement.
-        self._catalog.materialize_portable(manifest=manifest)
-        if not self._catalog.ordinary_work_is_drained(
-            deployment_id=manifest.deployment_id
-        ):
-            raise ForgetInProgressError(
-                "hard forget is waiting for ordinary work to drain"
+        if payload.series != self._catalog.current_series(forget=forget):
+            # A forget-reapply started a newer series; this one stops here.
+            return HandlerOutcome()
+        try:
+            status = self._sweep_and_settle(forget=forget, payload=payload, meter=meter)
+        except Exception as error:  # noqa: BLE001 — retried with backoff, never capped
+            _logger.exception(
+                "forget.sweep_failed forget_id=%s sweep=%s",
+                forget.forget_id,
+                payload.sweep,
+                extra={"error_code": "forget_sweep_failed"},
             )
-        self._projection_purger.quiesce_projections(
-            deployment_id=manifest.deployment_id, forget_id=manifest.forget_id
-        )
-        self._deletion.delete_lineage(
-            deployment_id=manifest.deployment_id,
-            doc_id=manifest.doc_id,
-            meter=meter,
-            refresh_profiles=False,
-        )
-        self._catalog.scrub_postgres(manifest=manifest)
-        for entity_ids in self._catalog.profile_repair_batches(manifest=manifest):
-            self._profile_refresher.refresh_many(
-                deployment_id=manifest.deployment_id,
-                entity_ids=entity_ids,
-                meter=meter,
-                call_key=f"profile:hard_forget:{manifest.forget_id}",
-            )
-        checkpoint_prefixes = conversion_checkpoint_prefixes(
-            doc_id=manifest.doc_id, content_hashes=manifest.content_hashes
-        )
-        for purger in self._object_purgers:
-            purger.purge_objects(
-                keys=manifest.object_keys, prefixes=checkpoint_prefixes
-            )
-        self._projection_purger.purge_projections(
-            deployment_id=manifest.deployment_id,
-            doc_id=manifest.doc_id,
-            forget_id=manifest.forget_id,
-        )
-        self._knowledge_rebuilder.recompile_without_lineage(
-            deployment_id=manifest.deployment_id, artifact_ids=manifest.k_artifact_ids
-        )
-        self._k_git.purge_artifacts(
-            deployment_id=manifest.deployment_id,
-            forget_id=manifest.forget_id,
-            artifact_ids=manifest.k_artifact_ids,
-        )
-        for purger in self._object_purgers:
-            purger.verify_objects_purged(
-                keys=manifest.object_keys, prefixes=checkpoint_prefixes
-            )
-        self._projection_purger.verify_projections_purged(
-            deployment_id=manifest.deployment_id,
-            doc_id=manifest.doc_id,
-            forget_id=manifest.forget_id,
-        )
-        self._k_git.verify_artifacts_purged(
-            deployment_id=manifest.deployment_id,
-            forget_id=manifest.forget_id,
-            artifact_ids=manifest.k_artifact_ids,
-        )
-        self._catalog.verify_postgres_scrubbed(manifest=manifest)
-        self._catalog.mark_complete(manifest=manifest)
-
-
-class HardForgetReadiness:
-    """Re-honor portable intent before one deployment accepts serving traffic."""
-
-    def __init__(
-        self,
-        *,
-        catalog: ForgetCatalog,
-        manifest_store: ForgetManifestPort,
-        request_service: HardForgetService,
-        handler: HardForgetHandler,
-    ) -> None:
-        """Bind one source of intent to the same request and purge implementations."""
-        self._catalog = catalog
-        self._manifest_store = manifest_store
-        self._request_service = request_service
-        self._handler = handler
-
-    def ensure_ready(
-        self, *, deployment_id: UUID, meter: CostMeterPort | None = None
-    ) -> tuple[UUID, ...]:
-        """Recover preparation, rematerialize, and re-honor every portable manifest."""
-        pending = self._catalog.preparing_record(deployment_id=deployment_id)
-        if pending is not None:
-            self._request_service.request(
-                deployment_id=pending.deployment_id,
-                doc_id=pending.doc_id,
-                forget_id=pending.forget_id,
-                requested_at=(
-                    pending.manifest.requested_at
-                    if pending.manifest is not None
-                    else pending.prepared_at
-                ),
-            )
-        manifests = self._manifest_store.manifests(deployment_id=deployment_id)
-        for manifest in manifests:
-            self._catalog.materialize_portable(manifest=manifest)
-        # Arm every barrier before replaying any store, including manifests
-        # whose local progress says complete. Any failed replay stays closed.
-        for manifest in manifests:
-            if not self._catalog.ordinary_work_is_drained(deployment_id=deployment_id):
-                raise ForgetInProgressError(
-                    "restore replay is waiting for ordinary work to drain"
+            self._catalog.record_error(forget=forget, code=type(error).__name__)
+            return HandlerOutcome(
+                follow_up=(
+                    self._retry(deployment_id=work.deployment_id, payload=payload),
                 )
-            self._handler.honor(manifest=manifest, meter=meter)
-        return tuple(manifest.forget_id for manifest in manifests)
-
-
-def _forget_id(*, work: ClaimedWork) -> UUID:
-    """Read the required portable identity from one accepted worker payload."""
-    value = (work.payload or {}).get("forget_id")
-    if not isinstance(value, str):
-        raise NonRetryableHandlerError(
-            f"hard-forget work {work.processing_id} carries no forget_id"
+            )
+        if status is ForgetStatus.COMPLETE:
+            return HandlerOutcome()
+        # Residue found (or the first sweep, or the authored-page wait):
+        # look again after a quiet period.
+        return HandlerOutcome(
+            follow_up=(self._next(deployment_id=work.deployment_id, payload=payload),)
         )
+
+    def _sweep_and_settle(
+        self, *, forget: Forget, payload: _SweepPayload, meter: CostMeterPort
+    ) -> ForgetStatus:
+        """Sweep; when nothing was left after a quiet period, settle the record."""
+        if self.sweep(forget=forget, payload=payload, meter=meter) or payload.first:
+            return ForgetStatus.ERASING
+        blocking = self._catalog.still_blocking(forget=forget)
+        if not blocking:
+            authored = self._catalog.authored_artifact_ids(forget=forget)
+            if authored:
+                # The owner's edit removed the citation: erase the path's history.
+                self._k_git.purge_artifacts(
+                    deployment_id=forget.deployment_id,
+                    forget_id=forget.forget_id,
+                    artifact_ids=authored,
+                )
+        return self._catalog.finish(
+            forget=forget, blocking_k_paths=blocking, series=payload.series
+        )
+
+    def sweep(
+        self, *, forget: Forget, payload: _SweepPayload, meter: CostMeterPort | None
+    ) -> bool:
+        """One sweep (D159 §3.3); whether it removed any forgotten residue."""
+        # A restored database, or an upgraded D74 forget, still holds the
+        # lineage: hide it again (finish its cascade) before sweeping.
+        self._service.rehide(forget=forget)
+        findings = self._catalog.sweep_postgres(forget=forget)
+        found = findings.removed
+        if findings.profile_entity_ids:
+            try:
+                self._profile_refresher.refresh_many(
+                    deployment_id=forget.deployment_id,
+                    entity_ids=findings.profile_entity_ids,
+                    meter=meter,
+                    call_key=f"profile:forget:{forget.forget_id}:{payload.sweep}",
+                )
+            except Exception:  # noqa: BLE001 — cleared profiles stay cleared
+                _logger.exception(
+                    "forget.profile_refresh_failed forget_id=%s",
+                    forget.forget_id,
+                    extra={"error_code": "forget_profile_refresh_failed"},
+                )
+        # Everything under the document's prefix and every collected original
+        # key, except an original another lineage still uses: it keeps the
+        # key it was first stored under, which can be under this prefix.
+        live = tuple(
+            ObjectKey(key)
+            for key in sorted(self._catalog.live_originals(forget=forget))
+        )
+        keys = tuple(key for key in findings.object_keys if not key.root.endswith("/"))
+        foreign = tuple(key for key in findings.object_keys if key.root.endswith("/"))
+        # Another lineage's <owner>/<hash>/ prefix is purged only while no
+        # surviving version (an archived one included) uses that content.
+        in_use = self._catalog.hashes_in_use(
+            forget=forget,
+            hashes=tuple(
+                value
+                for key in foreign
+                if (value := locator_hash(locator=key.root)) is not None
+            ),
+        )
+        prefixes = (
+            ObjectKey(f"{forget.doc_id}/"),
+            *(key for key in foreign if locator_hash(locator=key.root) not in in_use),
+        )
+        for purger in self._object_purgers:
+            removed = purger.purge_objects(keys=keys, prefixes=prefixes, keep=live)
+            found |= removed > 0
+        if findings.fixture_keys:
+            # Deployment-wide K plan transcripts: purged, never counted.
+            for purger in self._object_purgers:
+                purger.purge_objects(keys=findings.fixture_keys, prefixes=())
+        found |= self._projection_purger.erase_document(
+            deployment_id=forget.deployment_id, doc_id=forget.doc_id
+        )
+        compiled = findings.compiled_artifact_ids
+        if payload.reapply and payload.first:
+            # A restored K repository may hold history the record names; its
+            # restored bodies are rebuilt, never kept as owner edits.
+            compiled = self._catalog.collected_artifact_ids(forget=forget)
+            self._catalog.mark_stale(forget=forget, artifact_ids=compiled)
+        if compiled:
+            self._knowledge_rebuilder.recompile_without_lineage(
+                deployment_id=forget.deployment_id, artifact_ids=compiled
+            )
+            self._k_git.purge_artifacts(
+                deployment_id=forget.deployment_id,
+                forget_id=forget.forget_id,
+                artifact_ids=compiled,
+            )
+            self._catalog.clear_k_pending(forget=forget, artifact_ids=compiled)
+            found = True
+        return found
+
+    def _next(self, *, deployment_id: UUID, payload: _SweepPayload) -> EnqueueWork:
+        return sweep_work(
+            deployment_id=deployment_id,
+            forget_id=payload.forget_id,
+            sweep=payload.sweep + 1,
+            failures=0,
+            not_before=utc_now()
+            + retry_delay(quiet_period_s=self._quiet_period_s, failures=0),
+            reapply=payload.reapply,
+            series=payload.series,
+        )
+
+    def _retry(self, *, deployment_id: UUID, payload: _SweepPayload) -> EnqueueWork:
+        failures = payload.failures + 1
+        return sweep_work(
+            deployment_id=deployment_id,
+            forget_id=payload.forget_id,
+            sweep=payload.sweep + 1,
+            failures=failures,
+            not_before=utc_now()
+            + retry_delay(quiet_period_s=self._quiet_period_s, failures=failures),
+            first=payload.first,
+            reapply=payload.reapply,
+            series=payload.series,
+        )
+
+
+def _payload(*, work: ClaimedWork) -> _SweepPayload:
+    """Read the sweep's identity from its work row."""
+    payload = work.payload or {}
     try:
-        return UUID(value)
-    except ValueError as error:
+        return _SweepPayload(
+            forget_id=UUID(str(payload["forget_id"])),
+            sweep=int(str(payload["sweep"])),
+            failures=int(str(payload.get("failures", 0))),
+            first=bool(payload.get("first", False)),
+            reapply=bool(payload.get("reapply", False)),
+            series=str(payload.get("series", "")),
+        )
+    except (KeyError, ValueError) as error:
         raise NonRetryableHandlerError(
-            f"hard-forget work {work.processing_id} has invalid forget_id"
+            f"forget work {work.processing_id} has an invalid payload"
         ) from error

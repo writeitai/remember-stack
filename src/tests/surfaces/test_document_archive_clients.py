@@ -35,7 +35,6 @@ from remember.mcp_tools import tool
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
-from rememberstack.model import ForgetInProgressError
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.mcp import OperationMcpServer
@@ -44,17 +43,6 @@ _DEPLOYMENT_ID = UUID("57000000-0000-0000-0000-000000000001")
 _DOC = UUID("57000000-0000-0000-0000-000000000002")
 _GONE = UUID("57000000-0000-0000-0000-00000000dead")
 _AT = datetime(2026, 9, 23, 12, 0, tzinfo=UTC)
-
-
-class _Boundary:
-    """Open admission and readiness for the one deployment under test."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        assert deployment_id == _DEPLOYMENT_ID
 
 
 class _Archive:
@@ -134,12 +122,9 @@ def surface() -> tuple[MemoryClient, _Archive, _Inventory]:
     """The real HTTP app with only the document routes composed."""
     archive = _Archive()
     inventory = _Inventory()
-    boundary = _Boundary()
     app = build_api(
         engine=cast("QueryEngine", object()),
         deployment_id=_DEPLOYMENT_ID,
-        admission=boundary,
-        readiness=boundary,
         documents=inventory,
         archive=archive,
     )
@@ -364,49 +349,3 @@ def test_local_mcp_offers_archive_only_when_composed() -> None:
     assert _payload(undone)["facts_reopened"] == 3
     gone = server.call_tool(name="archive_document", arguments={"doc_id": str(_GONE)})
     assert _payload(gone)["code"] == "document_not_found"
-
-
-class _Forgetting:
-    """An archive port whose deployment is under a hard forget."""
-
-    def archive_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentArchive:
-        raise ForgetInProgressError("forget preparing")
-
-    def unarchive_document(
-        self, *, deployment_id: UUID, doc_id: UUID
-    ) -> DocumentUnarchive:
-        raise ForgetInProgressError("forget preparing")
-
-
-def test_local_mcp_reports_a_forget_as_retryable() -> None:
-    """The in-process server answers like the route, not internal_error."""
-    server = OperationMcpServer(
-        surface=_StubSurface(),  # type: ignore[arg-type]
-        archive=_Forgetting(),
-    )
-    for name in ARCHIVE_TOOL_NAMES:
-        error = _payload(server.call_tool(name=name, arguments={"doc_id": str(_DOC)}))
-        assert error["code"] == "forget_in_progress"
-        assert error["retryable"] is True
-        assert error["status_code"] == 503
-
-
-def test_remember_mcp_reports_a_forget_as_retryable() -> None:
-    """The route's 503 forget_in_progress maps to the same tool error."""
-
-    def respond(request: httpx.Request) -> httpx.Response:
-        assert request.method == "POST"
-        return httpx.Response(503, json={"detail": {"code": "forget_in_progress"}})
-
-    client = MemoryClient(
-        client=httpx.Client(
-            base_url="http://memory.test", transport=httpx.MockTransport(respond)
-        )
-    )
-    error = _payload(
-        _remote(client=client).call_tool(
-            name="archive_document", arguments={"doc_id": str(_DOC)}
-        )
-    )
-    assert error["code"] == "forget_in_progress"
-    assert error["retryable"] is True

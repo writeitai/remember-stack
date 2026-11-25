@@ -92,16 +92,6 @@ _SOURCE = (
 )
 
 
-class _OpenBoundary:
-    """Keep the retrieval fixture open across readiness and admission checks."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        pass
-
-
 _PAYLOADS: dict[str, dict[str, object]] = {
     # ContextPrefix retired by D80; keep key only if an older fixture still names it.
     "ContextPrefix": {"prefix": "unused-d80-retired"},
@@ -393,8 +383,6 @@ class _ApiRig:
                     embedding_model=P1Settings().embedding_model,
                 ),
                 deployment_id=_DEPLOYMENT_ID,
-                admission=_OpenBoundary(),
-                readiness=_OpenBoundary(),
                 ingest=self.ingestor,
             )
         )

@@ -27,7 +27,6 @@ from sqlalchemy.sql.elements import TextClause
 from rememberstack.model import CurrencyTransition
 from rememberstack.model import ReconciliationDelta
 from rememberstack.spine.document_bindings import live_binding_rows
-from rememberstack.spine.fact_applications import application_fence
 
 CURRENCY_CACHE_MISMATCH_SQL = """
     SELECT cl.claim_id,
@@ -421,10 +420,7 @@ class LifecycleCatalog:
                 for transition in transitions
             }.items()
         ]
-        with (
-            self._engine.begin() as connection,
-            application_fence(connection=connection, deployment_id=deployment_id),
-        ):
+        with self._engine.begin() as connection:
             connection.execute(
                 text(
                     "SELECT claim_id FROM claims WHERE deployment_id=:deployment_id AND claim_id=ANY(:ids) ORDER BY claim_id FOR UPDATE"

@@ -276,26 +276,13 @@ def test_engine_mcp_offers_no_path_and_refuses_it() -> None:
     ingest.ingest.assert_not_called()
 
 
-class _OpenBoundary:
-    """Readiness and admission that let every request through."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[()]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
 def _deployment_tools(**composed: object) -> dict[str, int]:
     """Build an API with the given optional ports and read `GET /deployment`."""
-    boundary = _OpenBoundary()
     build_info = MagicMock()
     build_info.build_info.return_value = DeploymentBuildInfo(build_revision="abc")
     app = build_api(
         engine=MagicMock(),
         deployment_id=_DEPLOYMENT,
-        admission=boundary,
-        readiness=boundary,
         build_info=build_info,
         **composed,  # type: ignore[arg-type]
     )

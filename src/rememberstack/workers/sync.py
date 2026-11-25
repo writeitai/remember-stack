@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
+import logging
 from typing import Final
 from uuid import UUID
 
@@ -20,7 +21,9 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.model import DocumentForgottenError
 from rememberstack.model import DocumentUpload
+from rememberstack.model import IngestedVersion
 from rememberstack.model import ProcessingLane
 from rememberstack.model import SourceItem
 from rememberstack.model import SyncCycleSummary
@@ -28,6 +31,8 @@ from rememberstack.ports.connector import WatchedSourcePort
 from rememberstack.spine.sync import SyncCatalog
 from rememberstack.workers.e0 import UploadIngestor
 from rememberstack.workers.reconcile import DocumentArchiver
+
+_logger = logging.getLogger(__name__)
 
 DEFAULT_VERSIONING_MODE_BY_KIND: Final = {
     # spike 6's starting heuristic: edit-in-place leans living;
@@ -157,7 +162,45 @@ class SyncCycleRunner:
         if now - item.modified_at < quiet:
             return ("debounced", None)  # actively edited: coalesce to a later cycle
         content = source.fetch(source_ref=item.source_ref)
-        result = self._ingestor.ingest_observed(
+        try:
+            result = self._ingest_observed(
+                deployment_id=deployment_id,
+                source_kind=source_kind,
+                cycle_id=cycle_id,
+                item=item,
+                content=content,
+                versioning_mode=versioning_mode,
+            )
+        except DocumentForgottenError as error:
+            # D159 §3.6: a forgotten file the source still has is skipped,
+            # never re-added; only a deliberate request can bring it back.
+            _logger.info(
+                "sync.item_forgotten source_kind=%s forget_id=%s",
+                source_kind,
+                error.forget_id,
+            )
+            return ("forgotten", None)
+        if result.created:
+            return ("ingested", result.version_id)
+        # The same bytes again: a file the source had deleted is back, which
+        # undoes its source archive (never a caller's archive, D159 §2.3).
+        self._archiver.unarchive_document(
+            deployment_id=deployment_id, doc_id=result.doc_id, only_source=True
+        )
+        return ("unchanged", None)  # content-hash no-op (revision churn, same bytes)
+
+    def _ingest_observed(
+        self,
+        *,
+        deployment_id: UUID,
+        source_kind: str,
+        cycle_id: UUID,
+        item: SourceItem,
+        content: bytes,
+        versioning_mode: str,
+    ) -> IngestedVersion:
+        """Ingest one fetched item as an observed version of its lineage."""
+        return self._ingestor.ingest_observed(
             deployment_id=deployment_id,
             source_kind=source_kind,
             source_ref=item.source_ref,
@@ -173,11 +216,3 @@ class SyncCycleRunner:
             sync_cycle_id=cycle_id,
             lane=self._settings.lane,
         )
-        if result.created:
-            return ("ingested", result.version_id)
-        # The same bytes again: a file the source had deleted is back, which
-        # undoes its source archive (never a caller's archive, D159 §2.3).
-        self._archiver.unarchive_document(
-            deployment_id=deployment_id, doc_id=result.doc_id, only_source=True
-        )
-        return ("unchanged", None)  # content-hash no-op (revision churn, same bytes)

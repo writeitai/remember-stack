@@ -15,6 +15,7 @@ from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
 from typing import cast
+from typing import Final
 from typing import Literal
 from typing import Self
 from typing import TYPE_CHECKING
@@ -40,7 +41,6 @@ from rememberstack.model import DeadLetterReplayResult
 from rememberstack.model import EnqueueOutcome
 from rememberstack.model import EnqueueWork
 from rememberstack.model import ExpiredLease
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import LaneRouteError
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
@@ -49,7 +49,6 @@ from rememberstack.model import RecordCall
 from rememberstack.model import WorkNotDeadLetterError
 from rememberstack.model import WorkNotFoundError
 from rememberstack.model import WorkNotRunningError
-from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.catalog_contract import lane_is_valid
 from rememberstack.spine.fact_adjudication import active_adjudicator_versions
 from rememberstack.spine.fact_adjudication import active_flush_version
@@ -154,15 +153,6 @@ class WorkLedger:
 
         _require_valid_lane(stage=stage, lane=lane)
         with self._engine.begin() as connection:
-            if stage is not PipelineStage.HARD_FORGET:
-                active_forget = active_forget_id_on(
-                    connection=connection, deployment_id=deployment_id
-                )
-                if active_forget is not None:
-                    raise ForgetInProgressError(
-                        f"deployment {deployment_id} is honoring forget_id"
-                        f" {active_forget}"
-                    )
             if stage is PipelineStage.REVIEW_FACT_WINDOWS and hold_window_reviews_on(
                 connection=connection, deployment_id=deployment_id
             ):
@@ -793,7 +783,7 @@ class WorkLedger:
             attempts, max_attempts = int(row["attempts"]), int(row["max_attempts"])
             if retryable and attempts < max_attempts:
                 backoff_s = min(
-                    self._settings.retry_backoff_base_s * 2 ** (attempts - 1),
+                    self._settings.retry_backoff_base_s * 2 ** min(attempts - 1, 30),
                     self._settings.retry_backoff_max_s,
                 )
                 scheduled = connection.execute(
@@ -983,13 +973,6 @@ class WorkLedger:
         again before doing any conversion, covering separately restarted workers.
         """
         with self._engine.begin() as connection:
-            active_forget = active_forget_id_on(
-                connection=connection, deployment_id=deployment_id
-            )
-            if active_forget is not None:
-                raise ForgetInProgressError(
-                    f"deployment {deployment_id} is honoring forget_id {active_forget}"
-                )
             released = tuple(
                 row["processing_id"]
                 for row in connection.execute(
@@ -1863,6 +1846,7 @@ def enqueue_on(*, connection: Connection, work: EnqueueWork) -> EnqueueOutcome:
                 "payload": work.payload,
                 "not_before": work.not_before,
                 "defer_reason": work.defer_reason,
+                "max_attempts": work.max_attempts,
             },
         )
         .mappings()
@@ -1988,11 +1972,13 @@ _INSERT_WORK = text(
     """
     INSERT INTO processing_state (
         processing_id, deployment_id, target_kind, target_id, stage,
-        component_version, content_hash, lane, payload, not_before, defer_reason
+        component_version, content_hash, lane, payload, not_before, defer_reason,
+        max_attempts
     ) VALUES (
         :processing_id, :deployment_id, :target_kind, :target_id, :stage,
         :component_version, :content_hash, :lane,
-        :payload, COALESCE(:not_before, now()), :defer_reason
+        :payload, COALESCE(:not_before, now()), :defer_reason,
+        COALESCE(CAST(:max_attempts AS smallint), 3)
     )
     ON CONFLICT (deployment_id, target_kind, target_id, stage, component_version)
     DO NOTHING
@@ -2107,8 +2093,42 @@ _RESUME_NO_ROUTE = text(
     """
 )
 
+FORGOTTEN_WORK: Final = """EXISTS (
+        SELECT 1 FROM forgets forgotten
+        WHERE forgotten.deployment_id = {work}.deployment_id
+          AND (
+            ({work}.target_kind = 'document' AND forgotten.doc_id = {work}.target_id)
+            OR ({work}.target_kind = 'document_version'
+                AND {work}.target_id = ANY(forgotten.version_ids))
+            OR ({work}.target_kind = 'document_section' AND forgotten.doc_id = (
+                SELECT s.doc_id FROM document_sections s
+                WHERE s.section_id = {work}.target_id))
+            OR ({work}.target_kind = 'chunk' AND forgotten.doc_id = (
+                SELECT c.doc_id FROM chunks c
+                WHERE c.deployment_id = {work}.deployment_id
+                  AND c.chunk_id = {work}.target_id LIMIT 1))
+            OR ({work}.target_kind = 'claim' AND forgotten.doc_id = (
+                SELECT c.doc_id FROM claims c WHERE c.claim_id = {work}.target_id))
+            OR ({work}.target_kind = 'fact_application' AND forgotten.doc_id = (
+                SELECT c.doc_id FROM fact_applications a
+                JOIN claims c ON c.claim_id = a.claim_id
+                WHERE a.deployment_id = {work}.deployment_id
+                  AND a.application_id = {work}.target_id))
+            OR {work}.payload ->> 'doc_id' = CAST(forgotten.doc_id AS text)
+            OR {work}.payload ->> 'version_id'
+               = ANY(CAST(forgotten.version_ids AS text[]))
+          )
+    )"""
+"""Whether a work row belongs to a forgotten document (D159 §3.2).
+
+A SQL predicate over the work row named ``{work}``. The hide's tombstone is
+what revokes the document's work: claiming and lease renewal refuse a row this
+matches, and the forget's sweep marks it ``skipped``."""
+
+
 # The claimable-now predicate shared by the claims and the due-route probe.
-_CLAIMABLE = """
+_CLAIMABLE = (
+    """
       status IN ('pending', 'failed')
       AND not_before <= now()
       AND attempts < max_attempts
@@ -2120,7 +2140,13 @@ _CLAIMABLE = """
       -- likewise parked on a fact, the approval, which releases it.
       AND (defer_reason IS NULL
            OR defer_reason::text NOT IN ('no_route', 'admission'))
+      -- D159: work of a forgotten (hidden) document is never claimed; the
+      -- forget's sweep marks it skipped.
+      AND NOT """
+    + FORGOTTEN_WORK.format(work="processing_state")
+    + """
 """
+)
 
 _CLAIM_DUE_ON_ROUTE = f"""
     deployment_id = :deployment_id
@@ -2232,7 +2258,8 @@ _RENEW_LEASE = text(
     SET lease_until = now() + make_interval(secs => :lease_s)
     WHERE processing_id = :processing_id AND status = 'running'
       AND attempts = :attempt
-    """
+      AND NOT """
+    + FORGOTTEN_WORK.format(work="processing_state")
 )
 
 _REAP_EXPIRED_LEASES = text(

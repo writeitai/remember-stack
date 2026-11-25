@@ -286,24 +286,6 @@ def handle_archive_tool(
                     agent_action="Do not retry. Check the doc_id with the user.",
                 )
             )
-        if getattr(error, "status_code", None) == 503 and "forget_in_progress" in str(
-            getattr(error, "detail", "")
-        ):
-            return error_result(
-                ToolError(
-                    code="forget_in_progress",
-                    detail=(
-                        "A hard forget is running on this deployment; nothing was"
-                        " changed."
-                    ),
-                    status_code=503,
-                    retryable=True,
-                    agent_action=(
-                        "Retry the same call later with back-off; the deployment"
-                        " accepts no changes until the forget finishes."
-                    ),
-                )
-            )
         mapped = map_error(error)
         if mapped.code in {"internal_error", "local_backend_error"}:
             logger.exception("MCP tool %s failed with %s", name, mapped.code)

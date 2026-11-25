@@ -122,6 +122,7 @@ class _MultipartUpload(TypedDict):
 class _ObjectVersion(TypedDict):
     Key: str
     VersionId: str
+    IsLatest: NotRequired[bool]
 
 
 class _ListVersionsOutput(TypedDict):
@@ -143,7 +144,9 @@ class _S3Client(Protocol):
         """Create one bucket."""
         ...
 
-    def get_object(self, *, Bucket: str, Key: str) -> _GetObjectOutput:
+    def get_object(
+        self, *, Bucket: str, Key: str, VersionId: str = ...
+    ) -> _GetObjectOutput:
         """Read one object."""
         ...
 
@@ -483,24 +486,41 @@ class MinIOObjectStore:
         keys: tuple[ObjectKey, ...],
         prefixes: tuple[ObjectKey, ...],
         before_write: Callable[[], None] | None = None,
-    ) -> ObjectPurgeEvidence:
-        """Delete exact keys/descendants and report unfinished-upload coverage."""
+        keep: tuple[ObjectKey, ...] = (),
+    ) -> int:
+        """Delete exact keys/descendants; return how many objects were removed.
+
+        The count covers current objects, retained versions and unfinished
+        uploads, so a caller can tell erasure from absence. Only existing
+        objects are deleted, so a versioned bucket gains no delete marker for
+        an absent key. ``keep`` names exact keys (with their versions) that
+        are never touched.
+        """
         # Validate all destructive inputs before touching the store.
-        exact = {_validated_key(key=key) for key in keys}
+        kept = {_validated_key(key=key) for key in keep}
+        exact = {_validated_key(key=key) for key in keys} - kept
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
-        for key in keys:
-            if before_write:
-                before_write()
-            self.delete(key=key)
+        removed = 0
+        for name in sorted(exact):
+            if self._exists(normalized=name):
+                if before_write:
+                    before_write()
+                self.delete(key=ObjectKey(name))
+                removed += 1
         for boundary in boundaries:
             for key in self.iter_keys(prefix=boundary):
+                if key.root in kept:
+                    continue
                 if before_write:
                     before_write()
                 self.delete(key=key)
+                removed += 1
         # Suspended versioning still retains source-bearing history. Never
         # confuse an empty current listing with erasure of those bytes.
         if self._has_versions():
             for name, version in self._iter_versions(prefix=""):
+                if name in kept:
+                    continue
                 if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
@@ -510,8 +530,11 @@ class MinIOObjectStore:
                     self._client.delete_object(
                         Bucket=self._bucket, Key=name, VersionId=version
                     )
+                    removed += 1
         try:
             for name, upload_id in self._iter_uploads(prefix=""):
+                if name in kept:
+                    continue
                 if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
@@ -519,9 +542,10 @@ class MinIOObjectStore:
                     if before_write:
                         before_write()
                     self._abort_upload(name=name, upload_id=upload_id)
+                    removed += 1
         except _UploadListingNotImplemented:
-            return ObjectPurgeEvidence(multipart_uploads="provider_managed")
-        return ObjectPurgeEvidence(multipart_uploads="checked")
+            pass  # logged by _iter_uploads; the provider's cleanup policy applies
+        return removed
 
     def verify_objects_purged(
         self, *, keys: tuple[ObjectKey, ...], prefixes: tuple[ObjectKey, ...]
@@ -559,6 +583,32 @@ class MinIOObjectStore:
             )
         return evidence
 
+    def purge_retained_versions_containing(
+        self, *, keys: tuple[ObjectKey, ...], needle: bytes
+    ) -> int:
+        """Delete non-current versions of exact keys whose bytes contain ``needle``."""
+        if not keys or not self._has_versions():
+            return 0
+        names = {_validated_key(key=key) for key in keys}
+        removed = 0
+        for name in sorted(names):
+            for item in self._iter_version_items(prefix=name):
+                if item["Key"] != name or item.get("IsLatest", False):
+                    continue
+                body = self._client.get_object(
+                    Bucket=self._bucket, Key=name, VersionId=item["VersionId"]
+                )["Body"]
+                try:
+                    found = needle in body.read()
+                finally:
+                    body.close()
+                if found:
+                    self._client.delete_object(
+                        Bucket=self._bucket, Key=name, VersionId=item["VersionId"]
+                    )
+                    removed += 1
+        return removed
+
     def iter_purge_keys(self) -> Iterator[ObjectKey]:
         """Include retained keys and uploads that no published object exposes."""
         yield from self.iter_keys(prefix="")
@@ -588,6 +638,13 @@ class MinIOObjectStore:
         return status in {"Enabled", "Suspended"}
 
     def _iter_versions(self, *, prefix: str) -> Iterator[tuple[str, str]]:
+        for item in self._iter_version_items(prefix=prefix, markers=True):
+            yield item["Key"], item["VersionId"]
+
+    def _iter_version_items(
+        self, *, prefix: str, markers: bool = False
+    ) -> Iterator[_ObjectVersion]:
+        """Every object version (and, with ``markers``, delete marker), all pages."""
         key_marker = version_marker = ""
         seen: set[tuple[str, str]] = set()
         while True:
@@ -597,8 +654,9 @@ class MinIOObjectStore:
                 KeyMarker=key_marker,
                 VersionIdMarker=version_marker,
             )
-            for item in (*page.get("Versions", ()), *page.get("DeleteMarkers", ())):
-                yield item["Key"], item["VersionId"]
+            yield from page.get("Versions", ())
+            if markers:
+                yield from page.get("DeleteMarkers", ())
             if not page.get("IsTruncated", False):
                 return
             key_marker = page.get("NextKeyMarker", "")

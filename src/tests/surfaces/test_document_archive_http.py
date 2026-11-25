@@ -3,8 +3,7 @@
 The cascades themselves are proven against real PostgreSQL in
 `tests/workers/test_lifecycle_reconciliation.py`. This pins the boundary: the
 deployment the routes act on, the 404 an absent document gets, that a read or
-ingest credential cannot archive, that D74 admission still closes them, and
-that the public delete is gone (D159).
+ingest credential cannot archive, and that the public delete is gone (D159).
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from rememberstack.model import AuthenticatedContext
 from rememberstack.model import DocumentArchive
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentUnarchive
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.surfaces.http_api import _spend_gated_route
@@ -32,25 +30,6 @@ _AT = datetime(2026, 9, 23, tzinfo=UTC)
 _VERBS = ("archive", "unarchive")
 
 
-class _Boundary:
-    """Admission/readiness; admission can be closed to model a hard-forget."""
-
-    def __init__(self, *, forgetting: bool = False) -> None:
-        """Open unless a forget is in progress."""
-        self._forgetting = forgetting
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Accept the configured deployment."""
-        assert deployment_id == _DEPLOYMENT_ID
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Refuse while a forget is in progress."""
-        assert deployment_id == _DEPLOYMENT_ID
-        if self._forgetting:
-            raise ForgetInProgressError("forget in progress")
-
-
 class _UnusedEngine:
     """Query-engine placeholder; the archive routes never call it."""
 
@@ -58,18 +37,15 @@ class _UnusedEngine:
 class _Archive:
     """Record calls; answer, or report the document absent."""
 
-    def __init__(self, *, absent: bool = False, fenced: bool = False) -> None:
+    def __init__(self, *, absent: bool = False) -> None:
         """Start with an empty call log."""
         self.calls: list[tuple[str, UUID, UUID]] = []
         self._absent = absent
-        self._fenced = fenced
 
     def _record(self, *, verb: str, deployment_id: UUID, doc_id: UUID) -> None:
         self.calls.append((verb, deployment_id, doc_id))
         if self._absent:
             raise DocumentNotFoundError(str(doc_id))
-        if self._fenced:
-            raise ForgetInProgressError("forget preparing")
 
     def archive_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentArchive:
         """Record the call and return a fixed outcome."""
@@ -101,20 +77,12 @@ class _ScopedAuth:
         )
 
 
-def _client(
-    archive: _Archive | None,
-    *,
-    auth: _ScopedAuth | None = None,
-    forgetting: bool = False,
-) -> TestClient:
+def _client(archive: _Archive | None, *, auth: _ScopedAuth | None = None) -> TestClient:
     """Build an API exposing only the archive routes (when composed)."""
-    boundary = _Boundary(forgetting=forgetting)
     return TestClient(
         build_api(
             engine=_UnusedEngine(),  # type: ignore[arg-type]
             deployment_id=_DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
             archive=archive,
             auth=auth,
         )
@@ -205,26 +173,6 @@ def test_only_a_write_credential_may_archive(verb: str) -> None:
     )
     assert allowed.status_code == 200, allowed.text
     assert archive.calls == [(verb, _DEPLOYMENT_ID, _DOC)]
-
-
-@pytest.mark.parametrize("verb", _VERBS)
-def test_a_hard_forget_in_progress_closes_archive_too(verb: str) -> None:
-    """D74's barrier is deployment-wide: no route is exempt."""
-    archive = _Archive()
-    response = _client(archive, forgetting=True).post(f"/documents/{_DOC}/{verb}")
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "forget_in_progress"}}
-    assert archive.calls == []
-
-
-@pytest.mark.parametrize("verb", _VERBS)
-def test_a_forget_that_wins_the_fence_is_a_503_not_a_500(verb: str) -> None:
-    """A forget preparing when the archive took the D74 fence: a stable 503."""
-    response = _client(_Archive(fenced=True)).post(f"/documents/{_DOC}/{verb}")
-
-    assert response.status_code == 503
-    assert response.json() == {"detail": {"code": "forget_in_progress"}}
 
 
 @pytest.mark.parametrize("verb", _VERBS)

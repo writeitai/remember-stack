@@ -87,16 +87,6 @@ def _vector(*, axis: int) -> tuple[float, ...]:
     return tuple(values)
 
 
-class _OpenBoundary:
-    """Readiness and admission that let every request through."""
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[()]:
-        return ()
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        return None
-
-
 def seed(*, engine: Engine) -> UUID:
     """Bootstrap the deployment and seed the lineage, claim, entities and fact.
 
@@ -339,15 +329,8 @@ def capture(*, engine: Engine, version_id: UUID) -> dict[str, Any]:
     surface = OperationSurface(
         registry=registry, executor=executor, deployment_id=DEPLOYMENT_ID
     )
-    boundary = _OpenBoundary()
     client = TestClient(
-        build_api(
-            engine=query,
-            deployment_id=DEPLOYMENT_ID,
-            admission=boundary,
-            readiness=boundary,
-            surface=surface,
-        )
+        build_api(engine=query, deployment_id=DEPLOYMENT_ID, surface=surface)
     )
     captured: dict[str, Any] = {"executor": {}, "http": {}}
     for name, arguments in _OPERATIONS:

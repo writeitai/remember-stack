@@ -25,7 +25,6 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.clustering import apply_merge
 from rememberstack.spine.fact_applications import application_block
-from rememberstack.spine.fact_applications import application_fence
 from rememberstack.spine.lifecycle import LIVE_CARRIAGE_SQL
 from rememberstack.spine.lifecycle import REVIEW_MOOT_SQL
 from rememberstack.spine.profile_refresher import profile_refresh_targets
@@ -147,11 +146,10 @@ class ReviewQueue:
         events: tuple[UUID, ...] = ()
         affected_entity_ids: tuple[UUID, ...] = ()
         with self._engine.begin() as connection:
-            with application_fence(connection=connection, deployment_id=deployment_id):
-                connection.execute(
-                    text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
-                    {"key": f"{deployment_id}:identity-epoch"},
-                )
+            connection.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+                {"key": f"{deployment_id}:identity-epoch"},
+            )
             item = self._claim_item(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -604,91 +602,86 @@ def _lock_support_review(
     *, connection: Connection, deployment_id: UUID, review_id: UUID
 ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
     """Take ordinary fact locks before the review row, preserving retry ordering."""
-    with application_fence(connection=connection, deployment_id=deployment_id):
+    connection.execute(
+        text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
+        {"key": f"{deployment_id}:identity-epoch"},
+    )
+    row = (
         connection.execute(
-            text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
-            {"key": f"{deployment_id}:identity-epoch"},
+            text(
+                "SELECT candidate FROM review_queue WHERE deployment_id=:dep AND review_id=:id AND item_kind='support_withdrawn'"
+            ),
+            {"dep": deployment_id, "id": review_id},
         )
-        row = (
+        .mappings()
+        .one_or_none()
+    )
+    if row is None:
+        raise ReviewDecisionError("support review does not exist")
+    candidate = row["candidate"]
+    kind = candidate.get("fact_kind")
+    if kind not in ("relation", "observation"):
+        raise ReviewDecisionError("invalid support review fact plane")
+    fact_id, claim_id = UUID(candidate["fact_id"]), UUID(candidate["claim_id"])
+    params = {"dep": deployment_id, "fact": fact_id, "claim": claim_id}
+    # D159: serialize with archive BEFORE any archive check or currency
+    # write. An archive takes the lineage row exclusively; a verdict takes it
+    # (then its version rows) shared, so either the archive commits first and
+    # the verdict sees it, or the verdict commits first and the archive
+    # retires what it restored.
+    connection.execute(_LOCK_CLAIM_LINEAGE, params)
+    connection.execute(_LOCK_CLAIM_VERSIONS, params)
+    table = "relations" if kind == "relation" else "observations"
+    subject = connection.execute(
+        text(
+            f"SELECT subject_entity_id FROM {table} WHERE deployment_id=:dep AND {kind}_id=:fact"
+        ),
+        params,
+    ).scalar_one_or_none()
+    if subject is None:
+        raise ReviewDecisionError("support review fact no longer exists")
+    with application_block(
+        connection=connection, deployment_id=deployment_id, subject_entity_id=subject
+    ):
+        if (
             connection.execute(
                 text(
-                    "SELECT candidate FROM review_queue WHERE deployment_id=:dep AND review_id=:id AND item_kind='support_withdrawn'"
+                    "SELECT claim_id FROM claims WHERE deployment_id=:dep AND claim_id=:claim FOR UPDATE"
                 ),
-                {"dep": deployment_id, "id": review_id},
+                params,
+            ).scalar_one_or_none()
+            is None
+        ):
+            raise ReviewDecisionError("support review source no longer exists")
+        affected: dict[str, tuple[UUID, ...]] = {}
+        for plane, fact_table in (
+            ("relation", "relations"),
+            ("observation", "observations"),
+        ):
+            affected[plane] = tuple(
+                connection.execute(
+                    text(f"""
+                SELECT f.{plane}_id FROM {fact_table} f
+                WHERE f.deployment_id=:dep AND (
+                    (:kind=:plane AND f.{plane}_id=:fact) OR EXISTS (
+                        SELECT 1 FROM {plane}_evidence e
+                        WHERE e.deployment_id=:dep AND e.{plane}_id=f.{plane}_id
+                          AND e.claim_id=:claim))
+                ORDER BY f.{plane}_id FOR UPDATE OF f
+            """),
+                    {**params, "kind": kind, "plane": plane},
+                ).scalars()
+            )
+        locked = (
+            connection.execute(
+                _SELECT_ITEM_LOCKED,
+                {"deployment_id": deployment_id, "review_id": review_id},
             )
             .mappings()
-            .one_or_none()
+            .one()
         )
-        if row is None:
-            raise ReviewDecisionError("support review does not exist")
-        candidate = row["candidate"]
-        kind = candidate.get("fact_kind")
-        if kind not in ("relation", "observation"):
-            raise ReviewDecisionError("invalid support review fact plane")
-        fact_id, claim_id = UUID(candidate["fact_id"]), UUID(candidate["claim_id"])
-        params = {"dep": deployment_id, "fact": fact_id, "claim": claim_id}
-        # D159: serialize with archive BEFORE any archive check or currency
-        # write. An archive takes the lineage row exclusively; a verdict takes
-        # it (then its version rows) shared, so either the archive commits
-        # first and the verdict sees it, or the verdict commits first and the
-        # archive retires what it restored.
-        connection.execute(_LOCK_CLAIM_LINEAGE, params)
-        connection.execute(_LOCK_CLAIM_VERSIONS, params)
-        table = "relations" if kind == "relation" else "observations"
-        subject = connection.execute(
-            text(
-                f"SELECT subject_entity_id FROM {table} WHERE deployment_id=:dep AND {kind}_id=:fact"
-            ),
-            params,
-        ).scalar_one_or_none()
-        if subject is None:
-            raise ReviewDecisionError("support review fact no longer exists")
-        with application_block(
-            connection=connection,
-            deployment_id=deployment_id,
-            subject_entity_id=subject,
-        ):
-            if (
-                connection.execute(
-                    text(
-                        "SELECT claim_id FROM claims WHERE deployment_id=:dep AND claim_id=:claim FOR UPDATE"
-                    ),
-                    params,
-                ).scalar_one_or_none()
-                is None
-            ):
-                raise ReviewDecisionError("support review source no longer exists")
-            affected: dict[str, tuple[UUID, ...]] = {}
-            for plane, fact_table in (
-                ("relation", "relations"),
-                ("observation", "observations"),
-            ):
-                affected[plane] = tuple(
-                    connection.execute(
-                        text(f"""
-                    SELECT f.{plane}_id FROM {fact_table} f
-                    WHERE f.deployment_id=:dep AND (
-                        (:kind=:plane AND f.{plane}_id=:fact) OR EXISTS (
-                            SELECT 1 FROM {plane}_evidence e
-                            WHERE e.deployment_id=:dep AND e.{plane}_id=f.{plane}_id
-                              AND e.claim_id=:claim))
-                    ORDER BY f.{plane}_id FOR UPDATE OF f
-                """),
-                        {**params, "kind": kind, "plane": plane},
-                    ).scalars()
-                )
-            locked = (
-                connection.execute(
-                    _SELECT_ITEM_LOCKED,
-                    {"deployment_id": deployment_id, "review_id": review_id},
-                )
-                .mappings()
-                .one()
-            )
-            if locked["candidate"] != candidate:
-                raise ReviewDecisionError(
-                    "support review changed; retry with fresh inputs"
-                )
+        if locked["candidate"] != candidate:
+            raise ReviewDecisionError("support review changed; retry with fresh inputs")
 
     return affected["relation"], affected["observation"]
 

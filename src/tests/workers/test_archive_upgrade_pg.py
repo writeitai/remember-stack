@@ -5,7 +5,7 @@ fact; the internal lineage removal produces exactly the state D135's delete
 left (lineage and versions tombstoned at one instant, the episode's currency
 events and closure recorded). The store is then taken back to the previous
 release's schema, a second lineage is marked connector-deleted and a third is
-owned by a D74 forget, and the upgrade runs: the deletions become caller and
+owned by a forget, and the upgrade runs: the deletions become caller and
 source archives whose episode carries the archive reconciliation id, so
 unarchive restores the testimony and reopens the fact. The D74 lineage is left
 to the forget slice.
@@ -32,7 +32,7 @@ from sqlalchemy.engine import Engine
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.lifecycle import archive_reconciliation_id
-from rememberstack.spine.migrations.versions import p9_54_0075_archive as migration
+from rememberstack.spine.migrations.versions import p9_55_0076_archive as migration
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import DocumentArchiver
 from tests.database_reset import reset_database
@@ -43,7 +43,7 @@ from tests.workers.test_lifecycle_reconciliation import _TABLES
 from tests.workers.test_lifecycle_reconciliation import _withdraw_support
 
 _ROOT = Path(__file__).resolve().parents[3]
-_PREVIOUS = "p9_53_0074"
+_PREVIOUS = "p9_54_0075"
 
 
 @pytest.fixture(scope="module")
@@ -145,10 +145,9 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
         )
         connection.execute(
             text(
-                "INSERT INTO forget_manifests (forget_id, deployment_id, doc_id,"
-                " schema_version, manifest_hash, manifest, accepted_at, status,"
-                " completed_at) VALUES (:f, :dep, :d, 1, 'h', '{}', now(),"
-                " 'complete', now())"
+                "INSERT INTO forgets (forget_id, deployment_id, doc_id,"
+                " version_ids, content_hashes, status, completed_at)"
+                " VALUES (:f, :dep, :d, '{}', '{}', 'complete', now())"
             ),
             {"f": uuid4(), "dep": _DEPLOYMENT_ID, "d": forgotten.doc_id},
         )
@@ -176,7 +175,7 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
         )
         == 0
     )  # an earlier version tombstone is kept
-    assert rows[forgotten.doc_id]["archived_at"] is None  # the forget slice's
+    assert rows[forgotten.doc_id]["archived_at"] is None  # the forget's
     assert rows[forgotten.doc_id]["deleted_at"] is not None
     assert (
         _scalar(

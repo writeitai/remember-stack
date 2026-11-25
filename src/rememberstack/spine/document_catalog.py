@@ -50,6 +50,7 @@ from rememberstack.spine.document_metadata import record_ingest_metadata_on
 from rememberstack.spine.document_metadata import refresh_family_on
 from rememberstack.spine.effective_time import declare_at_ingest_on
 from rememberstack.spine.effective_time import resolve_version_key_on
+from rememberstack.spine.forget import guard_forgotten_on
 from rememberstack.spine.managed_metering import measurement_state_on
 from rememberstack.spine.managed_metering import record_managed_measurement_on
 from rememberstack.spine.period_adjudication import request_window_review_on
@@ -143,6 +144,15 @@ class DocumentCatalog:
         """
         with self._engine.begin() as connection:
             lineage = _lineage_locked(connection=connection, record=record)
+            # D159 §3.6: the re-ingest guard again, under the lineage row lock,
+            # so a forget that committed while the bytes were written wins.
+            guard_forgotten_on(
+                connection=connection,
+                deployment_id=record.deployment_id,
+                source_kind=record.source_kind,
+                source_ref=record.source_ref,
+                content_hash=record.content_hash,
+            )
             doc_id: UUID = lineage["doc_id"]
             connection.execute(
                 _INSERT_CONTENT_OBJECT,
@@ -908,8 +918,19 @@ def _lineage_locked(*, connection: Connection, record: UploadRecord) -> RowMappi
             },
         )
         .mappings()
-        .one()
+        .one_or_none()
     )
+    if lineage is None:
+        # The row existed at the insert and is gone now: a forget's sweep
+        # erased it in between. Its record refuses this ingest (D159 §3.6).
+        guard_forgotten_on(
+            connection=connection,
+            deployment_id=record.deployment_id,
+            source_kind=record.source_kind,
+            source_ref=record.source_ref,
+            content_hash=record.content_hash,
+        )
+        raise RuntimeError("the lineage row disappeared during registration")
     connection.execute(_RESURRECT_LINEAGE, {"doc_id": lineage["doc_id"]})
     return lineage
 
@@ -946,7 +967,13 @@ _INSERT_CONTENT_OBJECT = text(
     ) VALUES (
         :deployment_id, :content_hash, :mime, :byte_size, :raw_uri
     )
-    ON CONFLICT (deployment_id, content_hash) DO NOTHING
+    -- D159: attaching locks an existing row (DO UPDATE locks it even when its
+    -- condition is false), so a forget's sweep either saw this version or
+    -- retired the row first; a retired row takes this ingest's own original.
+    ON CONFLICT (deployment_id, content_hash) DO UPDATE
+    SET mime = EXCLUDED.mime, byte_size = EXCLUDED.byte_size,
+        raw_uri = EXCLUDED.raw_uri, purged_at = NULL
+    WHERE content_objects.purged_at IS NOT NULL
     """
 )
 

@@ -27,7 +27,7 @@ A deployment's error body always has one key, `detail`:
 | Form | Example |
 |---|---|
 | String | `{"detail": "body_too_large"}` |
-| Object with `code` | `{"detail": {"code": "forget_in_progress"}}` |
+| Object with `code` | `{"detail": {"code": "document_forgotten", "forget_id": "…", "forgotten_at": "…"}}` |
 | Object with `code` and `message` | `{"detail": {"code": "invalid_parameter", "message": "unknown argument(s): limit"}}` |
 | Validation list | `{"detail": [{"type": "less_than_equal", "loc": ["query", "k"], "msg": "Input should be less than or equal to 400", "input": "500", "ctx": {"le": 400}}]}` |
 
@@ -65,7 +65,7 @@ their code in `code`. `wait_for_readiness` raises
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
 | `409` | `{"code": "layer_unavailable", …}` | A read needs a [processing layer](/docs/concepts/pipeline#processing-layers) (`layer`) the deployment does not process. | Use a read of a served layer, or ask the operator to switch the layer on. |
-| `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
+| `409` | `{"code": "document_forgotten", "forget_id": …, "forgotten_at": …}` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that belongs to a forgotten document. | Do not retry; the deployment does not take forgotten content back. |
 | `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
 | `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
 | `409` | `{"code": "conflict", "message": …}` | `POST /tags` or `PATCH /tags/{tag_id}` with a name another tag already has, in any letter case. | Use the existing tag, or choose another name. |
@@ -90,7 +90,6 @@ their code in `code`. `wait_for_readiness` raises
 | `429` | `{"code": "rate_limited", …}` | The credential or the deployment has used its request rate ([admission limits](/docs/reference/http-api#admission-limits), off unless configured). | Wait the `Retry-After` seconds, then retry. |
 | `429` | `{"code": "concurrency_limited", …}` | Too many requests of the credential or the deployment are running at once. | Wait for your other requests to finish (`Retry-After` is `1`), then retry. |
 | `500` | `Internal Server Error` | An unhandled failure: a defect. | Report it. |
-| `503` | `{"code": "forget_in_progress"}` | A hard forget is running; the deployment accepts no traffic until it finishes. | Retry later. |
 | `503` | `model provider unavailable` | A search, lookup, resolve or assured-operation call could not embed its query. | Retry with back-off. |
 | `503` | `live graph is busy` | No graph traversal slot was free in time. | Retry with back-off. |
 | `503` | `live graph result unavailable` | A traversal and the rows it pointed at disagreed. | Retry. |
@@ -216,7 +215,6 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
-| `forget_in_progress` | 503 | yes | Retry the same call later with back-off; the deployment accepts no changes until the forget finishes. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
 | `unauthorized` | 401 | no | The key is missing, expired or revoked: run `remember login` or replace REMEMBER_API_KEY. |
 | `insufficient_permission` | 403 | no | The key may not do this here: use a key with the needed permission for this deployment. |

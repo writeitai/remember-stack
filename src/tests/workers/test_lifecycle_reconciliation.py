@@ -47,7 +47,6 @@ from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentUnarchive
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EvalSuite
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
@@ -88,6 +87,7 @@ from rememberstack.workers import E3Settings
 from rememberstack.workers import EmbedChunksHandler
 from rememberstack.workers import EmbedClaimsHandler
 from rememberstack.workers import ExtractClaimsHandler
+from rememberstack.workers import ForgetService
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import LabelFactsHandler
 from rememberstack.workers import NormalizeRelationsHandler
@@ -1809,6 +1809,23 @@ def test_two_concurrent_archives_answer_the_same_archive(rig: _LifecycleRig) -> 
     assert sorted(item.claims_retired for item in archives) == [0, 1]
 
 
+def test_a_forget_of_another_document_does_not_stop_an_archive(
+    rig: _LifecycleRig,
+) -> None:
+    """D159: a forget hides one lineage; nothing else waits for it."""
+    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
+    other = rig.observe(source_ref="other.md", content=f"{_FILLER_SENTENCE}\n")
+    rig.drain()
+    ForgetService(engine=rig.engine, catalog=ForgetCatalog(engine=rig.engine)).request(
+        deployment_id=_DEPLOYMENT_ID, doc_id=other.doc_id
+    )
+
+    _archive(rig, added.doc_id)
+
+    assert _current_claims(rig, added.doc_id) == 0
+    assert rig.relation()["invalidated_at"] is not None
+
+
 def test_a_restore_verdict_racing_an_archive_cannot_revive_archived_testimony(
     rig: _LifecycleRig,
 ) -> None:
@@ -1861,27 +1878,6 @@ def test_a_restore_verdict_racing_an_archive_cannot_revive_archived_testimony(
         is False
     )
     assert rig.relation()["invalidated_at"] is not None
-
-
-def test_a_forget_already_preparing_refuses_the_archive(rig: _LifecycleRig) -> None:
-    """The D74 fence: an archive during a hard forget changes nothing."""
-    added = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=_STAFFING)
-    other = rig.observe(source_ref="other.md", content=f"{_FILLER_SENTENCE}\n")
-    rig.drain()
-    ForgetCatalog(engine=rig.engine).prepare(
-        deployment_id=_DEPLOYMENT_ID, doc_id=other.doc_id, forget_id=uuid4()
-    )
-
-    with pytest.raises(ForgetInProgressError):
-        _archive(rig, added.doc_id)
-
-    assert (
-        rig.scalar(
-            "SELECT archived_at FROM documents WHERE doc_id = :d", d=added.doc_id
-        )
-        is None
-    )
-    assert _current_claims(rig, added.doc_id) == 1
 
 
 def _cycle(rig: _LifecycleRig) -> UUID:

@@ -110,13 +110,13 @@ from rememberstack.spine.migrations.versions.p9_48_0069_shared_eligibility impor
 from rememberstack.spine.migrations.versions.p9_53_0074_document_tags import (
     MEMORY_V1_TAG_VIEW_DDL,
 )
-from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
     CROSSREFS_ARCHIVE_DDL,
 )
-from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
     DOCUMENTS_INVENTORY_DDL,
 )
-from rememberstack.spine.migrations.versions.p9_54_0075_archive import (
+from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
     FACT_SOURCE_ARCHIVE_DDL,
 )
 from rememberstack.spine.query_space.ast_serializer import serialize_definition

@@ -83,7 +83,7 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
         PipelineStage.REVIEW_FACT_WINDOWS,
         PipelineStage.PUBLISH_CORPUS,
         PipelineStage.RECONCILE_CORPUS,
-        PipelineStage.HARD_FORGET,
+        PipelineStage.FORGET,
     )
     # crossref work is per reference generation and window reviews per lineage
     # and fact (D140), so readiness never waits on either
@@ -96,7 +96,7 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
             PipelineStage.REVIEW_FACT_WINDOWS,
             PipelineStage.PUBLISH_CORPUS,
             PipelineStage.RECONCILE_CORPUS,
-            PipelineStage.HARD_FORGET,
+            PipelineStage.FORGET,
         )
     )
 

@@ -72,16 +72,14 @@ class NativeStoreReference(_NativeRecord):
 
     A repository locator is a root to expand through qualified store
     evidence, never a fabricated object or a row-byte estimate. Only raw
-    objects record a native length; missing length remains explicit. A journal
-    intent carries the actual forget UUID, not an invented store path. Its
-    qualified adapter derives the concrete journal key and proves presence.
+    objects record a native length; missing length remains explicit.
     """
 
     native_class: str
     native_id: SecretStr = Field(repr=False)
-    store_role: Literal["raw", "artifacts", "corpus", "forget", "knowledge"]
+    store_role: Literal["raw", "artifacts", "corpus", "knowledge"]
     locator: SecretStr = Field(repr=False)
-    locator_kind: Literal["object", "repository_path", "journal_intent"]
+    locator_kind: Literal["object", "repository_path"]
     recorded_bytes: UnsignedDecimal | None
     native_state: str | None
     recorded_digest: SecretStr | None = Field(repr=False)
@@ -151,12 +149,12 @@ BEGIN
       public.documents, public.document_versions, public.document_metadata,
       public.document_sections, public.knowledge_artifacts,
       public.knowledge_compilations, public.knowledge_plan_runs,
-      public.forget_manifests, public.managed_ingest_measurements,
+      public.managed_ingest_measurements,
       public.managed_ingest_outcomes IN ACCESS SHARE MODE NOWAIT;
   ELSE
     IF (SELECT count(*) FROM public.deployments) <> 1
        OR (SELECT count(*) FROM public.alembic_version) <> 1
-       OR (SELECT version_num FROM public.alembic_version) <> 'p9_54_0075' THEN
+       OR (SELECT version_num FROM public.alembic_version) <> 'p9_55_0076' THEN
       RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_catalog_scope';
     END IF;
     SELECT deployment_id INTO STRICT native_scope FROM public.deployments;
@@ -231,11 +229,6 @@ BEGIN
       SELECT 'knowledge_plan_runs.session_transcript_uri',run_id::text,
         'artifacts',session_transcript_uri,'object',NULL,status,NULL
         FROM public.knowledge_plan_runs WHERE deployment_id=native_scope
-      UNION ALL
-      SELECT 'forget_manifests.portable_intent',forget_id::text,'forget',
-        forget_id::text,'journal_intent',NULL,status::text,NULL
-        FROM public.forget_manifests
-        WHERE deployment_id=native_scope
     ), bounded AS (
       SELECT * FROM native_references WHERE
         (native_class COLLATE "C",native_id COLLATE "C") >

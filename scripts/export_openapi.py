@@ -65,28 +65,6 @@ from uuid import UUID
 from uuid import uuid4
 
 
-class _Boundary:
-    """Admission and readiness, both open, so the app composes.
-
-    `build_api` calls `ensure_ready` while composing, so this one really does
-    run. It asserts the deployment it was built for, which keeps it honest
-    about being a boundary rather than a shrug.
-    """
-
-    def __init__(self, *, deployment_id: UUID) -> None:
-        """Bind the deployment this boundary answers for."""
-        self._deployment_id = deployment_id
-
-    def assert_available(self, *, deployment_id: UUID) -> None:
-        """Admit; D74 admission state is not part of the schema."""
-        assert deployment_id == self._deployment_id
-
-    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
-        """Report a completed replay so `build_api` proceeds."""
-        assert deployment_id == self._deployment_id
-        return ()
-
-
 class _Unused:
     """A port the export never calls.
 
@@ -120,13 +98,10 @@ def build_document(*, deployment_id: UUID | None = None) -> dict[str, Any]:
     from rememberstack.surfaces.http_api import build_api
 
     served = deployment_id or uuid4()
-    boundary = _Boundary(deployment_id=served)
     scoped = _Unused(deployment_id=served)
     app = build_api(
         engine=_Unused(),  # type: ignore[arg-type]
         deployment_id=served,
-        admission=boundary,  # type: ignore[arg-type]
-        readiness=boundary,  # type: ignore[arg-type]
         surface=scoped,  # type: ignore[arg-type]
         open_query=scoped,  # type: ignore[arg-type]
         # Supplied so the document declares the bearer scheme a guarded

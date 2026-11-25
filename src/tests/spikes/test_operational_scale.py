@@ -828,7 +828,7 @@ def _provider_neutral_batching(
             and hydration_probe.transactions == 1
             and len(set(observation_ids)) == 1
             and applied == len(transitions)
-            and len(currency_probe.statements) == 5
+            and len(currency_probe.statements) == 3
             and currency_probe.transactions == 1
         ),
     )

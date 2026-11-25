@@ -43,7 +43,7 @@ _PIPELINE_STAGE_VALUES = (
     "lint_knowledge",
     "reconcile",
     "dispatch_knowledge",
-    "hard_forget",
+    "forget",
     "review_fact_windows",
     "publish_corpus",
     "reconcile_corpus",

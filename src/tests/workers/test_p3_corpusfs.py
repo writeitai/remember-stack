@@ -5,7 +5,6 @@ from datetime import datetime
 from datetime import UTC
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 from uuid import uuid4
 
 import pytest
@@ -16,7 +15,6 @@ from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing.model_provider import FakeModelProvider
 from rememberstack.core.corpus_export import CorpusDocument
-from rememberstack.model import ForgetInProgressError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import RunResultOutcome
@@ -40,11 +38,9 @@ def active(
     for store, authority in zip(stores, (raw, artifacts), strict=False):
         for key, content in authority.objects.items():
             store.write_bytes(key=ObjectKey(key), content=content, storage_class="hot")
-    manifests = tmp_path / "portable-intent"
-    manifests.mkdir()
     profile = SelfHostProfile(
         settings=SelfHostSettings(
-            deployment_id=source.deployment_id, forget_manifest_root=manifests
+            deployment_id=source.deployment_id, forget_quiet_period_s=0
         ),
         engine=engine,
         raw_store=stores[0],  # type: ignore[arg-type]
@@ -225,54 +221,36 @@ def test_periodic_verification_repairs_behind_marker_and_schedules_next(
         )
 
 
-def test_ordinary_reconcile_and_publisher_obey_forget_admission(
+def test_a_forget_erases_the_corpus_while_publication_keeps_running(
     active, engine: Engine
 ) -> None:
-    profile, source, _ = active
+    """D159: no barrier; the sweep deletes the folder and the navigation listing."""
+    from rememberstack.core.corpus_export import corpus_suffix
+    from rememberstack.model import ForgetStatus
     from rememberstack.spine import ForgetCatalog
 
-    ForgetCatalog(engine=engine).prepare(
-        deployment_id=source.deployment_id, doc_id=source.doc_id, forget_id=uuid4()
+    profile, source, store = active
+    assert profile.run_projection(plane="p3") == {"p3": 1}
+    assert list(store.iter_keys(prefix=source.path))
+    forget, created = profile.forget().request(
+        deployment_id=source.deployment_id, doc_id=source.doc_id
     )
-    for operation in (
-        lambda: profile.corpus_publisher().publish_corpus(
-            deployment_id=source.deployment_id, doc_id=source.doc_id
-        ),
-        lambda: profile.corpus_publisher().reconcile(
-            deployment_id=source.deployment_id
-        ),
-    ):
-        with pytest.raises(ForgetInProgressError):
-            operation()
-
-
-def test_restore_authorizes_each_manifest_while_the_whole_batch_is_closed(
-    active, engine: Engine
-) -> None:
-    from rememberstack.model import ForgetManifest
-    from rememberstack.spine import ForgetCatalog
-    from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
-
-    profile, source, _ = active
-    catalog = ForgetCatalog(engine=engine)
-    # UUID enumeration order differs from their original preparation order.
-    manifests = [
-        ForgetManifest(
-            forget_id=UUID(int=number),
-            deployment_id=source.deployment_id,
-            doc_id=uuid4(),
-            requested_at=datetime(2026, 11, 13, tzinfo=UTC),
+    assert created
+    # Ordinary publication and repair keep running while the forget erases.
+    profile.corpus_publisher().reconcile(deployment_id=source.deployment_id)
+    record = forget
+    for _ in range(4):
+        profile.worker_loop(worker_class="llm", concurrency=1).drain_due()
+        record = ForgetCatalog(engine=engine).record(
+            deployment_id=source.deployment_id, forget_id=forget.forget_id
         )
-        for number in (9999, 1)
-    ]
-    for manifest in manifests:
-        catalog.materialize_portable(manifest=manifest)
-    with CorpusPublicationCatalog(engine=engine).locked(
-        deployment_id=source.deployment_id, forget_id=manifests[1].forget_id
-    ) as held:
-        held.check()
-    with pytest.raises(ForgetInProgressError):
-        profile.corpus_publisher().reconcile(deployment_id=source.deployment_id)
+        if record.status is ForgetStatus.COMPLETE:
+            break
+    assert record.status is ForgetStatus.COMPLETE
+    suffix = corpus_suffix(source.doc_id).encode()
+    assert not [key for key in store.iter_purge_keys() if suffix.decode() in key.root]
+    for key in store.iter_keys(prefix=""):
+        assert suffix not in store.read_bytes(key=key), key.root
 
 
 def test_equivalent_configured_cadences_share_one_delayed_verification(

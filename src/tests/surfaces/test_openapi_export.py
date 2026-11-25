@@ -324,7 +324,6 @@ def test_documenting_the_credential_did_not_start_enforcing_it() -> None:
     """
     from uuid import UUID
 
-    from export_openapi import _Boundary
     from export_openapi import _Unused
     from fastapi.testclient import TestClient
 
@@ -345,12 +344,9 @@ def test_documenting_the_credential_did_not_start_enforcing_it() -> None:
                 return AuthenticatedContext(deployment_id=served, principal="agent")
             raise ValueError("unknown credential")
 
-    boundary = _Boundary(deployment_id=served)
     app = build_api(
         engine=_Unused(),  # type: ignore[arg-type]
         deployment_id=served,
-        admission=boundary,  # type: ignore[arg-type]
-        readiness=boundary,  # type: ignore[arg-type]
         auth=_Auth(),  # type: ignore[arg-type]
         documents=_Unused(),  # type: ignore[arg-type]
     )
