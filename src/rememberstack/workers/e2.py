@@ -455,7 +455,7 @@ class E2Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_E2_")
 
-    extract_model: str = Field(default="openai/gpt-5.6-luna")
+    extract_model: str = Field(default="openai/gpt-6-luna")
 
 
 class ExtractClaimsHandler:

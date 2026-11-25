@@ -124,10 +124,10 @@ def test_each_deployment_pays_with_its_own_openrouter_key() -> None:
 
 
 def test_direct_typesafe_route_is_unchanged() -> None:
-    """The default route keeps TypeSafe's key, URL, payload and list price."""
+    """The direct route keeps TypeSafe's key, URL, payload and list price."""
     seen: list[httpx.Request] = []
     provider = build_systemone_provider(
-        settings=TypeSafeSettings(api_key="direct-key"),
+        settings=TypeSafeSettings(route="typesafe", api_key="direct-key"),
         openrouter=OpenRouterSettings(api_key="openrouter-key"),
     )
     assert isinstance(provider, TypeSafeSystemOneClient)
@@ -210,11 +210,14 @@ def test_openrouter_route_requires_output_tokens_and_serving_model(
         client.close()
 
 
-def test_route_reads_its_environment_variable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Hosts select OpenRouter for System One with one process-wide variable."""
-    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "openrouter")
-
+def test_route_defaults_to_openrouter_and_reads_its_environment_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Jev runs on the OpenRouter key by default; one variable selects the route."""
     assert TypeSafeSettings().route == "openrouter"
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "typesafe")
+
+    assert TypeSafeSettings().route == "typesafe"
 
 
 def test_openrouter_route_requires_deployment_settings() -> None:
@@ -238,17 +241,17 @@ def test_zdr_refuses_the_native_decisions_backup(
 def test_zdr_deployment_refuses_the_direct_typesafe_route() -> None:
     """A ZDR deployment cannot send Jev content to TypeSafe's own API.
 
-    TypeSafe's API has no zero-data-retention control, so the default route
+    TypeSafe's API has no zero-data-retention control, so the direct route
     is refused rather than silently ignoring the deployment's ZDR flag.
     """
     with pytest.raises(ConfigurationError, match="ROUTE=openrouter"):
         build_systemone_provider(
-            settings=TypeSafeSettings(api_key="direct-key"),
+            settings=TypeSafeSettings(route="typesafe", api_key="direct-key"),
             openrouter=OpenRouterSettings(api_key="openrouter-key", zdr=True),
         )
     with pytest.raises(ConfigurationError, match="ROUTE=openrouter"):
         TypeSafeSystemOneClient(
-            settings=TypeSafeSettings(api_key="direct-key"),
+            settings=TypeSafeSettings(route="typesafe", api_key="direct-key"),
             openrouter=OpenRouterSettings(api_key="openrouter-key", zdr=True),
         )
 
@@ -358,8 +361,8 @@ def test_exhausted_openrouter_rejections_classify_as_unavailable(
 def test_compose_takes_the_jev_route_and_reads_zdr_only_from_dotenv() -> None:
     """Every app service gets the route, and ZDR only from ``.env``.
 
-    ``REMEMBERSTACK_TYPESAFE_ROUTE`` is forwarded (default ``typesafe``, which
-    a ZDR deployment refuses at startup, so a missing route fails closed).
+    ``REMEMBERSTACK_TYPESAFE_ROUTE`` is forwarded (default ``openrouter``, so
+    Jev runs on the deployment's OpenRouter key and ZDR flag).
     ``REMEMBERSTACK_OPENROUTER_ZDR`` and the OpenRouter base URL are not
     listed under ``environment:``: they reach the services only from ``.env``
     through ``env_file``, so a shell export or an alternate ``--env-file``
@@ -377,7 +380,7 @@ def test_compose_takes_the_jev_route_and_reads_zdr_only_from_dotenv() -> None:
         service = services[name]
         environment = service["environment"]
         assert environment["REMEMBERSTACK_TYPESAFE_ROUTE"] == (
-            "${REMEMBERSTACK_TYPESAFE_ROUTE:-typesafe}"
+            "${REMEMBERSTACK_TYPESAFE_ROUTE:-openrouter}"
         )
         assert "REMEMBERSTACK_OPENROUTER_ZDR" not in environment
         assert "REMEMBERSTACK_OPENROUTER_BASE_URL" not in environment

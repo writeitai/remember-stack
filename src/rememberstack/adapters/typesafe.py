@@ -54,15 +54,15 @@ class TypeSafeSettings(BaseSettings):
     timeout_s: float = 30.0
     fallback_to_prompt: bool = False
     backup: Literal["none", "openai_decisions"] = "none"
-    route: Literal["typesafe", "openrouter"] = "typesafe"
+    route: Literal["typesafe", "openrouter"] = "openrouter"
     """Who serves System One. Env: ``REMEMBERSTACK_TYPESAFE_ROUTE``.
 
-    ``typesafe`` (default) calls TypeSafe's own API with ``api_key`` and
-    ``base_url``. ``openrouter`` calls OpenRouter's TypeSafe-compatible
+    ``openrouter`` (default) calls OpenRouter's TypeSafe-compatible
     ``/systemone`` endpoint with the deployment's OpenRouter settings: its
     key, base URL and ZDR flag. ``api_key`` and ``base_url`` here are then
     ignored, so a host serving several deployments bills each one to its own
     OpenRouter key. Cost comes from OpenRouter's reported ``usage.cost``.
+    ``typesafe`` calls TypeSafe's own API with ``api_key`` and ``base_url``.
     """
 
 

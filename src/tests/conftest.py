@@ -47,6 +47,19 @@ def isolate_optional_provider_pins(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+#: The engine's default fact adjudicator is Jev, a System One provider the
+#: suite's fake chat providers cannot serve. Tests run the ``prompt`` engine
+#: unless they select Jev or read the real default after deleting this pin.
+FACT_ENGINE_TEST_PIN = ("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "prompt")
+
+
+@pytest.fixture(autouse=True)
+def pin_prompt_fact_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the fake-provider suite on the ``prompt`` fact engine."""
+    monkeypatch.delenv("REMEMBERSTACK_FACT_ENGINE", raising=False)
+    monkeypatch.setenv(*FACT_ENGINE_TEST_PIN)
+
+
 #: The client connection variables (D136 §8.2). A developer's own key, engine
 #: URL or project must never leak into a test, and no test may read or write the
 #: developer's real credential file.

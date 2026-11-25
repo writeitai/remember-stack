@@ -2401,7 +2401,7 @@ def _model_bindings(
         settings = systemone
         bindings["systemone_backup"] = settings.backup
         if settings.route != "typesafe":
-            # Present only when opted in, so direct-TypeSafe bindings and
+            # Absent on the direct route, so direct-TypeSafe bindings and
             # benchmark fingerprints stay byte-identical.
             bindings["systemone_route"] = settings.route
         if settings.backup == "openai_decisions":

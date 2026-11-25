@@ -14,7 +14,8 @@ tools, ``ingest`` ``tags`` at ``tool_version`` 3, two tag views; then the
 operations' ``documents`` filter at versions 5, 5 and 6), D157's PostgreSQL 18
 manifest declaration, D159's archive tools and ``include_archived``, and
 D159's ``forget_document`` tool with ``ingest``'s ``allow_forgotten`` at
-``tool_version`` 4. The current branch, composed the way the
+``tool_version`` 4, and the default Jev fact engine's observation-flush
+version. The current branch, composed the way the
 self-host profile composes it (layers port included, reporting no
 configuration), must reproduce every byte.
 """
@@ -24,6 +25,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tests.surfaces.d143_defaults_capture import capture_defaults
 from tests.surfaces.d143_defaults_capture import capture_layers_off
 from tests.surfaces.d143_defaults_capture import render
@@ -31,8 +34,11 @@ from tests.surfaces.d143_defaults_capture import render
 _FIXTURE = Path(__file__).with_name("fixtures") / "d143_defaults.json"
 
 
-def test_unconfigured_defaults_equal_the_pre_d143_capture() -> None:
+def test_unconfigured_defaults_equal_the_pre_d143_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """§9.1: every captured default is byte-identical to the pre-D143 base."""
+    monkeypatch.delenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE")
     expected = _FIXTURE.read_text(encoding="utf-8")
     current = capture_defaults()
     baseline = json.loads(expected)

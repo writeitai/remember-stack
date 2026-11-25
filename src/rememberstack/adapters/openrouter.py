@@ -231,7 +231,7 @@ class OpenRouterSettings(BaseSettings):
     reasoning_effort_map: dict[str, ReasoningEffort] | None = None
     """Optional per-model effort overrides as a JSON object env var
     (`REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP`, e.g.
-    `{"z-ai/glm-4.7-flash":"none","openai/gpt-5.6-luna":"high"}`). A model's
+    `{"openai/gpt-6-luna":"high"}`). A model's
     entry wins over the global `reasoning_effort` for requests to that model;
     absent entries fall back to the global pin (or the model default when the
     global pin is also unset). Values must be one of the allowed effort

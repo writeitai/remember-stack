@@ -20,6 +20,8 @@ def test_luna_profile_matches_composed_models_and_versions(
     protocol = PROTOCOL_REGISTRY["full-v47"]
     profile = protocol.execution_profile
     assert profile is not None
+    # run_shard.sh pins the direct route when the profile names none.
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_ROUTE", "typesafe")
     for name, value in profile.ingest_environment.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "offline-test")

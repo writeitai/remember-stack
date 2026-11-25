@@ -242,9 +242,9 @@ class FactAdjudicationSettings(BaseSettings):
     """Model, engine, and conservative confidence floor for the fact adjudicator."""
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_FACT_", extra="ignore")
-    model: str = "openai/gpt-5.6-luna"
+    model: str = "openai/gpt-6-luna"
     engine: Literal["prompt", "jev"] = Field(
-        default="prompt",
+        default="jev",
         validation_alias=AliasChoices(
             "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE",
             "REMEMBERSTACK_FACT_ENGINE",

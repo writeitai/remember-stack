@@ -233,6 +233,14 @@ def _sample_snapshot(*, with_candidate: bool = True) -> dict[str, Any]:
 # ============================================================================
 
 
+def test_fact_adjudication_defaults_to_jev(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unconfigured deployments adjudicate facts with Jev and GPT 6 Luna as the prompt model."""
+    monkeypatch.delenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE")
+    settings = FactAdjudicationSettings()
+    assert settings.engine == "jev"
+    assert settings.model == "openai/gpt-6-luna"
+
+
 def test_typesafe_settings_defaults() -> None:
     """Verify default values of TypeSafeSettings."""
     settings = TypeSafeSettings()
@@ -241,6 +249,7 @@ def test_typesafe_settings_defaults() -> None:
     assert settings.base_url == "https://api.typesafe.ai/v1"
     assert settings.timeout_s == 30.0
     assert settings.fallback_to_prompt is False
+    assert settings.route == "openrouter"
 
 
 def test_typesafe_settings_env_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,12 +269,16 @@ def test_typesafe_client_missing_api_key_raises_configuration_error() -> None:
     with pytest.raises(
         ConfigurationError, match="REMEMBERSTACK_TYPESAFE_API_KEY is required"
     ):
-        TypeSafeSystemOneClient(settings=TypeSafeSettings(api_key=None))
+        TypeSafeSystemOneClient(
+            settings=TypeSafeSettings(route="typesafe", api_key=None)
+        )
 
     with pytest.raises(
         ConfigurationError, match="REMEMBERSTACK_TYPESAFE_API_KEY is required"
     ):
-        TypeSafeSystemOneClient(settings=TypeSafeSettings(api_key="   "))
+        TypeSafeSystemOneClient(
+            settings=TypeSafeSettings(route="typesafe", api_key="   ")
+        )
 
 
 def test_fact_adjudicator_startup_validation() -> None:
@@ -372,7 +385,7 @@ def test_typesafe_client_evaluate_success_and_pricing() -> None:
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
     ts_client = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="test-key"), client=client
+        settings=TypeSafeSettings(route="typesafe", api_key="test-key"), client=client
     )
 
     answers, usage = ts_client.evaluate(
@@ -399,7 +412,7 @@ def test_typesafe_client_missing_usage_raises_provider_accounting_error() -> Non
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
     ts_client = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="test-key"), client=client
+        settings=TypeSafeSettings(route="typesafe", api_key="test-key"), client=client
     )
 
     with pytest.raises(ProviderAccountingError, match="carries no token usage"):
@@ -416,7 +429,7 @@ def test_typesafe_client_http_errors_raise_typesafe_provider_error() -> None:
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
     ts_client = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="test-key"), client=client
+        settings=TypeSafeSettings(route="typesafe", api_key="test-key"), client=client
     )
 
     with pytest.raises(TypeSafeProviderError, match="TypeSafe returned 401"):
@@ -447,7 +460,7 @@ def test_typesafe_client_retries_on_429_then_succeeds(
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
     ts_client = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="test-key"), client=client
+        settings=TypeSafeSettings(route="typesafe", api_key="test-key"), client=client
     )
 
     answers, usage = ts_client.evaluate(
@@ -473,7 +486,7 @@ def test_typesafe_client_retries_exhaustion_on_429_raises(
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
     ts_client = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="test-key"), client=client
+        settings=TypeSafeSettings(route="typesafe", api_key="test-key"), client=client
     )
 
     with pytest.raises(TypeSafeProviderError, match="TypeSafe returned 429"):
@@ -501,7 +514,9 @@ def test_typesafe_client_default_model_honored() -> None:
     transport = httpx.MockTransport(handler)
     client = httpx.Client(transport=transport)
     ts_client = TypeSafeSystemOneClient(
-        settings=TypeSafeSettings(api_key="test-key", model="custom-jev-model"),
+        settings=TypeSafeSettings(
+            route="typesafe", api_key="test-key", model="custom-jev-model"
+        ),
         client=client,
     )
 

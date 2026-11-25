@@ -120,13 +120,12 @@ Rules that keep this safe:
 Self-hosted deployments choose how this decision is made with
 `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`:
 
-- `prompt` (the default) asks a chat model for the decision as a structured
-  answer.
-- `jev` answers the same questions with a decision model (TypeSafe AI's
+- `jev` (the default) answers with a decision model (TypeSafe AI's
   System One) that picks from fixed choices (match, stance, window action)
-  instead of writing free text. It uses a TypeSafe API key, or your
-  OpenRouter key when it is served through OpenRouter
-  (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`).
+  instead of writing free text. By default it is served through OpenRouter
+  with your OpenRouter key (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`); the
+  direct `typesafe` route uses a TypeSafe API key instead.
+- `prompt` asks a chat model for the same decision as a structured answer.
 
 Both engines go through the same validation, the same confidence floor and
 the same writer. See [Models and providers](/docs/self-hosting/models).

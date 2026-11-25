@@ -93,7 +93,7 @@ class ObservationSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_OBS_")
 
-    small_model: str = Field(default="openai/gpt-5.6-luna")
+    small_model: str = Field(default="openai/gpt-6-luna")
 
 
 class ObservationAdjudicator:

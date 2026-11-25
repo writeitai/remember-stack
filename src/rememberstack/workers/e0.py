@@ -1305,7 +1305,7 @@ class StructurerSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_STRUCTURER_")
 
-    model: str = Field(default="openai/gpt-5.6-luna")
+    model: str = Field(default="openai/gpt-6-luna")
     min_blocks_for_llm: int = Field(default=8, ge=1)
     max_prompt_chars: int = Field(default=200_000, ge=1_000)
     min_heading_density_per_10k: float = Field(default=0.25, ge=0)
@@ -1317,7 +1317,7 @@ class SkeletonCheckSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_SKELETON_CHECK_")
 
-    model: str = Field(default="z-ai/glm-4.7-flash")
+    model: str = Field(default="openai/gpt-6-luna")
 
 
 class RoleSettings(BaseSettings):
@@ -1325,7 +1325,7 @@ class RoleSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_ROLE_")
 
-    model: str = Field(default="z-ai/glm-4.7-flash")
+    model: str = Field(default="openai/gpt-6-luna")
 
 
 _FALLBACK_PROMPT: Final = """You propose section starts for a document whose \

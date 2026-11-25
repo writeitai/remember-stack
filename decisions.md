@@ -2816,6 +2816,13 @@ else in D69 changes.
 
 ## D70. Per-stage model defaults are port configuration; the extraction default is `gpt-5.6-luna`
 
+> **Defaults amendment (2026-11-25, owner).** Every chat seat now defaults to
+> `openai/gpt-6-luna`: structure fallback, skeleton check, section role and
+> section summary (formerly flash-class, D79), claim extraction, relation
+> normalisation, entity resolution and the prompt fact engine. The
+> `gpt-5.6-luna` default and the cross-family checker-seat default below are
+> superseded; per-stage configuration stays binding.
+
 > **D98 amendment (2026-08-27).** Per-stage model configuration remains
 > binding. Any model seat or generation work attributed below specifically to
 > Ladybug/P2/community building is removed; live graph reads add no LLM stage.
@@ -6430,6 +6437,14 @@ building a managed mount/download service were also rejected. Full contract:
 [retrieval-access ablations](plan/analysis/locomo_retrieval_access_ablations.md).
 
 ## D126. Configurable System One Jev fact adjudication engine
+
+**Default-engine amendment, 2026-11-25 (owner):** Jev is the default fact
+adjudication engine and OpenRouter is its default route
+(`REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`, `REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`),
+so a self-hoster with only an OpenRouter key runs Jev with no TypeSafe key. The
+`prompt` engine and the direct `typesafe` route stay selectable; the ZDR rules
+below are unchanged. The "default `typesafe` route is unchanged" sentence below
+is superseded.
 
 **OpenRouter routing clarification, 2026-11-24:** Jev may also be served by
 OpenRouter's TypeSafe-compatible `/systemone` endpoint.

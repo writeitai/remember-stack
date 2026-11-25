@@ -156,11 +156,11 @@ _GENERATION_PARAMS: Final = {
 
 
 class SummarySettings(BaseSettings):
-    """The dedicated D70 flash-class D79 summary seat."""
+    """The dedicated D79 section-summary seat."""
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_SUMMARY_")
 
-    model: str = Field(default="z-ai/glm-4.7-flash")
+    model: str = Field(default="openai/gpt-6-luna")
 
 
 @dataclass(frozen=True)
