@@ -38,6 +38,7 @@ _BASE_REF = "refs/rememberstack/base"
 _OUT = "refs/rememberstack/out/"
 _IN = "refs/rememberstack/in/"
 _OWN_REFS = "refs/rememberstack/"
+_LEGACY_RECEIPTS = "refs/rememberstack/forget/"
 _BLOB_MODES = frozenset({"100644", "100755", "120000"})
 _SNAPSHOT_MESSAGE = "rememberstack compiled snapshot"
 
@@ -239,9 +240,12 @@ class LocalGitRepository:
                 }
                 if new_snapshot != snapshot:
                     updates[SNAPSHOT_REF] = new_snapshot
+                # Pre-D159 forget receipts pin whole old branches: drop them.
+                receipts = _values(mirror, _LEGACY_RECEIPTS)
+                updates.update(dict.fromkeys(receipts))
                 self._advance(
                     source=mirror,
-                    expected={**read, SNAPSHOT_REF: snapshot},
+                    expected={**read, **receipts, SNAPSHOT_REF: snapshot},
                     updates=updates,
                 )
                 extra = (
@@ -377,10 +381,10 @@ class LocalGitRepository:
                 if path not in compiled and value in citing
             )
         )
+        # Pre-D159 pages on the branch become snapshot pages; erase then
+        # applies the same body and owner checks as to any snapshot page.
         legacy_tip = {
-            path: entry
-            for path, entry in tip.items()
-            if (path, entry[1]) in legacy and entry[1] not in citing
+            path: entry for path, entry in tip.items() if (path, entry[1]) in legacy
         }
         if any(
             (path, value) in legacy or (value in citing and path not in blocking)
@@ -776,6 +780,17 @@ def _refs(repository: Path, prefix: str) -> tuple[str, ...]:
     """The refs under ``prefix``."""
     return tuple(
         _git(repository, "for-each-ref", "--format=%(refname)", prefix).splitlines()
+    )
+
+
+def _values(repository: Path, prefix: str) -> dict[str, str]:
+    """The refs under ``prefix`` and the object each names."""
+    output = _git(
+        repository, "for-each-ref", "--format=%(objectname) %(refname)", prefix
+    )
+    return dict(
+        (name, value)
+        for value, name in (line.split(" ", 1) for line in output.splitlines())
     )
 
 

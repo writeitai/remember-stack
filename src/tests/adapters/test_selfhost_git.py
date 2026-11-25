@@ -90,6 +90,8 @@ def test_erase_rewrites_only_history_that_names_the_document(tmp_path: Path) -> 
     purge: KGitPurgePort = _adapter(repository)
     lease = _Lease()
     (repository / "K1/unrelated.md").write_text("uncommitted edit\n", encoding="utf-8")
+    # A pre-D159 forget receipt pins the old branch, citing history included.
+    _git("-C", str(repository), "update-ref", "refs/rememberstack/forget/old", "HEAD~2")
 
     first = purge.erase(
         needles=(_TOKEN,),
@@ -132,6 +134,7 @@ def test_erase_rewrites_only_history_that_names_the_document(tmp_path: Path) -> 
         "redacted current page"
     )
     assert _output("-C", str(repository), "for-each-ref", "refs/original/") == ""
+    assert _output("-C", str(repository), "for-each-ref", "refs/rememberstack/") == ""
 
 
 def test_a_current_citation_blocks_and_keeps_its_history(tmp_path: Path) -> None:

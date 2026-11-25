@@ -353,8 +353,9 @@ class ForgetCatalog:
     ) -> tuple[UUID, ...]:
         """Reapply: recorded pages that are still compiled are rebuilt.
 
-        Returns the pages it marked. A page adopted as authored since keeps
-        its body and history: only its owner edits it.
+        Returns the pages it marked; a retired page stays retired (its
+        restored copy is still dropped). A page adopted as authored since
+        keeps its body and history: only its owner edits it.
         """
         with self._engine.begin() as connection:
             return tuple(
@@ -362,7 +363,9 @@ class ForgetCatalog:
                     connection.execute(
                         text("""UPDATE knowledge_artifacts
                         SET page_summary=NULL, content_hash=NULL, inputs_hash=NULL,
-                            last_compiled_at=NULL, status='stale'
+                            last_compiled_at=NULL,
+                            status=CASE WHEN status='tombstoned' THEN status
+                                        ELSE 'stale' END
                         WHERE deployment_id=:deployment_id
                           AND artifact_id=ANY(CAST(:ids AS uuid[]))
                           AND page_kind='compiled'
@@ -747,6 +750,21 @@ class _Sweep:
         # A cycle that published a page but has not finalized it yet holds
         # the page's citations only in its pending compilation.
         compiled = sorted(set(compiled) | set(self._ids(_PENDING_CITING, p)), key=str)
+        # Superseded compilations of pages that no longer cite the document
+        # still hold its summary and writer transcript.
+        collected["object_keys"] = sorted(
+            {
+                *collected["object_keys"],
+                *(
+                    str(key)
+                    for key in self._c.execute(
+                        _HISTORICAL_CITING_TRANSCRIPTS, p
+                    ).scalars()
+                    if key
+                ),
+            }
+        )
+        self._exec(_CLEAR_HISTORICAL_CITING, p)
         # Pages the last K step dropped for naming the document: once.
         compiled = sorted(
             set(compiled) | {UUID(value) for value in collected["k_dropped"]}, key=str
@@ -884,6 +902,9 @@ class _Sweep:
         completes; ordinary K work rebuilds them.
         """
         if not ids:
+            # Review flags and dispatches that name the document go anyway.
+            for statement in _COMPILED_ARTIFACT_STATEMENTS[2:]:
+                self._exec(statement, {**p, "compiled_artifact_ids": []})
             return
         params = {**p, "compiled_artifact_ids": ids}
         transcripts = self._c.execute(_TRANSCRIPTS, params).scalars()
@@ -1101,6 +1122,28 @@ _PENDING_CITING = """
            OR citation->>'relation_id'
               = ANY(CAST(CAST(:linked_fact_ids AS uuid[]) AS text[])))
 """
+
+_CITES_FORGOTTEN = """
+    jsonb_typeof(c.citations) = 'array' AND EXISTS (
+      SELECT 1 FROM jsonb_array_elements(c.citations) citation
+      WHERE citation->>'doc_id' = CAST(:doc_id AS text)
+         OR citation->>'claim_lineage_id' = CAST(:doc_id AS text)
+         OR citation->>'relation_id'
+            = ANY(CAST(CAST(:linked_fact_ids AS uuid[]) AS text[])))
+"""
+
+_HISTORICAL_CITING_TRANSCRIPTS = text(
+    "SELECT c.session_transcript_uri FROM knowledge_compilations c"
+    " WHERE c.deployment_id=:deployment_id AND " + _CITES_FORGOTTEN
+)
+
+_CLEAR_HISTORICAL_CITING = text(
+    "UPDATE knowledge_compilations c SET page_summary=NULL,"
+    " suggestions='[]'::jsonb"
+    " WHERE c.deployment_id=:deployment_id"
+    " AND (c.page_summary IS NOT NULL OR c.suggestions <> '[]'::jsonb)"
+    " AND " + _CITES_FORGOTTEN
+)
 
 _FACT_SHEETS = """
     SELECT artifact_id FROM knowledge_artifacts
