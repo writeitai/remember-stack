@@ -2274,3 +2274,44 @@ def test_removing_one_archived_carrier_leaves_the_review_to_the_other(
 
     status = "SELECT status::text FROM review_queue WHERE review_id = :r"
     assert rig.scalar(status, r=review_id) == "pending"
+
+
+def test_removing_the_only_archived_carrier_answers_the_review(
+    rig: _LifecycleRig,
+) -> None:
+    """The reviewed claim is carried only by the removed version: the removal
+    answers its review even though the archive had already retired it."""
+    rig.observe(
+        source_ref="only.md",
+        content=_two_sections(_FILLER_SENTENCE),
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+    second = rig.observe(
+        source_ref="only.md",
+        content=_two_sections("The kitchen was repainted."),
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+    claim_id = rig.scalar(
+        "SELECT cl.claim_id FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v AND cl.claim_text = :t",
+        v=second.version_id,
+        t="# The kitchen was repainted.",
+    )
+    fact_id = rig.relation()["relation_id"]
+    assert isinstance(claim_id, UUID) and isinstance(fact_id, UUID)
+    review_id = rig.review.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=fact_id,
+        claim_id=claim_id,
+        diff={"reason": "reextracted"},
+    )
+    _archive(rig, second.doc_id)
+
+    rig.deletion.delete_version(version_id=second.version_id)
+    _unarchive(rig, second.doc_id)
+
+    status = "SELECT status::text FROM review_queue WHERE review_id = :r"
+    assert rig.scalar(status, r=review_id) == "auto_resolved"

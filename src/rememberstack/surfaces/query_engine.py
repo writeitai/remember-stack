@@ -2891,9 +2891,7 @@ class QueryEngine:
         # An exact handle reads its neighbours even in an archived document
         # (D140 §3.3); the passages are marked archived (D159).
         chunks, dropped, _ = self._confirm_chunks(
-            deployment_id=deployment_id,
-            chunk_ids=adjacent_ids,
-            documents=DocumentSearchFilters(include_archived=True),
+            deployment_id=deployment_id, chunk_ids=adjacent_ids, include_archived=True
         )
         return self.mark_archived(
             deployment_id=deployment_id,
@@ -4572,6 +4570,7 @@ class QueryEngine:
         entity_ids: tuple[UUID, ...] = (),
         documents: DocumentSearchFilters | None = None,
         scope: TextScope | None = None,
+        include_archived: bool = False,
     ) -> tuple[tuple[ChunkEvidenceResult, ...], int, dict[UUID, int]]:
         """Confirm chunk content and any entity scope, then hydrate P1 bodies.
 
@@ -4588,7 +4587,11 @@ class QueryEngine:
         extra: dict[str, Any] = {}
         # D159: an archived document's passage confirms only on request (the
         # documents filter decides when there is one).
-        predicates: list[str] = [archived_lineage_hidden(filters=None, doc="ch.doc_id")]
+        predicates: list[str] = (
+            []
+            if include_archived
+            else [archived_lineage_hidden(filters=None, doc="ch.doc_id")]
+        )
         if documents is not None:
             version_sql, document_parameters = live_version_matches(
                 filters=documents, version="ch.version_id", prefix="documents_"

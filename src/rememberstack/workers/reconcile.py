@@ -787,6 +787,15 @@ class DeletionService:
                     reconciliation_id=reconciliation_id,
                     transitions=regained,
                 )
+            # A claim already non-current (an archive retired it) is in no
+            # transition below; its review is answered here once no retained
+            # version carries it (D159).
+            catalog.resolve_deleted_support_reviews(
+                deployment_id=deployment_id,
+                claim_ids=catalog.version_claim_ids(
+                    deployment_id=deployment_id, version_id=version_id
+                ),
+            )
         delta = _cascade_run(
             catalog=self._catalog,
             deployment_id=deployment_id,

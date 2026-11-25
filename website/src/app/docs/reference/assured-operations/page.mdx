@@ -134,9 +134,11 @@ the same filter claim and chunk search take
 
 [Archived](/docs/reference/http-api/ingest#post-documentsdoc_idarchive)
 documents are left out of every operation, with or without a filter. With
-`"include_archived": true` they are read as history: each claim and passage
-from one carries `"archived": true`, and its claims never count as current
-support for a fact.
+`"include_archived": true` their passages are included, each marked
+`"archived": true`. Claims are ranked from current testimony only, so settled
+archived claims are not returned here; they never count as current support for
+a fact, and stay readable as history through `claims_as_of` and
+`claims_visible_history`.
 
 ```json
 {"query": "worker restart interval",

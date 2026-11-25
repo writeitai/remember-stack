@@ -57,9 +57,12 @@ decides which results are included:
 
 Removed versions never match. [Archived](/docs/reference/http-api/ingest#post-documentsdoc_idarchive)
 documents are left out of every search, with or without a filter, unless
-`documents.include_archived` is `true`; then each claim and passage from an
-archived document carries `"archived": true`, and its claims never count as
-current support for a fact. The filter is applied
+`documents.include_archived` is `true`; then archived passages are included,
+each marked `"archived": true`. Claims are ranked from current testimony only:
+an archived document's claims come back only while its archive is still
+settling, marked `"archived": true`, and never count as current support for a
+fact. Once settled, read them as history through `claims_as_of` or the SQL
+view `claims_visible_history`. The filter is applied
 while ranking, before the `k` best are chosen, so asking for `k: 10` returns
 up to ten matching results even when better-scoring results from other
 documents exist.
