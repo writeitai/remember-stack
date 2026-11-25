@@ -170,6 +170,11 @@ class LocalFSObjectStore:
         self._prune_parents(path.parent, root=self._root)
         self._prune_parents(self._class_path(key=key).parent, root=self._metadata_root)
 
+    def remove_empty_folder_markers(
+        self, *, prefix: str, before_write: Callable[[], None] | None = None
+    ) -> None:
+        """A filesystem has no folder markers; ``delete`` prunes empty folders."""
+
     def purge_retained_versions_containing(
         self, *, keys: tuple[ObjectKey, ...], needle: bytes
     ) -> int:

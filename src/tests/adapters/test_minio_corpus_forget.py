@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from dataclasses import replace
 import json
 from pathlib import Path
+import posixpath
 from typing import Any
 from uuid import UUID
 from uuid import uuid4
@@ -312,6 +313,42 @@ def test_forget_erases_all_suffix_copies_without_touching_control(
         forget.state.source.path in paths or "llms.txt" in paths
         for paths in forget.sessions.invalidated
     )
+
+
+def test_forget_erases_empty_folder_markers(forget: _Forget) -> None:
+    """A gateway's "dir/" folder keys, even a folder left only as one, go too."""
+    suffix = corpus_suffix(forget.state.source.doc_id)
+    current = next(
+        doc
+        for doc in forget.state.selected()
+        if doc.doc_id == forget.state.source.doc_id
+    )
+    topic = posixpath.dirname(current.path)
+    for marker in (
+        topic + "/",
+        current.path + "/",
+        current.path + "/media/",
+        current.path + "/empty/deeper/",
+        "pdf/marker-only--" + suffix + "/",
+        "pdf/marker-only--" + suffix + "/nested/",
+    ):
+        forget.state.bucket.client.put_object(
+            Bucket=forget.state.bucket.name, Key=marker, Body=b""
+        )
+    forget.request()
+    forget.sweep_until_clean()
+    forget.assert_clean()
+    assert not [
+        key.root
+        for key in forget.state.bucket.store.iter_purge_keys()
+        if key.root.endswith("/") and suffix in key.root
+    ]
+    # The topic only this document filled is gone too, not left as a folder.
+    assert not [
+        key.root
+        for key in forget.state.bucket.store.iter_purge_keys()
+        if key.root.startswith(topic + "/")
+    ]
 
 
 def test_a_late_corpus_write_is_removed_by_the_next_sweep(

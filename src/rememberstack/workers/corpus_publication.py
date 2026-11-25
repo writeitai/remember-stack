@@ -47,6 +47,12 @@ class CorpusSourceStore(ObjectStorePort, StreamingReadPort, Protocol):
 class CorpusStore(MutableObjectStorePort, ObjectStorePort, Protocol):
     """The live corpus bucket: complete-object writes and whole-object reads."""
 
+    def remove_empty_folder_markers(
+        self, *, prefix: str, before_write: Callable[[], None] | None = None
+    ) -> None:
+        """Delete folders a gateway keeps (and lists as "x/") once emptied."""
+        ...
+
 
 def document_folder(key: str) -> tuple[str, str] | None:
     """Find the first document component, never an impersonating asset below it."""
@@ -212,6 +218,10 @@ class CorpusPublisher:
             removed += purger.purge_objects(
                 keys=(), prefixes=tuple(ObjectKey(path) for path in sorted(folders))
             )
+        # The navigation rewrite dropped the index of a topic that only this
+        # document filled; a gateway that keeps folders still lists the topic.
+        for parent in sorted(ancestors - {""}, key=lambda name: -name.count("/")):
+            self._store.remove_empty_folder_markers(prefix=parent)
         removed += purger.purge_retained_versions_containing(
             keys=tuple(ObjectKey(path) for path in sorted(navigation)),
             needle=suffix.encode(),
@@ -246,6 +256,7 @@ class CorpusPublisher:
                 navigation.add(key.root)
             else:
                 self._delete(before_write=lock.check, key=key)
+        self._store.remove_empty_folder_markers(prefix="", before_write=lock.check)
         return folders, navigation
 
     def _publish_document(
@@ -296,6 +307,10 @@ class CorpusPublisher:
                     )
             for key in sorted(existing - desired):
                 self._delete(before_write=lock.check, key=ObjectKey(key))
+            if existing - desired:
+                self._store.remove_empty_folder_markers(
+                    prefix=export.path, before_write=lock.check
+                )
             for file in changed:
                 if isinstance(file, GeneratedFile) and file.path not in {
                     "document.json",
@@ -368,6 +383,7 @@ class CorpusPublisher:
         self._store.abort_uploads(prefix=path, before_write=lock.check)
         for key in self._store.iter_keys(prefix=path):
             self._delete(before_write=lock.check, key=key)
+        self._store.remove_empty_folder_markers(prefix=path, before_write=lock.check)
 
     def _navigation(
         self,

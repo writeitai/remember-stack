@@ -456,7 +456,45 @@ class MinIOObjectStore:
                 raise
 
     def iter_keys(self, *, prefix: str) -> Iterator[ObjectKey]:
-        """Enumerate all pages, retaining only boundary-matching object names."""
+        """Enumerate all pages of boundary-matching object names.
+
+        A folder marker (see ``remove_empty_folder_markers``) is not an object.
+        """
+        for name in self._iter_listed(prefix=prefix):
+            if not name.endswith("/"):
+                yield ObjectKey(name)
+
+    def remove_empty_folder_markers(
+        self, *, prefix: str, before_write: Callable[[], None] | None = None
+    ) -> None:
+        """Delete the empty-folder markers below ``prefix``, deepest first.
+
+        Some S3 gateways (mountable, SeaweedFS) keep a folder after its last
+        object is deleted and list it as a key ending in "/", which no engine
+        key can be. Deleting one can empty its parent, which the gateway then
+        lists, so list again until none remain. A marker that survives its
+        deletion raises rather than pass for an empty folder.
+        """
+        deleted: set[str] = set()
+        while markers := sorted(
+            (name for name in self._iter_listed(prefix=prefix) if name.endswith("/")),
+            key=lambda name: (-name.count("/"), name),
+        ):
+            if deleted.issuperset(markers):
+                raise RuntimeError(f"folder markers survived deletion: {markers!r}")
+            for name in markers:
+                validate_object_path(name, prefix=True)
+                if before_write:
+                    before_write()
+                try:
+                    self._client.delete_object(Bucket=self._bucket, Key=name)
+                except ClientError as error:
+                    if _error_code(error=error) not in {"404", "NoSuchKey", "NotFound"}:
+                        raise
+            deleted.update(markers)
+
+    def _iter_listed(self, *, prefix: str) -> Iterator[str]:
+        """Every listed name under the boundary, folder markers included."""
         boundary = validate_object_path(prefix, prefix=True)
         token = ""
         seen: set[str] = set()
@@ -470,7 +508,7 @@ class MinIOObjectStore:
             )
             for item in page.get("Contents", ()):
                 if matches_object_prefix(item["Key"], prefix=boundary):
-                    yield ObjectKey(item["Key"])
+                    yield item["Key"]
             if not page.get("IsTruncated", False):
                 return
             token = page.get("NextContinuationToken", "")
@@ -491,7 +529,8 @@ class MinIOObjectStore:
         """Delete exact keys/descendants; return how many objects were removed.
 
         The count covers current objects, retained versions and unfinished
-        uploads, so a caller can tell erasure from absence. Only existing
+        uploads, so a caller can tell erasure from absence. Empty-folder
+        markers below a prefix are deleted too, but not counted. Only existing
         objects are deleted, so a versioned bucket gains no delete marker for
         an absent key. ``keep`` names exact keys (with their versions) that
         are never touched.
@@ -515,10 +554,11 @@ class MinIOObjectStore:
                     before_write()
                 self.delete(key=key)
                 removed += 1
+            self.remove_empty_folder_markers(prefix=boundary, before_write=before_write)
         # Suspended versioning still retains source-bearing history. Never
         # confuse an empty current listing with erasure of those bytes.
         if self._has_versions():
-            for name, version in self._iter_versions(prefix=""):
+            for name, version, holds_bytes in self._iter_versions(prefix=""):
                 if name in kept:
                     continue
                 if name in exact or any(
@@ -530,7 +570,10 @@ class MinIOObjectStore:
                     self._client.delete_object(
                         Bucket=self._bucket, Key=name, VersionId=version
                     )
-                    removed += 1
+                    # A delete marker or folder-marker version holds no bytes;
+                    # counting it would keep a clean sweep looking dirty.
+                    if holds_bytes and not name.endswith("/"):
+                        removed += 1
         try:
             for name, upload_id in self._iter_uploads(prefix=""):
                 if name in kept:
@@ -558,10 +601,10 @@ class MinIOObjectStore:
             if self._exists(normalized=normalized):
                 remaining.append(normalized)
         for prefix in prefixes:
-            remaining.extend(key.root for key in self.iter_keys(prefix=prefix.root))
+            remaining.extend(self._iter_listed(prefix=prefix.root))
         boundaries = tuple(validate_object_path(p.root, prefix=True) for p in prefixes)
         if self._has_versions():
-            for name, version in self._iter_versions(prefix=""):
+            for name, version, _ in self._iter_versions(prefix=""):
                 if name in exact or any(
                     matches_object_prefix(name, prefix=boundary)
                     for boundary in boundaries
@@ -610,10 +653,14 @@ class MinIOObjectStore:
         return removed
 
     def iter_purge_keys(self) -> Iterator[ObjectKey]:
-        """Include retained keys and uploads that no published object exposes."""
-        yield from self.iter_keys(prefix="")
+        """Include retained keys and uploads that no published object exposes.
+
+        Folder markers are listed too, so a folder left only as a marker is
+        still found by name (a corpus folder by its document suffix).
+        """
+        yield from (ObjectKey(name) for name in self._iter_listed(prefix=""))
         if self._has_versions():
-            for name, _ in self._iter_versions(prefix=""):
+            for name, _, _ in self._iter_versions(prefix=""):
                 yield ObjectKey(name)
         try:
             for name, _ in self._iter_uploads(prefix=""):
@@ -637,14 +684,21 @@ class MinIOObjectStore:
             return False
         return status in {"Enabled", "Suspended"}
 
-    def _iter_versions(self, *, prefix: str) -> Iterator[tuple[str, str]]:
-        for item in self._iter_version_items(prefix=prefix, markers=True):
-            yield item["Key"], item["VersionId"]
+    def _iter_versions(self, *, prefix: str) -> Iterator[tuple[str, str, bool]]:
+        """Every version and delete marker: (key, version id, holds bytes)."""
+        for page in self._iter_version_pages(prefix=prefix):
+            for item in page.get("Versions", ()):
+                yield item["Key"], item["VersionId"], True
+            for item in page.get("DeleteMarkers", ()):
+                yield item["Key"], item["VersionId"], False
 
-    def _iter_version_items(
-        self, *, prefix: str, markers: bool = False
-    ) -> Iterator[_ObjectVersion]:
-        """Every object version (and, with ``markers``, delete marker), all pages."""
+    def _iter_version_items(self, *, prefix: str) -> Iterator[_ObjectVersion]:
+        """Every object version, all pages."""
+        for page in self._iter_version_pages(prefix=prefix):
+            yield from page.get("Versions", ())
+
+    def _iter_version_pages(self, *, prefix: str) -> Iterator[_ListVersionsOutput]:
+        """Every page of the version listing, refusing a broken continuation."""
         key_marker = version_marker = ""
         seen: set[tuple[str, str]] = set()
         while True:
@@ -654,9 +708,7 @@ class MinIOObjectStore:
                 KeyMarker=key_marker,
                 VersionIdMarker=version_marker,
             )
-            yield from page.get("Versions", ())
-            if markers:
-                yield from page.get("DeleteMarkers", ())
+            yield page
             if not page.get("IsTruncated", False):
                 return
             key_marker = page.get("NextKeyMarker", "")
