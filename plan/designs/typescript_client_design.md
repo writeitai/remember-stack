@@ -2,7 +2,8 @@
 
 **Status:** owner-selected direction; binding upon approved PR merge. No npm publication claim.
 **Date:** 2026-10-02. **Decision:** D141.
-**Analysis:** [full Python inventory and alternatives](../analysis/typescript_client_parity.md).
+**Analysis:** [full Python inventory and alternatives](../analysis/typescript_client_parity.md),
+[npm distribution decision](../analysis/typescript_client_parity.md#npm-distribution-decision-2026-11-25).
 
 ## 1. Problem, decision and ownership
 
@@ -471,8 +472,13 @@ trigger automatic deployment, registry publication or API changes.
 Keep npm version independent from Python, with explicit Python baseline and
 schema hashes in release metadata. Releases are immutable. Before publication
 verify the actual organization ownership, package contents, registry publisher
-identity, reviewed source commit and all drift/parity gates. Publication uses
-npm trusted publishing or operator-managed credentials; no secret values in
-git. Merge/build can finish before publisher configuration exists, but docs
-must label local/package installation honestly until registry availability is
-verified. This work requests PR merges, not an unreviewed npm upload.
+identity, reviewed source commit and all drift/parity gates. The product
+publishes `@rememberdev/client` to npm under Autoboard D53. Any bootstrap
+credential is restricted to the initial release and revoked afterward. The
+standing publisher is the GitHub-hosted `typescript-client-publish.yml`
+workflow, dispatched from `main`, with the `npm-publish` environment restricted
+to `main`. It publishes the packed artifact with provenance through npm trusted
+publishing. Build and pack run without access to the publish identity.
+The [delivery plan](../plans/typescript_client.md) gives the release order and
+verification steps. Public docs advertise the npm install once the registry
+version and clean-project example have been verified.

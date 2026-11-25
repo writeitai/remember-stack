@@ -6,8 +6,8 @@ credential loading, binary/file ingest and transport-neutral tool catalogue
 support. CLI commands and MCP servers are separate packages; this package has
 no executable or MCP host.
 
-This source package has not been published to npm. Build and install its local
-tarball to try it:
+To try the SDK from this source checkout, build and install its local
+tarball:
 
 ```bash
 uv sync --group dev
@@ -146,8 +146,10 @@ OpenAPI 3.0 document. Python source changes, schema changes and unimplemented
 cross-field validators fail checks until fixtures/code/contracts are updated
 and reviewed. CI does not author committed generated artifacts.
 
-There is no npm publication workflow. First registry publication requires a
-separate owner instruction and verified namespace/publisher configuration.
+The first npm release follows [the delivery plan](../../plan/plans/typescript_client.md#typescript-client-delivery).
+Verify organization control, terms acceptance and publisher configuration before
+release. Successive releases use the GitHub-hosted `typescript-client-publish.yml`
+workflow and the `npm-publish` environment for npm trusted publishing.
 
 Timeouts and poll intervals must be finite, greater than zero and at most
 2,147,483,647 milliseconds (Node's timer limit). Invalid values raise

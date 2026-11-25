@@ -1,0 +1,87 @@
+name: Publish TypeScript client to npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact SDK version in packages/typescript-client/package.json
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: typescript-client-npm-publish
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24.22.3'
+
+jobs:
+  pack:
+    if: github.repository == 'writeitai/remember-stack' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/typescript-client
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+      - name: Match the release to the committed package version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=commonjs <<'NODE'
+          const assert = require('node:assert/strict');
+          const {name, version} = require('./package.json');
+          assert.equal(name, '@rememberdev/client');
+          assert.equal(version, process.env.RELEASE_VERSION);
+          NODE
+      - run: npm ci --ignore-scripts
+      - run: npm run check:package
+      - name: Pack the npm artifact and record its inputs
+        run: |
+          npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP"
+          {
+            printf 'Source: %s\n\n' "$GITHUB_SHA"
+            printf 'Node: %s, npm: %s\n\n' "$(node --version)" "$(npm --version)"
+            printf '```\n'
+            cat contracts/metadata.json
+            sha256sum "$RUNNER_TEMP"/rememberdev-client-*.tgz
+            printf '```\n'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: typescript-client-npm
+          path: ${{ runner.temp }}/rememberdev-client-*.tgz
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-publish
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: typescript-client-npm
+          path: package-artifact
+      - name: Publish with npm trusted publishing and provenance
+        run: npm publish ./package-artifact/rememberdev-client-*.tgz --access public --ignore-scripts --provenance

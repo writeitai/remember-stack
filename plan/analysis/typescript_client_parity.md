@@ -283,3 +283,40 @@ references and generation replacement, and declared effective periods. Existing
 search/context and ingest signatures expanded. Regeneration must use the merged
 Python source, and recorded behavior tests must cover both the new methods and
 changed signatures before fresh implementation approval.
+
+## npm distribution decision, 2026-11-25
+
+The SDK already builds ESM and CommonJS with declarations, and the engine and
+cloud drift checks passed in [engine PR #655](https://github.com/writeitai/remember-stack/pull/655)
+and [cloud PR #1107](https://github.com/writeitai/ultimate-memory-cloud/pull/1107).
+A public npm release gives a clean Node project the same typed client without a
+source checkout or local build. A tarball or Git install would still make
+consumers assemble their own distribution path. A separate cloud package would
+split the publisher and the contract. The public registry adds no package
+hosting charge on npm's free public-organization plan. The release uses two
+short hosted CI jobs and adds no runtime compute or storage.
+
+The [npm organization page](https://www.npmjs.com/org/rememberdev) displayed
+zero public packages on 2026-11-25. The `@rememberdev/client` registry lookup
+returned 404. The browser was signed out, so company control and prior terms
+acceptance still require proof. The [npm Open Source Terms](https://docs.npmjs.com/policies/open-source-terms/)
+include indemnity. Owner-only acceptance and human-only authentication stay
+under Autoboard D50.
+
+Start with one reviewed, short-lived bootstrap path once the account gates are
+met. A protected CI environment can hold a temporary organization-scoped
+credential while GitHub's OIDC permission supplies provenance for that first
+publish. Revoke the credential and remove its environment secret and workflow
+path immediately after success. A staged first release with provenance and
+maintainer 2FA is also viable if direct token publication is unavailable.
+Long-term publishing uses only the package-specific GitHub OIDC trust. npm's
+package settings bind the workflow filename and environment, and the first
+successful OIDC publication must validate that trust within two days. A failed
+build or authentication blocks the publish. Inspect npm before retrying a
+publish whose outcome is unclear because versions are immutable.
+
+Provider references, retrieved 2026-11-25:
+[npm free organizations](https://docs.npmjs.com/creating-an-organization/),
+[trusted publishers](https://docs.npmjs.com/trusted-publishers/),
+[provenance](https://docs.npmjs.com/generating-provenance-statements/),
+[staged publishing](https://docs.npmjs.com/staged-publishing/).
