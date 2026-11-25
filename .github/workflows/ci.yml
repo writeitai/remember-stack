@@ -28,6 +28,7 @@ jobs:
       surfaces: ${{ steps.filter.outputs.surfaces }}
       adapters: ${{ steps.filter.outputs.adapters }}
       compose: ${{ steps.filter.outputs.compose }}
+      docs_client: ${{ steps.filter.outputs.docs_client }}
       shared_core: ${{ steps.filter.outputs.shared_core }}
       ci_control: ${{ steps.filter.outputs.ci_control }}
     steps:
@@ -219,6 +220,7 @@ jobs:
     if: >-
       github.event_name == 'push'
       || needs.changes.outputs.compose == 'true'
+      || needs.changes.outputs.docs_client == 'true'
       || needs.changes.outputs.ci_control == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -388,6 +390,25 @@ jobs:
           printf '%s' "$readiness" |
             docker compose --env-file .env exec -T api python -c \
               'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
+
+      - name: Set up Python for the published client
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Verify the documented CLI, Python SDK and MCP workflows
+        shell: bash
+        env:
+          REMEMBER_API_URL: http://localhost:8000
+        run: |
+          scratch="$(mktemp -d)"
+          python -m venv "$scratch/venv"
+          source "$scratch/venv/bin/activate"
+          cd "$scratch"
+          export REMEMBER_CONFIG_DIR="$scratch/config"
+          pip install remember
+          pip install 'mcp==1.28.1'
+          python "$GITHUB_WORKSPACE/.github/ci/docs-client-smoke.py" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Stage an upgrade from the prior schema
         run: |
