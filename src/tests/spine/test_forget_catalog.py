@@ -214,7 +214,7 @@ def test_sweep_erases_the_subtree_and_keeps_the_control_exactly(
     # on the record.
     assert {key.root for key in findings.object_keys} == {
         # the transcript of the rebuilt page's compilation
-        "mem://artifacts/writer-transcript.json",
+        "mem://artifacts/writer-transcript.json"
     }
     # Plan-run transcripts go with the deployment's plan runs, uncounted.
     assert {key.root for key in findings.fixture_keys} == {
