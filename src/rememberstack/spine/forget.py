@@ -892,9 +892,10 @@ class _Sweep:
             key=str,
         )
         p["exclusive_entity_ids"] = self._ids(_EXCLUSIVE_ENTITIES, p)
-        # A surviving decision may cite an entity merged into one this
-        # document touched; the redirects are read before any entity is
-        # retired and kept on the record for later sweeps.
+        # A surviving decision may cite an entity of the merge tree this
+        # document touched (an absorbed one, or only the survivor); the
+        # redirects are read before any entity is retired and kept on the
+        # record for later sweeps.
         p["rationale_entity_ids"] = sorted(
             set(self._ids(_REDIRECT_ANCESTORS, p))
             | {UUID(value) for value in collected["redirect_entity_ids"]},
@@ -1433,15 +1434,22 @@ _FACT_ENDPOINTS = """
 # and from no mention of another, not forgotten document, and no surviving
 # fact uses it.
 _REDIRECT_ANCESTORS = """
-    WITH RECURSIVE closure(entity_id) AS (
+    WITH RECURSIVE survivors(entity_id) AS (
       SELECT CAST(value AS uuid) FROM unnest(CAST(:entity_ids AS uuid[])) value
+      UNION
+      SELECT x.merged_into FROM entities x JOIN survivors s ON x.entity_id=s.entity_id
+      WHERE x.deployment_id=:deployment_id AND x.merged_into IS NOT NULL
+    ), closure(entity_id) AS (
+      SELECT entity_id FROM survivors
       UNION
       SELECT x.entity_id FROM entities x JOIN closure c ON x.merged_into=c.entity_id
       WHERE x.deployment_id=:deployment_id
     )
     SELECT entity_id FROM closure
 """
-"""Every entity the document touched and every entity redirected into one."""
+"""Every entity in the merge trees the document touched: each touched
+entity, the survivors it redirects to, and every entity redirected into
+those."""
 
 _EXCLUSIVE_ENTITIES = """
     SELECT e.entity_id FROM entities e

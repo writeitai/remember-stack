@@ -1162,21 +1162,18 @@ class LifecycleCatalog:
         self,
         *,
         doc_id: UUID,
-        since: datetime,
         retired_claim_ids: tuple[UUID, ...],
         relation_ids: tuple[UUID, ...],
         observation_ids: tuple[UUID, ...],
     ) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
         """The facts a settled archive's sweep may close (D159).
 
-        A fact a claim this run retired evidences, one only this lineage ever
-        evidenced, or one this lineage's evidence reached at or after the
-        archive instant. A shared fact this lineage evidenced before the
-        archive is the business of whichever run drops its other support.
+        A fact a claim this sweep itself retired evidences (it removed the
+        last support), or one no other lineage ever evidenced. A shared fact
+        is the business of whichever run drops its other support.
         """
         params = {
             "doc_id": doc_id,
-            "since": since,
             "retired": [str(item) for item in retired_claim_ids],
         }
         with self._engine.connect() as connection:
@@ -1243,10 +1240,11 @@ class LifecycleCatalog:
         """Archived lineages whose cascade still has work left (D159).
 
         A source archive defers its cascade until its observing cycle is
-        finalized, and work still in flight can attach support after any
-        archive: a lineage is pending while
-        one of its claims is current, or evidences an open fact that has no
-        current support and no live review holding it open. Each row is
+        finalized and is then pending once for its first, full cascade.
+        Work still in flight can attach support after any archive: a
+        settled lineage is pending while one of its claims is current, or
+        evidences an open fact only it ever evidenced that has no current
+        support and no live review holding it open. Each row is
         ``(doc_id, archived_at)``, which names the archive episode.
         Deployment-wide, not per cycle: the cascade re-derives from current
         state, so a finalizer crash self-heals on the next pass.
@@ -2246,22 +2244,13 @@ def archive_cycle_open(*, doc: str) -> str:
       )"""
 
 
-def _late_archive_fact(
-    *, evidence: str, column: str, fact: str, doc: str, since: str
-) -> str:
-    """SQL predicate: a settled archive's late work owns fact ``fact``.
+def _exclusive_to_lineage(*, evidence: str, column: str, fact: str, doc: str) -> str:
+    """SQL predicate: no lineage but ``doc`` ever evidenced fact ``fact``.
 
-    Only lineage ``doc`` ever evidenced it, or its evidence reached it at or
-    after ``since`` (the archive instant). ``column`` is the evidence table's
-    fact column, ``fact`` the outer fact id.
+    ``column`` is the evidence table's fact column, ``fact`` the outer fact id.
     """
-    return f"""(
-        NOT EXISTS (SELECT 1 FROM {evidence} other
-                    WHERE other.{column} = {fact} AND other.doc_id <> {doc})
-        OR EXISTS (SELECT 1 FROM {evidence} late
-                   WHERE late.{column} = {fact} AND late.doc_id = {doc}
-                     AND late.created_at >= {since})
-    )"""
+    return f"""NOT EXISTS (SELECT 1 FROM {evidence} other
+                    WHERE other.{column} = {fact} AND other.doc_id <> {doc})"""
 
 
 _LATE_ARCHIVE_FACTS = {
@@ -2273,7 +2262,7 @@ _LATE_ARCHIVE_FACTS = {
               EXISTS (SELECT 1 FROM {evidence} retired
                       WHERE retired.{kind}_id = f.{kind}_id
                         AND retired.claim_id = ANY(CAST(:retired AS uuid[])))
-              OR {_late_archive_fact(evidence=evidence, column=f"{kind}_id", fact=f"f.{kind}_id", doc="CAST(:doc_id AS uuid)", since="CAST(:since AS timestamptz)")}
+              OR {_exclusive_to_lineage(evidence=evidence, column=f"{kind}_id", fact=f"f.{kind}_id", doc="CAST(:doc_id AS uuid)")}
           )
         ORDER BY f.{kind}_id
         """
@@ -2294,7 +2283,9 @@ _SELECT_PENDING_ARCHIVES = text(
       -- a source archive waits for its observing cycle's finalization (the
       -- retract-timing barrier): a move resolves as a support swap
       AND NOT {archive_cycle_open(doc="d")}
-      AND EXISTS (
+      -- a source archive its cycle has released is settled once, whatever
+      -- work it has (its first, full cascade); then only work left over
+      AND (d.archived_cycle_id IS NOT NULL OR EXISTS (
           SELECT 1 FROM claims cl
           WHERE cl.deployment_id = d.deployment_id
             AND cl.doc_id = d.doc_id
@@ -2306,9 +2297,9 @@ _SELECT_PENDING_ARCHIVES = text(
                     WHERE e.claim_id = cl.claim_id
                       AND r.invalidated_at IS NULL AND r.evidence_count = 0
                       AND NOT {_review_holds(kind="relation", fact="r.relation_id", deployment="r.deployment_id")}
-                      -- a settled archive waits only on what late work left
-                      AND (d.archived_cycle_id IS NOT NULL
-                           OR {_late_archive_fact(evidence="relation_evidence", column="relation_id", fact="r.relation_id", doc="d.doc_id", since="d.archived_at")})
+                      -- a settled archive waits only on facts no other
+                      -- lineage evidences
+                      AND {_exclusive_to_lineage(evidence="relation_evidence", column="relation_id", fact="r.relation_id", doc="d.doc_id")}
                 )
                 OR EXISTS (
                     SELECT 1 FROM observation_evidence e
@@ -2316,11 +2307,10 @@ _SELECT_PENDING_ARCHIVES = text(
                     WHERE e.claim_id = cl.claim_id
                       AND o.invalidated_at IS NULL AND o.evidence_count = 0
                       AND NOT {_review_holds(kind="observation", fact="o.observation_id", deployment="o.deployment_id")}
-                      AND (d.archived_cycle_id IS NOT NULL
-                           OR {_late_archive_fact(evidence="observation_evidence", column="observation_id", fact="o.observation_id", doc="d.doc_id", since="d.archived_at")})
+                      AND {_exclusive_to_lineage(evidence="observation_evidence", column="observation_id", fact="o.observation_id", doc="d.doc_id")}
                 )
             )
-      )
+      ))
     ORDER BY d.doc_id
     """
 )

@@ -493,7 +493,7 @@ class ReconcileHandler:
                 deployment_id=deployment_id,
                 doc_id=doc_id,
                 reconciliation_id=reconciliation_id,
-                settled_at=archived_at,
+                settled=True,
             )
         try:
             self._profile_refresher.refresh_for_facts(
@@ -670,7 +670,7 @@ class CycleFinalizer:
                     deployment_id=deployment_id,
                     doc_id=doc_id,
                     reconciliation_id=reconciliation_id,
-                    settled_at=None if first else archived_at,
+                    settled=not first,
                 )
         return tuple(finalized)
 
@@ -1004,7 +1004,7 @@ def archive_lineage_on(
         reconciliation_id=archive_reconciliation_id(
             doc_id=doc_id, archived_at=archived_at
         ),
-        settled_at=None if first else archived_at,
+        settled=not first,
     )
     return delta, archived_at
 
@@ -1179,29 +1179,27 @@ def _archive_cascade(
     deployment_id: UUID,
     doc_id: UUID,
     reconciliation_id: UUID,
-    settled_at: datetime | None,
+    settled: bool,
 ) -> ReconciliationDelta:
     """The archive cascade (§8): currency → recount → close, archive-marked.
 
     Retires every claim of the lineage no live version carries — all of them
     while it is archived — and recounts every fact any of the lineage's
-    claims touches. The episode's first cascade (``settled_at`` None) closes
+    claims touches. The episode's first cascade (``settled`` False) closes
     every such fact left without support. A later sweep of a settled archive
-    (``settled_at`` = its archive instant) closes only what late work left:
-    a fact a claim it retired evidences, one only this lineage ever
-    evidenced, or one this lineage's evidence reached at or after the
-    archive. A shared fact whose other support drops later belongs to the
-    run that drops it. Idempotent under the archive reconciliation id.
+    closes only a fact whose last support this sweep itself retired, or one
+    no other lineage ever evidenced: a shared fact is closed by whichever
+    run drops its other support. Idempotent under the archive id; it runs
+    in one transaction, so its own retirements are never replayed.
     """
+    fresh = catalog.stale_for_lineage_removal(
+        deployment_id=deployment_id, doc_id=doc_id
+    )
     return _cascade_run(
         catalog=catalog,
         deployment_id=deployment_id,
         transitions=_with_recorded(
-            catalog=catalog,
-            transitions=catalog.stale_for_lineage_removal(
-                deployment_id=deployment_id, doc_id=doc_id
-            ),
-            reconciliation_id=reconciliation_id,
+            catalog=catalog, transitions=fresh, reconciliation_id=reconciliation_id
         ),
         reconciliation_id=reconciliation_id,
         boundary=None,
@@ -1209,7 +1207,7 @@ def _archive_cascade(
             deployment_id=deployment_id, doc_id=doc_id
         ),
         archive=True,
-        late_work=None if settled_at is None else (doc_id, settled_at),
+        late_work=(doc_id, tuple(item.claim_id for item in fresh)) if settled else None,
     )
 
 
@@ -1247,7 +1245,7 @@ def _cascade_run(
     boundary: object,
     scope_claim_ids: tuple[UUID, ...],
     archive: bool,
-    late_work: tuple[UUID, datetime] | None = None,
+    late_work: tuple[UUID, tuple[UUID, ...]] | None = None,
 ) -> ReconciliationDelta:
     """Apply one source-acted basis change end to end, idempotently.
 
@@ -1284,8 +1282,7 @@ def _cascade_run(
     if late_work is not None:
         closable_relations, closable_observations = catalog.late_archive_facts(
             doc_id=late_work[0],
-            since=late_work[1],
-            retired_claim_ids=tuple(item.claim_id for item in transitions),
+            retired_claim_ids=late_work[1],
             relation_ids=closable_relations,
             observation_ids=closable_observations,
         )

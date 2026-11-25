@@ -391,3 +391,51 @@ def test_a_d135_caller_closure_rendered_in_a_session_offset_is_relabelled(
         )
         == 1
     )
+
+
+def test_the_upgrade_marks_source_archives_an_earlier_release_settled(
+    migration_config: tuple[Config, Engine], tmp_path: Path
+) -> None:
+    """p9_56_0077: a source archive whose cycle finalized and whose claims are
+    no longer current is settled; one still waiting keeps its cycle."""
+    config, engine = migration_config
+    reset_database(config=config)
+    command.upgrade(config=config, revision="head")
+    _bootstrap(engine)
+    rig = _LifecycleRig(engine=engine, root=tmp_path)
+    settled = rig.observe(source_ref="settled.md", content=f"{_FACT_SENTENCE}\n")
+    waiting = rig.observe(source_ref="waiting.md", content="Acme opened an office.\n")
+    rig.drain()
+    command.downgrade(config=config, revision="p9_55_0076")
+    finalized, open_cycle = uuid4(), uuid4()
+    with engine.begin() as connection:
+        for cycle, finalized_at in ((finalized, "now()"), (open_cycle, "NULL")):
+            connection.execute(
+                text(
+                    "INSERT INTO connector_sync_cycles (cycle_id, deployment_id,"
+                    f" source_kind, completed_at, finalized_at) VALUES (:c, :d,"
+                    f" 'watched_directory', now(), {finalized_at})"
+                ),
+                {"c": cycle, "d": _DEPLOYMENT_ID},
+            )
+        connection.execute(
+            text("UPDATE claims SET is_current_testimony = false WHERE doc_id = :d"),
+            {"d": settled.doc_id},
+        )
+        for doc_id, cycle in (
+            (settled.doc_id, finalized),
+            (waiting.doc_id, open_cycle),
+        ):
+            connection.execute(
+                text(
+                    "UPDATE documents SET archived_at = now(), archived_by = 'source',"
+                    " archived_cycle_id = :c WHERE doc_id = :d"
+                ),
+                {"c": cycle, "d": doc_id},
+            )
+
+    command.upgrade(config=config, revision="head")
+
+    marker = "SELECT archived_cycle_id FROM documents WHERE doc_id = :d"
+    assert _scalar(engine, marker, d=settled.doc_id) is None
+    assert _scalar(engine, marker, d=waiting.doc_id) == open_cycle

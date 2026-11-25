@@ -671,43 +671,127 @@ def test_intra_cycle_move_is_a_support_swap_never_a_retract(rig: _LifecycleRig) 
     )
 
 
-def test_a_settled_archive_leaves_a_later_support_swap_to_its_cycle(
-    rig: _LifecycleRig,
-) -> None:
-    """D159: document A is archived while B also supports the fact. In a later
-    cycle the fact moves from B to C; B's reconcile has dropped its support
-    while C's version is still queued. A's settled archive never closes the
-    fact under its own id: the swap stays the cycle's to resolve."""
-    archived = rig.observe(source_ref="archived.md", content=f"{_FACT_SENTENCE}\n")
-    cycle_1 = _cycle(rig)
-    rig.observe(
-        source_ref="move-b.md", content=f"{_FACT_SENTENCE}\n", sync_cycle_id=cycle_1
-    )
-    _complete(rig, cycle_1)
-    rig.drain()
-    _finalize(rig)
-    _archive(rig, archived.doc_id)
-    assert rig.relation()["evidence_count"] == 1  # B still supports it
-
-    cycle_2 = _cycle(rig)
+def _swap_b_to_c_with_c_queued(rig: _LifecycleRig) -> UUID:
+    """B drops its support for the fact in a new cycle while C, which
+    reasserts it, is still queued; returns the open cycle."""
+    cycle = _cycle(rig)
     rig.observe(  # the section LEAVES document B…
-        source_ref="move-b.md", content=f"{_FILLER_SENTENCE}\n", sync_cycle_id=cycle_2
+        source_ref="move-b.md", content=f"{_FILLER_SENTENCE}\n", sync_cycle_id=cycle
     )
     rig.drain()
     assert rig.relation()["evidence_count"] == 0
     rig.observe(  # …and ARRIVES in document C, still queued
-        source_ref="move-c.md", content=f"{_FACT_SENTENCE}\n", sync_cycle_id=cycle_2
+        source_ref="move-c.md", content=f"{_FACT_SENTENCE}\n", sync_cycle_id=cycle
     )
-    _finalize(rig)  # the archive sweep runs; the cycle is not complete yet
+    return cycle
 
+
+def _supported_by_b(rig: _LifecycleRig) -> None:
+    """Document B supports the fact, observed in a finalized cycle."""
+    cycle = _cycle(rig)
+    rig.observe(
+        source_ref="move-b.md", content=f"{_FACT_SENTENCE}\n", sync_cycle_id=cycle
+    )
+    _complete(rig, cycle)
+    rig.drain()
+    _finalize(rig)
+
+
+def _swap_resolves_without_a_retraction(rig: _LifecycleRig, cycle: UUID) -> None:
+    """The open swap never closes the fact, before or after its cycle."""
+    _finalize(rig)  # the archive sweeps run; the cycle is not complete yet
     assert rig.relation()["invalidated_at"] is None
-    _complete(rig, cycle_2)
+    _complete(rig, cycle)
     rig.drain()
     _finalize(rig)
     fact = rig.relation()
     assert fact["invalidated_at"] is None
     assert fact["evidence_count"] == 1  # C carries it now
     assert _outcomes(rig) == []  # never retracted, under any id
+
+
+def test_a_settled_archive_leaves_a_later_support_swap_to_its_cycle(
+    rig: _LifecycleRig,
+) -> None:
+    """D159: document A is archived while B also supports the fact. In a later
+    cycle the fact moves from B to C; B's reconcile has dropped its support
+    while C's version is still queued. Neither A's settled archive nor a
+    repeated archive of A closes the fact: the swap is the cycle's."""
+    archived = rig.observe(source_ref="archived.md", content=f"{_FACT_SENTENCE}\n")
+    _supported_by_b(rig)
+    _archive(rig, archived.doc_id)
+    assert rig.relation()["evidence_count"] == 1  # B still supports it
+
+    cycle = _swap_b_to_c_with_c_queued(rig)
+    repeat = _archive(rig, archived.doc_id)
+
+    assert (repeat.claims_retired, repeat.relations_closed) == (0, 0)
+    _swap_resolves_without_a_retraction(rig, cycle)
+
+
+def test_late_evidence_from_an_archived_document_leaves_a_swap_to_its_cycle(
+    rig: _LifecycleRig,
+) -> None:
+    """A's fact work was still queued when A was archived; it links A's
+    retired claim to the fact B supports. B's later swap to C stays the
+    cycle's: A's late link does not make the fact A's to close."""
+    _supported_by_b(rig)
+    archived = rig.observe(source_ref="late.md", content=f"{_FACT_SENTENCE}\n")
+    _drain_only(rig, _STAGES[:6])  # through extraction and grounding only
+    _archive(rig, archived.doc_id)
+    rig.drain()  # A's fact work links its retired claim
+    assert rig.relation()["evidence_count"] == 1
+
+    _swap_resolves_without_a_retraction(rig, _swap_b_to_c_with_c_queued(rig))
+
+
+def test_an_idle_source_archive_settles_at_its_cycle_and_not_later(
+    rig: _LifecycleRig,
+) -> None:
+    """A source archive with no claim work left (its fact claim already
+    superseded) is settled once its cycle finalizes; a later swap of the
+    fact's other support is not its first cascade."""
+    _supported_by_b(rig)
+    added: IngestedVersion | None = None
+    for content in (f"{_FACT_SENTENCE}\n", f"{_FILLER_SENTENCE}\n"):
+        cycle = _cycle(rig)
+        version = rig.observe(  # living: the edit supersedes the fact claim
+            source_ref="idle.md", content=content, sync_cycle_id=cycle
+        )
+        added = added or version
+        _complete(rig, cycle)
+        rig.drain()
+        _finalize(rig)
+    assert added is not None
+    filler = rig.scalar(
+        "SELECT claim_id FROM claims WHERE doc_id = :d AND is_current_testimony",
+        d=added.doc_id,
+    )
+    assert isinstance(filler, UUID)
+    rig.lifecycle.apply_transitions(  # an extractor bump retired the last one
+        deployment_id=_DEPLOYMENT_ID,
+        reconciliation_id=uuid4(),
+        transitions=(
+            CurrencyTransition(
+                claim_id=filler,
+                doc_id=added.doc_id,
+                became_current=False,
+                reason="reextracted",
+                from_extractor_version="old-extractor",
+            ),
+        ),
+    )
+    assert _current_claims(rig, added.doc_id) == 0  # nothing left to retire
+    _delete_at_source(rig, "idle.md")
+    _finalize(rig)
+    assert (
+        rig.scalar(
+            "SELECT archived_cycle_id FROM documents WHERE doc_id = :d", d=added.doc_id
+        )
+        is None
+    )  # settled
+
+    _swap_resolves_without_a_retraction(rig, _swap_b_to_c_with_c_queued(rig))
 
 
 def test_cycle_finalization_closes_a_genuinely_removed_fact(rig: _LifecycleRig) -> None:

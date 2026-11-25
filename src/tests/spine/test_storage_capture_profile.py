@@ -11,7 +11,7 @@ from rememberstack.profiles.storage_capture_profile import current_class_rules
 def test_generated_live_profile_is_current() -> None:
     assert FIXTURE.read_text() == render()
     fixture = json.loads(FIXTURE.read_text())
-    assert fixture["schema"]["head"] == "p9_55_0076"
+    assert fixture["schema"]["head"] == "p9_56_0077"
 
 
 def test_corpus_copies_never_count_as_canonical_raw() -> None:
