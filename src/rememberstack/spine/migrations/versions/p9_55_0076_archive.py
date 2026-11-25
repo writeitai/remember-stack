@@ -354,8 +354,8 @@ _SCHEMA = (
     " CHECK (archived_by IN ('caller', 'source'))",
     "ALTER TABLE documents ADD COLUMN archived_cycle_id uuid",
     "COMMENT ON COLUMN documents.archived_cycle_id IS"
-    " 'D159 the sync cycle that observed a source archive; its cascade waits for"
-    " that cycle''s finalization (the retract-timing barrier). NULL otherwise.'",
+    " 'D159 the sync cycle a source archive waits for (the retract-timing"
+    " barrier); NULL for a caller archive and once the archive has settled.'",
     "ALTER TABLE documents ADD CONSTRAINT documents_archived_pair"
     " CHECK ((archived_at IS NULL) = (archived_by IS NULL))",
     "COMMENT ON COLUMN documents.archived_at IS"
@@ -371,9 +371,17 @@ _SCHEMA = (
 
 _DELETED_LINEAGES = text(
     """
-    SELECT d.doc_id, d.deleted_at, d.deleted_sync_cycle_id,
+    SELECT d.doc_id, d.deleted_at,
            CASE WHEN d.deleted_sync_cycle_id IS NULL THEN 'caller' ELSE 'source' END
-             AS archived_by
+             AS archived_by,
+           -- the archive still waits only while D135's observing cycle has
+           -- not finalized; once it has, D135's cascade already ran and the
+           -- archive is settled
+           CASE WHEN EXISTS (
+               SELECT 1 FROM connector_sync_cycles y
+               WHERE y.cycle_id = d.deleted_sync_cycle_id
+                 AND y.finalized_at IS NULL
+           ) THEN d.deleted_sync_cycle_id END AS archived_cycle_id
     FROM documents d
     WHERE d.deleted_at IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM {forget_table} f WHERE f.doc_id = d.doc_id)
@@ -531,7 +539,7 @@ def upgrade() -> None:
             {
                 "doc_id": doc_id,
                 "archived_by": row["archived_by"],
-                "cycle_id": row["deleted_sync_cycle_id"],
+                "cycle_id": row["archived_cycle_id"],
             },
         )
     apply_view_ddl(sql=DOCUMENTS_INVENTORY_DDL)

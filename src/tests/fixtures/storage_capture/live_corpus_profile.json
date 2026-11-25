@@ -515,13 +515,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "eeb4955eca9e321e07c7b2d3fceaa675a35323acf746f2cdd1def3a4b1fbfa69",
-      "source_digest": "a9da1a268a9c4682ca3e9e07558c7c2987f1cfae33440434fbf26822e0128c5e"
+      "schema_profile_digest": "6382a6b912990b5db6e5effc1bd07e7bb228d9fdc6bc4c05838afed5b150343e",
+      "source_digest": "f82ad4db22dfcbf5d7b59528be1689097a0eeb6507c80d35dd31a49bbfc68054"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "65a290d34c7e91254806450373222a78d29234b1a5b57e07e80c24870597522c",
+      "classification_digest": "e3e64af78f33f791819a6c128a4484e5cd1209a05c7a8d9352d6bd596127caca",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1150,24 +1150,24 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "46c8f3703e47a35108bb7eedc348785857ca2a668fdf0c278be8a8a4dea5ec1d",
+      "profile_digest": "33a1a7e31e25a82ae4dfd551fe3375deb142d3817ffa153eb45183c63bf037c2",
       "release_margin_us": 500000,
-      "schema_digest": "8003ca91af5edba4b5a549feb3bd2ca77dcb8b8b98a52fc1aacd68e05f3103c3",
-      "schema_profile_digest": "eeb4955eca9e321e07c7b2d3fceaa675a35323acf746f2cdd1def3a4b1fbfa69",
-      "source_digest": "a9da1a268a9c4682ca3e9e07558c7c2987f1cfae33440434fbf26822e0128c5e",
+      "schema_digest": "bbb5504bb828e434a5ca33ceb07afff3345db9f1404d0e886d187c0a739eb5af",
+      "schema_profile_digest": "6382a6b912990b5db6e5effc1bd07e7bb228d9fdc6bc4c05838afed5b150343e",
+      "source_digest": "f82ad4db22dfcbf5d7b59528be1689097a0eeb6507c80d35dd31a49bbfc68054",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "65a290d34c7e91254806450373222a78d29234b1a5b57e07e80c24870597522c",
+    "classification_digest": "e3e64af78f33f791819a6c128a4484e5cd1209a05c7a8d9352d6bd596127caca",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "46c8f3703e47a35108bb7eedc348785857ca2a668fdf0c278be8a8a4dea5ec1d",
-    "operator_mapping_digest": "8167a37cc306e152b816ea20468e4c3cc4d6eeb99249e663d1d3bf2d28368cc7",
-    "schema_profile_digest": "eeb4955eca9e321e07c7b2d3fceaa675a35323acf746f2cdd1def3a4b1fbfa69",
+    "native_capture_profile_digest": "33a1a7e31e25a82ae4dfd551fe3375deb142d3817ffa153eb45183c63bf037c2",
+    "operator_mapping_digest": "13b9f0bbe35b45426d7daf6512acbbebfa4f753ec9702ac65fb06b32cff5e7fd",
+    "schema_profile_digest": "6382a6b912990b5db6e5effc1bd07e7bb228d9fdc6bc4c05838afed5b150343e",
     "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },
   "schema": {
@@ -1609,7 +1609,7 @@
       "template_public_testimony_currency_events",
       "testimony_currency_events"
     ],
-    "head": "p9_56_0077",
+    "head": "p9_55_0076",
     "migrations": {
       "__init__.py": "6c0a82ef11830b8d5cb49eac5ac1f0d2e967699377fab1cb34d751585c97366c",
       "p0_02_0001_extensions_enums.py": "d52a438d07c205fe7645249f286f1d7a8edde1215b0298cadc69d34eb999747d",
@@ -1687,8 +1687,7 @@
       "p9_52_0073_corpus_reconcile.py": "2c5593ed0f388f835f8c08da880ee15e7825aca44208db41ef881291739f7255",
       "p9_53_0074_document_tags.py": "82705ca088868fcd1b1f6d0a6d0fca4c9bc4d43688c18bf0bcfe583a371ac57a",
       "p9_54_0075_forget_records.py": "5f8f128b349140a73e83e45aa65437281a6355b52e2a764f1a0ba4f128cf0acd",
-      "p9_55_0076_archive.py": "2ea2b4112e4be8d58b515d0cb8770132ba0d73b402a63a14bda8ad5a39b9b4fc",
-      "p9_56_0077_settled_source_archives.py": "2dcce1788ec736e1e5caaaa3dc7cc83e7fa470dfadd5fda842409c9557ab8e6c"
+      "p9_55_0076_archive.py": "cafd62521ec88735700bdba7f93ef628d2648d3efd637cc25607f24601170acd"
     },
     "records": {
       "NativeCatalogAcquisition": {
@@ -2424,7 +2423,7 @@
             "type": "string"
           },
           "schema_head": {
-            "const": "p9_56_0077",
+            "const": "p9_55_0076",
             "title": "Schema Head",
             "type": "string"
           },

@@ -33,9 +33,6 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.lifecycle import archive_reconciliation_id
 from rememberstack.spine.migrations.versions import p9_55_0076_archive as migration
-from rememberstack.spine.migrations.versions import (
-    p9_56_0077_settled_source_archives as settled_migration,
-)
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import DocumentArchiver
 from tests.database_reset import reset_database
@@ -69,18 +66,13 @@ def migration_config() -> Iterator[tuple[Config, Engine]]:
         command.upgrade(config=config, revision="head")
 
 
-def test_archive_reconciliation_id_matches_the_frozen_upgrade_copies() -> None:
-    """The upgrades derive the same id the runtime derives."""
+def test_archive_reconciliation_id_matches_the_frozen_upgrade_copy() -> None:
+    """The upgrade relabels with the same id the runtime derives."""
     doc_id = uuid4()
     at = datetime.fromisoformat("2026-11-20T10:11:12.123456+01:00")
-    expected = archive_reconciliation_id(doc_id=doc_id, archived_at=at)
-    assert (
-        migration.archive_reconciliation_id(doc_id=doc_id, archived_at=at) == expected
-    )
-    assert (
-        settled_migration.archive_reconciliation_id(doc_id=doc_id, archived_at=at)
-        == expected
-    )
+    assert migration.archive_reconciliation_id(
+        doc_id=doc_id, archived_at=at
+    ) == archive_reconciliation_id(doc_id=doc_id, archived_at=at)
 
 
 def _bootstrap(engine: Engine) -> None:
@@ -116,9 +108,10 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     caller = rig.observe(source_ref="caller.md", content=f"{_FACT_SENTENCE}\n")
     source = rig.observe(source_ref="source.md", content="Acme opened an office.\n")
     forgotten = rig.observe(source_ref="d74.md", content="Bob runs the depot.\n")
+    waiting = rig.observe(source_ref="waiting.md", content="Carol paints boats.\n")
     rig.drain()
     assert rig.relation()["invalidated_at"] is None
-    for added in (caller, source, forgotten):
+    for added in (caller, source, forgotten, waiting):
         rig.deletion.delete_lineage(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
     assert rig.relation()["invalidated_at"] is not None
     deleted_at = _scalar(
@@ -127,13 +120,26 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     assert isinstance(deleted_at, datetime)
 
     command.downgrade(config=config, revision=_PREVIOUS)
+    finalized, open_cycle = uuid4(), uuid4()
     with engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE documents SET deleted_sync_cycle_id = :cycle WHERE doc_id = :d"
-            ),
-            {"cycle": uuid4(), "d": source.doc_id},
-        )
+        for cycle, finalized_at, doc_id in (
+            (finalized, "now()", source.doc_id),  # D135's cascade already ran
+            (open_cycle, "NULL", waiting.doc_id),  # the barrier is still open
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO connector_sync_cycles (cycle_id, deployment_id,"
+                    " source_kind, completed_at, finalized_at) VALUES (:c, :d,"
+                    f" 'watched_directory', now(), {finalized_at})"
+                ),
+                {"c": cycle, "d": _DEPLOYMENT_ID},
+            )
+            connection.execute(
+                text(
+                    "UPDATE documents SET deleted_sync_cycle_id = :c WHERE doc_id = :d"
+                ),
+                {"c": cycle, "d": doc_id},
+            )
         # D135 refused extraction publication once the source was gone: work
         # that failed then dead-lettered after the deletion instant
         connection.execute(
@@ -166,7 +172,8 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
             row["doc_id"]: row
             for row in connection.execute(
                 text(
-                    "SELECT doc_id, archived_at, archived_by, deleted_at FROM documents"
+                    "SELECT doc_id, archived_at, archived_by, archived_cycle_id,"
+                    " deleted_at FROM documents"
                 )
             ).mappings()
         }
@@ -174,6 +181,9 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     assert rows[caller.doc_id]["archived_by"] == "caller"
     assert rows[caller.doc_id]["deleted_at"] is None
     assert rows[source.doc_id]["archived_by"] == "source"
+    assert rows[source.doc_id]["archived_cycle_id"] is None  # settled
+    assert rows[waiting.doc_id]["archived_by"] == "source"
+    assert rows[waiting.doc_id]["archived_cycle_id"] == open_cycle  # still waits
     assert (
         _scalar(
             engine,
@@ -399,66 +409,3 @@ def test_a_d135_caller_closure_rendered_in_a_session_offset_is_relabelled(
         )
         == 1
     )
-
-
-def test_the_upgrade_marks_source_archives_an_earlier_release_settled(
-    migration_config: tuple[Config, Engine], tmp_path: Path
-) -> None:
-    """p9_56_0077 judges by what a first cascade leaves behind. Settled: a
-    currency event carries the archive's id (here an archive an earlier
-    release settled after a later poll released its abandoned cycle), or no
-    claim is current and no open fact is this lineage's alone. Unsettled and
-    kept: a current claim, or an open fact only this lineage evidences."""
-    config, engine = migration_config
-    reset_database(config=config)
-    command.upgrade(config=config, revision="head")
-    _bootstrap(engine)
-    rig = _LifecycleRig(engine=engine, root=tmp_path)
-    released = rig.observe(source_ref="released.md", content="Acme opened an office.\n")
-    idle = rig.observe(source_ref="idle.md", content="Bob runs the depot.\n")
-    waiting = rig.observe(source_ref="waiting.md", content="Carol paints boats.\n")
-    alone = rig.observe(source_ref="alone.md", content=f"{_FACT_SENTENCE}\n")
-    rig.drain()
-    archiver = DocumentArchiver(engine=engine, profile_refresher=rig.profile_refresher)
-    archiver.archive_document(deployment_id=_DEPLOYMENT_ID, doc_id=released.doc_id)
-    assert rig.relation()["invalidated_at"] is None
-    command.downgrade(config=config, revision="p9_55_0076")
-    abandoned = uuid4()
-    with engine.begin() as connection:
-        connection.execute(
-            text(
-                "INSERT INTO connector_sync_cycles (cycle_id, deployment_id,"
-                " source_kind) VALUES (:c, :d, 'watched_directory')"
-            ),
-            {"c": abandoned, "d": _DEPLOYMENT_ID},
-        )
-        for doc_id in (idle.doc_id, alone.doc_id):
-            connection.execute(
-                text(
-                    "UPDATE claims SET is_current_testimony = false WHERE doc_id = :d"
-                ),
-                {"d": doc_id},
-            )
-        connection.execute(
-            text(
-                "UPDATE documents SET archived_by = 'source', archived_cycle_id = :c"
-                " WHERE doc_id = :d"
-            ),
-            {"c": abandoned, "d": released.doc_id},
-        )
-        for doc_id in (idle.doc_id, waiting.doc_id, alone.doc_id):
-            connection.execute(
-                text(
-                    "UPDATE documents SET archived_at = now(), archived_by = 'source',"
-                    " archived_cycle_id = :c WHERE doc_id = :d"
-                ),
-                {"c": abandoned, "d": doc_id},
-            )
-
-    command.upgrade(config=config, revision="head")
-
-    marker = "SELECT archived_cycle_id FROM documents WHERE doc_id = :d"
-    assert _scalar(engine, marker, d=released.doc_id) is None
-    assert _scalar(engine, marker, d=idle.doc_id) is None
-    assert _scalar(engine, marker, d=waiting.doc_id) == abandoned
-    assert _scalar(engine, marker, d=alone.doc_id) == abandoned
