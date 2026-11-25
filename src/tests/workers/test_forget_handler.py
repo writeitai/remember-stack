@@ -354,3 +354,21 @@ def test_authored_pages_make_the_forget_wait_until_the_owner_edits(edits: int) -
     assert rig.catalog.finished[-1] == ()
     # The owner's edit removed the citation: that path's history is erased.
     assert rig.knowledge.purged == [(_AUTHORED_ID,)]
+
+
+def test_the_record_keeps_content_free_original_locators() -> None:
+    """A stored file name's extension never lands on the forget record."""
+    from rememberstack.spine.forget import original_locator
+
+    other = UUID("59100000-0000-0000-0000-0000000000ff")
+    assert (
+        original_locator(key=f"{_DOC_ID}/{_OWN_HASH}/original.pdf", doc_id=_DOC_ID)
+        is None
+    )
+    assert (
+        original_locator(key=f"{other}/{_OWN_HASH}/original.pdf", doc_id=_DOC_ID)
+        == f"{other}/{_OWN_HASH}/"
+    )
+    assert original_locator(key="uploads/abcdefghijklmnop", doc_id=_DOC_ID) == (
+        "uploads/abcdefghijklmnop"
+    )

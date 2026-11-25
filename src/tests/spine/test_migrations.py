@@ -2033,16 +2033,16 @@ def test_d159_upgrade_turns_d74_manifests_into_forget_records() -> None:
                 ).mappings()
             }
             assert records[complete_id]["status"] == "complete"
-            assert records[complete_id]["source_identity_hash"] is None  # an upload
             unfinished = records[unfinished_id]
             assert unfinished["status"] == "erasing"
             assert unfinished["version_ids"] == [unfinished_version]
             assert unfinished["content_hashes"] == [f"hash-{unfinished_doc}"]
             assert unfinished["source_identity_hash"] is not None
-            assert unfinished["collected"]["object_keys"] == [
-                f"{unfinished_doc}/original.txt"
-            ]
+            # A key under the document's own prefix needs no locator.
+            assert unfinished["collected"]["object_keys"] == []
             assert records[preparing_id]["status"] == "erasing"
+            # The complete upload has an explicit, stable source_ref: an identity.
+            assert records[complete_id]["source_identity_hash"] is not None
             hidden = connection.execute(
                 text(
                     "SELECT d.deleted_at IS NOT NULL AND v.deleted_at IS NOT NULL"

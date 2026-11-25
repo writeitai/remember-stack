@@ -19,6 +19,7 @@ and the version's UUID as billing metadata.
 from collections.abc import Sequence
 import hashlib
 import json
+import re
 from uuid import uuid4
 
 from alembic import op
@@ -146,6 +147,18 @@ def downgrade() -> None:
     """)
 
 
+_LINEAGE_ORIGINAL = re.compile(r"(?P<owner>[0-9a-f-]{36})/(?P<hash>[0-9a-f]{64})/.+")
+
+
+def _locator(*, key: str, doc_id: str) -> str | None:
+    """The record's content-free locator for a D74 object key (as live)."""
+    if key.startswith(f"{doc_id}/"):
+        return None
+    if match := _LINEAGE_ORIGINAL.fullmatch(key):
+        return f"{match['owner']}/{match['hash']}/"
+    return key
+
+
 def _convert(*, connection, row) -> None:  # noqa: ANN001
     """Turn one D74 manifest row into a D159 record (design §4 Upgrade)."""
     manifest = row["manifest"] or {}
@@ -165,11 +178,10 @@ def _convert(*, connection, row) -> None:  # noqa: ANN001
         ).scalars()
     )
     identity = row["source_identity_hash"]
-    if (
-        identity is None
-        and row["source_ref"] is not None
-        and row["source_kind"] != "upload"
-    ):
+    # The live rule: a one-shot upload's lineage is its bytes (source_ref is
+    # one of its content hashes); any other source_ref is an identity.
+    one_shot = row["source_kind"] == "upload" and row["source_ref"] in hashes
+    if identity is None and row["source_ref"] is not None and not one_shot:
         # The D74/D159 source-identity hash, frozen here so this migration
         # never changes with application code.
         identity = hashlib.sha256(
@@ -186,7 +198,13 @@ def _convert(*, connection, row) -> None:  # noqa: ANN001
             | set(manifest.get("resolved_entity_ids", ()))
         ),
         "k_artifact_ids": sorted(manifest.get("k_artifact_ids", ())),
-        "object_keys": sorted(manifest.get("object_keys", ())),
+        "object_keys": sorted(
+            {
+                locator
+                for key in manifest.get("object_keys", ())
+                if (locator := _locator(key=str(key), doc_id=str(row["doc_id"])))
+            }
+        ),
     }
     # D74 named every K artifact of the deployment; keep only compiled pages
     # (authored pages are their owners' and never purged on the record's say).

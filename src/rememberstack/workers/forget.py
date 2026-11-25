@@ -290,12 +290,13 @@ class ForgetHandler:
             ObjectKey(key)
             for key in sorted(self._catalog.live_originals(forget=forget))
         )
+        keys = tuple(key for key in findings.object_keys if not key.root.endswith("/"))
+        prefixes = (
+            ObjectKey(f"{forget.doc_id}/"),
+            *(key for key in findings.object_keys if key.root.endswith("/")),
+        )
         for purger in self._object_purgers:
-            removed = purger.purge_objects(
-                keys=findings.object_keys,
-                prefixes=(ObjectKey(f"{forget.doc_id}/"),),
-                keep=live,
-            )
+            removed = purger.purge_objects(keys=keys, prefixes=prefixes, keep=live)
             found |= removed > 0
         if findings.fixture_keys:
             # Deployment-wide K plan transcripts: purged, never counted.
