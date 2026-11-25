@@ -66,6 +66,19 @@ def test_setup_cursor_configuration(tmp_path: Path) -> None:
     assert "asserted_at" in rule_text
 
 
+def test_setup_antigravity_keeps_installed_skill(tmp_path: Path) -> None:
+    """Reconfiguring MCP preserves an installed Remember skill."""
+    skill_file = tmp_path / ".agents" / "skills" / "remember" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    installed = "---\nname: remember\ndescription: Installed skill\n---\n"
+    skill_file.write_text(installed, encoding="utf-8")
+
+    assert configure_antigravity(cwd=tmp_path, entry=_stdio())
+
+    assert skill_file.read_text(encoding="utf-8") == installed
+    assert (tmp_path / ".agents" / "mcp_config.json").is_file()
+
+
 def test_setup_antigravity_configuration(tmp_path: Path) -> None:
     """Antigravity configuration writes mcp_config.json and SKILL.md."""
     cmd, args = "/Users/dev/.local/bin/uvx", ["remember", "mcp"]
