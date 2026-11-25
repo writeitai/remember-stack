@@ -88,6 +88,12 @@ class _Environment(BaseSettings):
     mcp_url: str | None = None
 
 
+def environment_key() -> str | None:
+    """Read the environment API key for redaction at output boundaries."""
+    key = _Environment.model_validate({}).api_key
+    return key.get_secret_value() if key is not None else None
+
+
 def environment_issuer() -> str | None:
     """``REMEMBER_ISSUER``, when set."""
     return _Environment.model_validate({}).issuer or None

@@ -20,6 +20,7 @@ uncertain falls back to a stdio entry, which works everywhere.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field
 import json
@@ -37,6 +38,8 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
+
+from remember.cli_output import failure
 
 
 class _SetupSettings(BaseSettings):
@@ -357,10 +360,11 @@ def _describe(entry: Entry) -> str:
     }[entry.shape]
 
 
-def _print_dry_run(path: object, rendered: str) -> None:
-    print(f"[dry-run] Would write to {path}:")
+def _print_dry_run(*, path: Path, rendered: str, report: Callable[[str], None]) -> None:
+    """Describe a planned file write in terminal mode."""
+    report(f"[dry-run] Would write to {path}:")
     for line in rendered.rstrip("\n").splitlines():
-        print(f"    {line}")
+        report(f"    {line}")
 
 
 # ---------------------------------------------------------------------------
@@ -368,24 +372,38 @@ def _print_dry_run(path: object, rendered: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def configure_cursor(*, cwd: Path, entry: Entry, dry_run: bool = False) -> bool:
+def configure_cursor(
+    *,
+    cwd: Path,
+    entry: Entry,
+    dry_run: bool = False,
+    report: Callable[[str], None] = print,
+) -> bool:
     """``.cursor/mcp.json`` and the rule file ``.cursor/rules/remember.mdc``."""
     mcp_file = cwd / ".cursor" / "mcp.json"
     rule_file = cwd / ".cursor" / "rules" / "remember.mdc"
     merged = _merged_json(mcp_file, entry)
     if dry_run:
         _print_dry_run(
-            mcp_file, json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2)
+            path=mcp_file,
+            rendered=json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2),
+            report=report,
         )
-        print(f"[dry-run] Would write {rule_file}")
+        report(f"[dry-run] Would write {rule_file}")
         return True
     _write_if_changed(mcp_file, merged)
     _write_if_changed(rule_file, CURSOR_RULE_CONTENT)
-    print(f"[✓] Configured Cursor, {_describe(entry)}: {mcp_file} & {rule_file}")
+    report(f"[✓] Configured Cursor, {_describe(entry)}: {mcp_file} & {rule_file}")
     return True
 
 
-def configure_antigravity(*, cwd: Path, entry: Entry, dry_run: bool = False) -> bool:
+def configure_antigravity(
+    *,
+    cwd: Path,
+    entry: Entry,
+    dry_run: bool = False,
+    report: Callable[[str], None] = print,
+) -> bool:
     """``.agents/mcp_config.json`` and the skill ``.agents/skills/remember/SKILL.md``."""
     mcp_file = cwd / ".agents" / "mcp_config.json"
     skill_file = cwd / ".agents" / "skills" / "remember" / "SKILL.md"
@@ -393,15 +411,17 @@ def configure_antigravity(*, cwd: Path, entry: Entry, dry_run: bool = False) -> 
     merged = _merged_json(mcp_file, entry)
     if dry_run:
         _print_dry_run(
-            mcp_file, json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2)
+            path=mcp_file,
+            rendered=json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2),
+            report=report,
         )
         if install_skill:
-            print(f"[dry-run] Would write {skill_file}")
+            report(f"[dry-run] Would write {skill_file}")
         return True
     _write_if_changed(mcp_file, merged)
     if install_skill:
         _write_if_changed(skill_file, ANTIGRAVITY_SKILL_CONTENT)
-    print(f"[✓] Configured Antigravity, {_describe(entry)}: {mcp_file}")
+    report(f"[✓] Configured Antigravity, {_describe(entry)}: {mcp_file}")
     return True
 
 
@@ -423,17 +443,21 @@ def get_claude_desktop_config_path() -> Path:
     return base / "Claude" / "claude_desktop_config.json"
 
 
-def configure_claude_desktop(*, entry: Entry, dry_run: bool = False) -> bool:
+def configure_claude_desktop(
+    *, entry: Entry, dry_run: bool = False, report: Callable[[str], None] = print
+) -> bool:
     """Claude Desktop's ``claude_desktop_config.json`` (stdio entries only)."""
     config_path = get_claude_desktop_config_path()
     merged = _merged_json(config_path, entry)
     if dry_run:
         _print_dry_run(
-            config_path, json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2)
+            path=config_path,
+            rendered=json.dumps({SERVER_NAME: _json_entry(entry)}, indent=2),
+            report=report,
         )
         return True
     _write_if_changed(config_path, merged)
-    print(f"[✓] Configured Claude Desktop, {_describe(entry)}: {config_path}")
+    report(f"[✓] Configured Claude Desktop, {_describe(entry)}: {config_path}")
     return True
 
 
@@ -449,19 +473,23 @@ def claude_code_command(entry: Entry) -> list[str]:
     return [*command, "--", entry.command or "", *entry.args]
 
 
-def configure_claude_code(*, cwd: Path, entry: Entry, dry_run: bool = False) -> bool:
+def configure_claude_code(
+    *,
+    cwd: Path,
+    entry: Entry,
+    dry_run: bool = False,
+    report: Callable[[str], None] = print,
+) -> bool:
     """Register the entry with ``claude mcp add``, replacing any earlier one."""
     add = claude_code_command(entry)
     if dry_run:
-        print(f"[dry-run] Would run in {cwd}: {shlex.join(add)}")
+        report(f"[dry-run] Would run in {cwd}: {shlex.join(add)}")
         return True
     executable = shutil.which("claude")
     if executable is None:
-        print(
-            "[-] Claude Code CLI not found on PATH. To configure manually, run in "
-            f"{cwd}:\n    {shlex.join(add)}"
+        raise RuntimeError(
+            "Claude Code CLI was not found on PATH. Install it or select another harness."
         )
-        return False
     try:
         # `claude mcp add` refuses an existing name, so an earlier entry goes
         # first; a missing one makes `remove` fail, which is fine.
@@ -482,15 +510,13 @@ def configure_claude_code(*, cwd: Path, entry: Entry, dry_run: bool = False) -> 
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        print(f"[!] Claude Code registration failed: {error}")
-        return False
+        raise RuntimeError(f"Claude Code registration failed: {error}") from error
     if result.returncode != 0:
-        print(
-            f"[!] Claude Code registration returned exit code {result.returncode}: "
-            f"{result.stderr.strip() or result.stdout.strip()}"
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(
+            f"Claude Code registration exited with status {result.returncode}: {detail}"
         )
-        return False
-    print(f"[✓] Configured Claude Code, {_describe(entry)}")
+    report(f"[✓] Configured Claude Code, {_describe(entry)}")
     return True
 
 
@@ -518,7 +544,12 @@ _CODEX_TABLE = re.compile(
 
 
 def configure_codex(
-    *, cwd: Path, entry: Entry, hosted: bool = False, dry_run: bool = False
+    *,
+    cwd: Path,
+    entry: Entry,
+    hosted: bool = False,
+    dry_run: bool = False,
+    report: Callable[[str], None] = print,
 ) -> bool:
     """``.codex/config.toml``: the ``remember`` tables replaced, the rest kept."""
     config_file = cwd / ".codex" / "config.toml"
@@ -553,13 +584,13 @@ def configure_codex(
             f"Generated configuration for {config_file} contains invalid TOML: {error}."
         ) from error
     if dry_run:
-        _print_dry_run(config_file, block)
+        _print_dry_run(path=config_file, rendered=block, report=report)
         return True
     _write_if_changed(config_file, content)
-    print(f"[✓] Configured Codex, {_describe(entry)}: {config_file}")
-    print("    Codex loads a project's .codex/config.toml only when you trust it.")
+    report(f"[✓] Configured Codex, {_describe(entry)}: {config_file}")
+    report("    Codex loads a project's .codex/config.toml only when you trust it.")
     if entry.shape == "remote" and hosted:
-        print(f"    Sign in once: run `codex mcp login {SERVER_NAME}` in {cwd}")
+        report(f"    Sign in once: run `codex mcp login {SERVER_NAME}` in {cwd}")
     return True
 
 
@@ -624,28 +655,44 @@ def _harnesses(agent: str, target_dir: Path) -> list[Harness]:
 
 
 def _configure(
-    harness: Harness, *, target_dir: Path, plan: Plan, dry_run: bool
+    harness: Harness,
+    *,
+    target_dir: Path,
+    plan: Plan,
+    dry_run: bool,
+    report: Callable[[str], None],
 ) -> bool:
     """Probe one harness, select its entry and write it."""
     if harness == "cursor":
         entry = select_entry(plan, CURSOR_SUPPORT)
-        return configure_cursor(cwd=target_dir, entry=entry, dry_run=dry_run)
+        return configure_cursor(
+            cwd=target_dir, entry=entry, dry_run=dry_run, report=report
+        )
     if harness == "agy":
         entry = select_entry(plan, ANTIGRAVITY_SUPPORT)
-        return configure_antigravity(cwd=target_dir, entry=entry, dry_run=dry_run)
+        return configure_antigravity(
+            cwd=target_dir, entry=entry, dry_run=dry_run, report=report
+        )
     if harness == "codex":
         entry = select_entry(plan, codex_support())
         return configure_codex(
-            cwd=target_dir, entry=entry, hosted=plan.hosted, dry_run=dry_run
+            cwd=target_dir,
+            entry=entry,
+            hosted=plan.hosted,
+            dry_run=dry_run,
+            report=report,
         )
     if harness == "claude_code":
         entry = select_entry(plan, claude_code_support())
-        return configure_claude_code(cwd=target_dir, entry=entry, dry_run=dry_run)
+        return configure_claude_code(
+            cwd=target_dir, entry=entry, dry_run=dry_run, report=report
+        )
     entry = select_entry(plan, CLAUDE_DESKTOP_SUPPORT)
-    return configure_claude_desktop(entry=entry, dry_run=dry_run)
+    return configure_claude_desktop(entry=entry, dry_run=dry_run, report=report)
 
 
 def _headless(args: argparse.Namespace) -> bool:
+    """Use environment-based auth when explicitly requested or in CI."""
     if getattr(args, "headless", False):
         return True
     ci = (_SetupSettings.model_validate({}).ci or "").strip().lower()
@@ -666,7 +713,7 @@ def _choose_backend(args: argparse.Namespace, *, dry_run: bool) -> str:
         return target_env
     if explicit_self_hosted:
         return "self_hosted"
-    if sys.stdin.isatty() and not dry_run:
+    if sys.stdin.isatty() and not dry_run and not getattr(args, "json", False):
         print("Choose your Remember backend:")
         print("  1) remember.dev [default]")
         print("  2) Self-hosted engine (http://127.0.0.1:8000)")
@@ -679,12 +726,13 @@ def _choose_backend(args: argparse.Namespace, *, dry_run: bool) -> str:
 
 
 def _self_hosted_plan(
-    args: argparse.Namespace, *, launcher: tuple[str, list[str]], dry_run: bool
-) -> Plan | None:
-    """Store the engine URL (and key) and plan stdio engine entries.
-
-    Returns ``None`` after printing the reason when a hosted key is stored.
-    """
+    args: argparse.Namespace,
+    *,
+    launcher: tuple[str, list[str]],
+    dry_run: bool,
+    report: Callable[[str], None],
+) -> Plan:
+    """Store the engine URL (and key) and plan stdio engine entries."""
     from pydantic import SecretStr
 
     from remember.connection import DEFAULT_API_URL
@@ -703,12 +751,16 @@ def _self_hosted_plan(
     mcp_url: str | None = getattr(args, "mcp_url", None)
     if mcp_url:
         mcp_url = str(require_secure_url(mcp_url.strip(), what="--mcp-url"))
-    print("Backend: self-hosted engine")
-    print(f"  Engine URL: {url}")
-    refusal = (
-        "error: a key from {issuer} is stored; run `remember logout` "
-        "before configuring a self-hosted engine"
-    )
+    report("Backend: self-hosted engine")
+    report(f"  Engine URL: {url}")
+
+    def refuse_hosted_key(issuer: str) -> None:
+        """Keep the hosted key available for issuer-side revocation."""
+        raise failure(
+            code="hosted_credentials_present",
+            detail=f"A key from {issuer} is stored.",
+            action="Run `remember logout` before configuring a self-hosted engine.",
+        )
 
     def stored_issuer() -> str | None:
         try:
@@ -720,8 +772,7 @@ def _self_hosted_plan(
     if dry_run:
         issuer = stored_issuer()
         if issuer:
-            print(refusal.format(issuer=issuer), file=sys.stderr)
-            return None
+            refuse_hosted_key(issuer)
     else:
         # Read, check and write under the lock `remember login` holds, so a
         # concurrent login's key is never overwritten unrevoked. The key goes
@@ -729,8 +780,7 @@ def _self_hosted_plan(
         with credential_lock():
             issuer = stored_issuer()
             if issuer:
-                print(refusal.format(issuer=issuer), file=sys.stderr)
-                return None
+                refuse_hosted_key(issuer)
             write_credentials(
                 credentials=StoredCredentials(
                     version=2,
@@ -738,9 +788,9 @@ def _self_hosted_plan(
                     key=SecretStr(normalize_key(key)) if key else None,
                 )
             )
-        print("[✓] Stored the engine URL (and key) in the owner-only credential file")
+        report("[✓] Stored the engine URL (and key) in the owner-only credential file")
     if mcp_url and key:
-        print(
+        report(
             f"  Remote entries send ${KEY_VARIABLE}: set it in the agent's environment"
         )
     return Plan(
@@ -759,6 +809,7 @@ def _hosted_plan(
     launcher: tuple[str, list[str]],
     dry_run: bool,
     headless: bool,
+    report: Callable[[str], None],
 ) -> Plan:
     """Find the issuer's MCP endpoint, signing in first when there is no key."""
     import httpx
@@ -781,7 +832,7 @@ def _hosted_plan(
         getattr(args, "issuer", None) or environment_issuer() or DEFAULT_ISSUER
     )
     connection = resolve_connection(issuer=issuer)
-    print(f"Backend: {issuer}")
+    report(f"Backend: {issuer}")
     claims = connection.claims
     has_key = claims is not None and claims.iss.strip().rstrip("/") == issuer
     if connection.key is not None and not has_key and connection.key_source != "file":
@@ -793,20 +844,26 @@ def _hosted_plan(
         # A stored key for another issuer, or a self-hosted one, does not count.
         if not has_key:
             if headless:
-                print(
+                report(
                     f"  No key from this issuer is stored; the agents read it from ${KEY_VARIABLE}."
                 )
             elif dry_run:
-                print(
+                report(
                     "[dry-run] Would run `remember login` first (no key from this issuer is stored)"
                 )
+            elif getattr(args, "json", False):
+                raise failure(
+                    code="missing_credentials",
+                    detail="No stored key for the selected issuer.",
+                    action="Run `remember login` first, or select `--headless` to configure environment-based authentication.",
+                )
             else:
-                print("  Not signed in; running `remember login` first.")
+                report("  Not signed in; running `remember login` first.")
                 login(issuer=issuer, http=http)
         endpoint = fetch_issuer_metadata(issuer, http=http).endpoint(
             "remember_mcp_endpoint"
         )
-    print(f"  MCP endpoint: {endpoint}")
+    report(f"  MCP endpoint: {endpoint}")
     return Plan(
         remote_url=endpoint,
         key_header=headless,
@@ -818,48 +875,82 @@ def _hosted_plan(
     )
 
 
+def _quiet(message: str) -> None:
+    """Suppress terminal progress in machine output mode."""
+
+
 def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
     """Write the ``remember`` MCP entry of each requested or detected harness."""
     target_dir: Path = getattr(args, "cwd", None) or cwd or Path.cwd()
     dry_run: bool = getattr(args, "dry_run", False)
+    machine: bool = getattr(args, "json", False)
+    report = _quiet if machine else print
     agent: str = getattr(args, "agent", None) or "all"
     try:
         launcher = resolve_launcher()
     except RuntimeError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
+        raise failure(
+            code="launcher_unavailable",
+            detail=str(error),
+            action="Install Remember with `uv tool install remember` and check PATH.",
+        ) from error
 
-    harnesses = _harnesses(agent, target_dir)
-    if _choose_backend(args, dry_run=dry_run) == "self_hosted":
-        plan = _self_hosted_plan(args, launcher=launcher, dry_run=dry_run)
-        if plan is None:
-            return 1
+    try:
+        harnesses = _harnesses(agent, target_dir)
+    except RuntimeError as error:
+        raise failure(
+            code="setup_failed",
+            detail=str(error),
+            action="Install Claude Code or Claude Desktop, or pass another --agent.",
+        ) from error
+    backend = _choose_backend(args, dry_run=dry_run)
+    if backend == "self_hosted":
+        plan = _self_hosted_plan(
+            args, launcher=launcher, dry_run=dry_run, report=report
+        )
     else:
-        headless = _headless(args)
-        plan = _hosted_plan(args, launcher=launcher, dry_run=dry_run, headless=headless)
+        plan = _hosted_plan(
+            args,
+            launcher=launcher,
+            dry_run=dry_run,
+            headless=_headless(args),
+            report=report,
+        )
 
-    print("Configuring AI coding harnesses for Remember:")
-    print(f"  Launcher command: {launcher[0]} {' '.join(launcher[1])}")
+    report("Configuring AI coding harnesses for Remember:")
+    report(f"  Launcher command: {launcher[0]} {' '.join(launcher[1])}")
     if dry_run:
-        print("  Mode: DRY RUN (no files will be written)")
-    print()
+        report("  Mode: DRY RUN (no files will be written)")
+    report("")
 
     failed: list[str] = []
     for harness in harnesses:
         try:
-            ok = _configure(harness, target_dir=target_dir, plan=plan, dry_run=dry_run)
+            ok = _configure(
+                harness,
+                target_dir=target_dir,
+                plan=plan,
+                dry_run=dry_run,
+                report=report,
+            )
         except (RuntimeError, OSError, ValueError, TypeError) as error:
-            # ValueError covers unreadable text (UnicodeDecodeError) and
-            # TOML/JSON parse errors.
-            print(f"error: {_LABELS[harness]}: {error}", file=sys.stderr)
-            ok = False
-        if not ok:
-            failed.append(_LABELS[harness])
+            failed.append(f"{_LABELS[harness]}: {error}")
+        else:
+            if not ok:
+                failed.append(_LABELS[harness])
     if failed:
-        print(f"error: failed to configure {', '.join(failed)}.", file=sys.stderr)
-        return 1
-    print(
-        "\nTip: Run `uv tool install remember` to install the remember CLI "
-        "permanently to your shell PATH."
-    )
+        raise failure(
+            code="setup_failed",
+            detail=f"failed to configure {', '.join(failed)}.",
+            action="Check the named harness and its configuration file, then rerun setup.",
+        )
+    if machine:
+        print(
+            json.dumps({"backend": backend, "dry_run": dry_run, "harnesses": harnesses})
+        )
+    else:
+        report(
+            "\nTip: Run `uv tool install remember` to install the remember CLI "
+            "permanently to your shell PATH."
+        )
     return 0

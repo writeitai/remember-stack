@@ -644,3 +644,43 @@ def test_codex_non_table_mcp_servers_fails_only_codex(
     assert "'mcp_servers' must be a table" in err and "Traceback" not in err
     assert config.read_text(encoding="utf-8") == "mcp_servers = 123\n"
     assert (tmp_path / ".cursor" / "mcp.json").is_file()
+
+
+def test_json_setup_keeps_hosted_auth_configuration(
+    tmp_path: Path, issuer: FakeIssuer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """JSON setup never starts login or rewrites an OAuth entry as key-header auth."""
+    args = ["setup", "--json", "--cloud", "--agent", "cursor", "--dir", str(tmp_path)]
+    assert main(args) == 1
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert json.loads(captured.err)["error"]["code"] == "missing_credentials"
+    assert issuer.calls("/oauth/device") == []
+    assert not (tmp_path / ".cursor").exists()
+
+    _store_key()
+    assert main(args) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {
+        "backend": "cloud",
+        "dry_run": False,
+        "harnesses": ["cursor"],
+    }
+    assert not captured.err
+    assert issuer.calls("/oauth/device") == []
+    cursor = json.loads((tmp_path / ".cursor" / "mcp.json").read_text())
+    assert cursor["mcpServers"]["remember"] == {"url": ENDPOINT}
+
+
+def test_json_setup_names_the_missing_claude_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The failure tells callers what to install or how to select another agent."""
+    monkeypatch.setattr("remember.setup._claude_desktop_present", lambda: False)
+    assert main(["setup", "--json", "--agent", "claude", "--dir", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out
+    error = json.loads(captured.err)["error"]
+    assert error["code"] == "setup_failed"
+    assert "Claude Code" in error["detail"]
+    assert "--agent" in error["agent_action"]

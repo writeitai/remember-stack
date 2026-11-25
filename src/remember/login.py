@@ -23,9 +23,11 @@ from __future__ import annotations
 from collections.abc import Callable
 import json
 import sys
+from typing import TextIO
 
 import httpx
 
+from remember.cli_output import failure
 from remember.connection import resolve_project
 from remember.credentials import confirm_credentials_durable
 from remember.credentials import credential_lock
@@ -103,9 +105,14 @@ def retry_journal(*, http: httpx.Client) -> None:
 
 
 def login(
-    *, issuer: str, http: httpx.Client, sleep: Callable[[float], None] | None = None
+    *,
+    issuer: str,
+    http: httpx.Client,
+    sleep: Callable[[float], None] | None = None,
+    progress: TextIO | None = None,
 ) -> StoredCredentials:
     """Run the device grant and store the new key, replacing any old one safely."""
+    progress = progress if progress is not None else sys.stdout
     issuer = normalize_issuer(issuer)
     with credential_lock():
         retry_journal(http=http)
@@ -129,11 +136,16 @@ def login(
         try:
             # Step 2 — mint.
             authorization = start_device_authorization(http=http, metadata=metadata)
-            print(f"Open {authorization.verification_uri} and enter the code:")
-            print(f"  {authorization.user_code}")
+            print(
+                f"Open {authorization.verification_uri} and enter the code:",
+                file=progress,
+            )
+            print(f"  {authorization.user_code}", file=progress)
             if authorization.verification_uri_complete:
-                print(f"Or open {authorization.verification_uri_complete}")
-            print("Waiting for approval...", flush=True)
+                print(
+                    f"Or open {authorization.verification_uri_complete}", file=progress
+                )
+            print("Waiting for approval...", file=progress, flush=True)
             issued = poll_for_key(
                 http=http, metadata=metadata, authorization=authorization, sleep=sleep
             )
@@ -225,17 +237,13 @@ def _withdraw_new_key(*, http: httpx.Client, issuer: str, issued: IssuedKey) -> 
         )
 
 
-def logout(*, http: httpx.Client) -> int:
-    """Revoke the stored key, then remove the file. Returns the exit code.
-
-    Confirmed (``2xx``, ``401``, ``404``) → removed, ``0``; unconfirmed →
-    kept, ``1``; no file → ``0``. A self-hosted entry is just removed.
-    """
+def logout(*, http: httpx.Client) -> bool:
+    """Revoke the stored key and return whether a credential file was removed."""
     with credential_lock():
         retry_journal(http=http)
         stored = load_credentials()
         if stored is None:
-            return 0
+            return False
         if stored.issuer and stored.key is not None:
             try:
                 metadata = fetch_issuer_metadata(stored.issuer, http=http)
@@ -243,25 +251,33 @@ def logout(*, http: httpx.Client) -> int:
                     http=http, metadata=metadata, key=stored.key.get_secret_value()
                 )
             except IssuerError as error:
-                print(f"error: {error.detail}; the key was kept", file=sys.stderr)
-                return 1
+                raise failure(
+                    code="revocation_unconfirmed",
+                    detail=f"{error.detail}; the key was kept",
+                    action="Check the issuer and network, then rerun `remember logout`.",
+                ) from error
             if not confirmed:
-                print(
-                    f"error: {stored.issuer} did not confirm the revocation; "
-                    "the key was kept",
-                    file=sys.stderr,
+                raise failure(
+                    code="revocation_unconfirmed",
+                    detail="The issuer did not confirm the revocation; the key was kept.",
+                    action="Check the issuer and network, then rerun `remember logout`.",
                 )
-                return 1
         unlink_credentials()
-        return 0
+        return True
 
 
-def switch(*, project: str, http: httpx.Client) -> StoredCredentials:
+def switch(
+    *, project: str, http: httpx.Client, machine: bool = False
+) -> StoredCredentials:
     """Make ``project`` the stored default after proving the key covers it."""
     with credential_lock():
         stored = load_credentials()
         if stored is None or stored.key is None or not stored.issuer:
-            raise CredentialError("`remember switch` needs a key from `remember login`")
+            raise failure(
+                code="missing_credentials",
+                detail="`remember switch` needs a signed key.",
+                action="Run `remember login`, then select a project.",
+            )
         claims = signed_key_claims(stored.key.get_secret_value())
         if claims is None:
             raise CredentialError("the stored key is not a signed key")
@@ -277,11 +293,14 @@ def switch(*, project: str, http: httpx.Client) -> StoredCredentials:
             write_credentials(credentials=updated)
         except DurabilityUnconfirmed as error:
             _warn(str(error))
-        print(f"Default project: {resolved.name} ({resolved.project})")
+        if machine:
+            print(json.dumps({"project": resolved.project, "name": resolved.name}))
+        else:
+            print(f"Default project: {resolved.name} ({resolved.project})")
         return updated
 
 
-def whoami(*, http: httpx.Client) -> int:
+def whoami(*, http: httpx.Client, machine: bool = False) -> int:
     """Print the stored key's own claims; add the issuer's view when allowed.
 
     Never calls the engine. The issuer's account view is fetched only when the
@@ -289,35 +308,66 @@ def whoami(*, http: httpx.Client) -> int:
     """
     stored = load_credentials()
     if stored is None:
-        print("Not signed in. Run `remember login`.")
-        return 1
+        raise failure(
+            code="missing_credentials",
+            detail="No stored credentials. Run `remember login`.",
+            action="Run `remember login` for a hosted key or configure a self-hosted engine.",
+        )
     if not stored.issuer or stored.key is None:
-        print(f"Self-hosted engine: {stored.api_url}")
+        if machine:
+            print(json.dumps({"api_url": stored.api_url}))
+        else:
+            print(f"Self-hosted engine: {stored.api_url}")
         return 0
     claims = signed_key_claims(stored.key.get_secret_value())
     if claims is None:
         raise CredentialError("the stored key is not a signed key")
-    projects = (
-        claims.projects
-        if isinstance(claims.projects, str)
-        else ", ".join(claims.projects or [])
-    )
     expires = claims.expires_at or stored.expires_at
-    print(f"Issuer: {stored.issuer}")
-    print(f"Key: {stored.key_id or claims.jti or 'unknown'}")
-    print(f"Expires: {expires.isoformat() if expires else 'unknown'}")
-    print(f"Projects: {projects or 'none'}")
-    print(f"Permissions: {', '.join(claims.permissions) or 'none'}")
-    print(f"Default project: {stored.default_project or '(issuer default)'}")
-    if "account:read" not in claims.permissions:
-        return 0
+    identity: dict[str, object] = {
+        "issuer": stored.issuer,
+        "key_id": stored.key_id or claims.jti,
+        "expires_at": expires.isoformat() if expires else None,
+        "projects": claims.projects,
+        "permissions": list(claims.permissions),
+        "default_project": stored.default_project,
+    }
+    if not machine:
+        projects = (
+            claims.projects
+            if isinstance(claims.projects, str)
+            else ", ".join(claims.projects or [])
+        )
+        print(f"Issuer: {stored.issuer}")
+        print(f"Key: {stored.key_id or claims.jti or 'unknown'}")
+        print(f"Expires: {expires.isoformat() if expires else 'unknown'}")
+        print(f"Projects: {projects or 'none'}")
+        print(f"Permissions: {', '.join(claims.permissions) or 'none'}")
+        print(f"Default project: {stored.default_project or '(issuer default)'}")
+    if "account:read" in claims.permissions:
+        view = _account_view(stored=stored, http=http)
+        if view is not None:
+            if machine:
+                identity["account"] = view
+            else:
+                print("Account:")
+                print(json.dumps(view, indent=2, sort_keys=True))
+    if machine:
+        print(json.dumps(identity))
+    return 0
+
+
+def _account_view(
+    *, stored: StoredCredentials, http: httpx.Client
+) -> dict[str, object] | None:
+    """Read the optional account view without obscuring local identity claims."""
+    assert stored.issuer is not None and stored.key is not None
     try:
         metadata = fetch_issuer_metadata(stored.issuer, http=http)
     except IssuerError as error:
         _warn(error.detail)
-        return 0
+        return None
     if not metadata.remember_account_endpoint:
-        return 0
+        return None
     from remember.client import AccountApi
     from remember.connection import resolve_connection
 
@@ -326,10 +376,8 @@ def whoami(*, http: httpx.Client) -> int:
         view = AccountApi(connection=connection, http=http).whoami()
     except MemoryApiError as error:
         _warn(f"the issuer's account view is unavailable: {error}")
-        return 0
-    print("Account:")
-    print(json.dumps(view, indent=2, sort_keys=True))
-    return 0
+        return None
+    return view
 
 
 __all__ = ("login", "logout", "retry_journal", "switch", "whoami")
