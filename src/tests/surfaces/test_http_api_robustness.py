@@ -27,6 +27,7 @@ from rememberstack.model import Grain
 from rememberstack.model import IngestedVersion
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import ProviderCallError
+from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.http_api import build_api
@@ -155,6 +156,7 @@ def _client(
     graph: object | None = None,
     open_query: object | None = None,
     ingest: object | None = None,
+    auth: AuthPerimeterPort | None = None,
 ) -> TestClient:
     """Build an API over the given fakes."""
     return TestClient(
@@ -164,6 +166,7 @@ def _client(
             graph=graph,  # type: ignore[arg-type]
             open_query=open_query,  # type: ignore[arg-type]
             ingest=ingest,  # type: ignore[arg-type]
+            auth=auth,
         ),
         raise_server_exceptions=False,
     )
@@ -235,9 +238,7 @@ def test_authentication_failure_keeps_opaque_response(
             """Refuse or fail with potentially sensitive exception text."""
             raise failure
 
-    client = TestClient(
-        build_api(engine=_Engine(), deployment_id=_DEPLOYMENT_ID, auth=Auth())
-    )  # type: ignore[arg-type]
+    client = _client(auth=Auth())
     response = client.get(
         "/lookup/relations", headers={"Authorization": "Bearer credential"}
     )
