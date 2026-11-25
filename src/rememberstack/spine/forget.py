@@ -1045,6 +1045,7 @@ class _Sweep:
         )
         for statement in _ENTITY_STATEMENTS:
             self._exec(statement, p)
+        self._exec(_SCRUB_RATIONALE, p, residue=False)
 
     def _mark_compiled(
         self, *, ids: list[UUID], p: dict[str, Any], collected: dict[str, Any]
@@ -1780,21 +1781,6 @@ _ENTITY_STATEMENTS = (
                OR pre_merge_membership_snapshot <> '{}'::jsonb)
         """
     ),
-    # A surviving decision's T4 rationale may quote a candidate this
-    # document named, or one merged with it at the time; the verdict stays,
-    # the prose goes.
-    text(
-        """
-        UPDATE resolution_decisions d
-        SET features = (d.features - 'rationale') #- '{t4_selection,rationale}'
-        WHERE d.deployment_id=:deployment_id
-          AND (d.features ? 'rationale' OR d.features->'t4_selection' ? 'rationale')
-          AND (d.entity_id=ANY(CAST(:rationale_entity_ids AS uuid[]))
-               OR EXISTS (
-                 SELECT 1 FROM unnest(CAST(:rationale_entity_ids AS uuid[])) ids(value)
-                 WHERE d.features::text LIKE '%' || CAST(ids.value AS text) || '%'))
-        """
-    ),
     text(
         """
         UPDATE resolution_exclusions SET reason = NULL
@@ -1803,6 +1789,24 @@ _ENTITY_STATEMENTS = (
                OR entity_id_high=ANY(CAST(:resolved_entity_ids AS uuid[])))
         """
     ),
+)
+
+# A surviving decision's T4 rationale may quote a candidate this document
+# named, or one merged with it at the time; the verdict stays, the prose goes.
+# Deliberately broad (the whole merge-history component), so clearing it is
+# never the document's residue: a fresh decision there must not keep the
+# forget erasing.
+_SCRUB_RATIONALE = text(
+    """
+    UPDATE resolution_decisions d
+    SET features = (d.features - 'rationale') #- '{t4_selection,rationale}'
+    WHERE d.deployment_id=:deployment_id
+      AND (d.features ? 'rationale' OR d.features->'t4_selection' ? 'rationale')
+      AND (d.entity_id=ANY(CAST(:rationale_entity_ids AS uuid[]))
+           OR EXISTS (
+             SELECT 1 FROM unnest(CAST(:rationale_entity_ids AS uuid[])) ids(value)
+             WHERE d.features::text LIKE '%' || CAST(ids.value AS text) || '%'))
+    """
 )
 
 _DELETE_COMPILED_CITATIONS = text(

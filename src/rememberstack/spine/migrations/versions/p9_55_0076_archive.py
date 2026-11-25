@@ -375,12 +375,13 @@ _DELETED_LINEAGES = text(
            CASE WHEN d.deleted_sync_cycle_id IS NULL THEN 'caller' ELSE 'source' END
              AS archived_by,
            -- the archive still waits only while D135's observing cycle has
-           -- not finalized; once it has, D135's cascade already ran and the
-           -- archive is settled
+           -- never finalized; once it has (even if a D143 layer backfill
+           -- reopened it since), D135's cascade already ran and the archive
+           -- is settled
            CASE WHEN EXISTS (
                SELECT 1 FROM connector_sync_cycles y
                WHERE y.cycle_id = d.deleted_sync_cycle_id
-                 AND y.finalized_at IS NULL
+                 AND y.finalized_at IS NULL AND y.layers_reopened_at IS NULL
            ) THEN d.deleted_sync_cycle_id END AS archived_cycle_id
     FROM documents d
     WHERE d.deleted_at IS NOT NULL

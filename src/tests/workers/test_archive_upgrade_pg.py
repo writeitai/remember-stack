@@ -109,9 +109,10 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     source = rig.observe(source_ref="source.md", content="Acme opened an office.\n")
     forgotten = rig.observe(source_ref="d74.md", content="Bob runs the depot.\n")
     waiting = rig.observe(source_ref="waiting.md", content="Carol paints boats.\n")
+    reopened = rig.observe(source_ref="reopened.md", content="Dan fixes clocks.\n")
     rig.drain()
     assert rig.relation()["invalidated_at"] is None
-    for added in (caller, source, forgotten, waiting):
+    for added in (caller, source, forgotten, waiting, reopened):
         rig.deletion.delete_lineage(deployment_id=_DEPLOYMENT_ID, doc_id=added.doc_id)
     assert rig.relation()["invalidated_at"] is not None
     deleted_at = _scalar(
@@ -120,17 +121,20 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     assert isinstance(deleted_at, datetime)
 
     command.downgrade(config=config, revision=_PREVIOUS)
-    finalized, open_cycle = uuid4(), uuid4()
+    finalized, open_cycle, backfilled = uuid4(), uuid4(), uuid4()
     with engine.begin() as connection:
-        for cycle, finalized_at, doc_id in (
-            (finalized, "now()", source.doc_id),  # D135's cascade already ran
-            (open_cycle, "NULL", waiting.doc_id),  # the barrier is still open
+        for cycle, finalized_at, reopened_at, doc_id in (
+            (finalized, "now()", "NULL", source.doc_id),  # D135's cascade ran
+            (open_cycle, "NULL", "NULL", waiting.doc_id),  # the barrier is open
+            # finalized (the cascade ran), then reopened by a D143 backfill
+            (backfilled, "NULL", "now()", reopened.doc_id),
         ):
             connection.execute(
                 text(
                     "INSERT INTO connector_sync_cycles (cycle_id, deployment_id,"
-                    " source_kind, completed_at, finalized_at) VALUES (:c, :d,"
-                    f" 'watched_directory', now(), {finalized_at})"
+                    " source_kind, completed_at, finalized_at, layers_reopened_at)"
+                    f" VALUES (:c, :d, 'watched_directory', now(), {finalized_at},"
+                    f" {reopened_at})"
                 ),
                 {"c": cycle, "d": _DEPLOYMENT_ID},
             )
@@ -184,6 +188,7 @@ def test_d135_deletions_become_archives_that_unarchive_undoes(
     assert rows[source.doc_id]["archived_cycle_id"] is None  # settled
     assert rows[waiting.doc_id]["archived_by"] == "source"
     assert rows[waiting.doc_id]["archived_cycle_id"] == open_cycle  # still waits
+    assert rows[reopened.doc_id]["archived_cycle_id"] is None  # settled
     assert (
         _scalar(
             engine,

@@ -2530,3 +2530,43 @@ def _record_merge(*, connection: Connection, survivor: UUID, absorbed: UUID) -> 
         },
     )
     return merge_id
+
+
+def test_a_fresh_rationale_is_cleared_without_keeping_the_forget_erasing(
+    seeded_engine: Engine,
+) -> None:
+    """A T4 decision written after the first sweep about an entity the
+    document touched loses its prose on the next sweep, and that sweep is
+    still clean: clearing prose is never residue, so the forget completes."""
+    catalog = ForgetCatalog(engine=seeded_engine)
+    forget = _hide(engine=seeded_engine)
+    assert catalog.sweep_postgres(forget=forget).removed
+    mention = UUID("75000000-0000-0000-0000-0000000000d5")
+    decision = UUID(int=mention.int + 100)
+    phrase = f"{_TOKEN}-fresh-rationale"
+    with seeded_engine.begin() as connection:
+        _seed_mention(
+            connection=connection,
+            mention_id=mention,
+            doc_id=_CONTROL_DOC_ID,
+            claim_id=_CONTROL_CLAIM_ID,
+            entity_id=_SHARED_ENTITY_ID,
+            surface="control fresh mention",
+        )
+        connection.execute(
+            text(
+                "UPDATE resolution_decisions SET features = jsonb_build_object("
+                "'rationale', CAST(:phrase AS text)) WHERE decision_id = :decision"
+            ),
+            {"phrase": phrase, "decision": decision},
+        )
+
+    findings = catalog.sweep_postgres(forget=forget)
+
+    assert not findings.removed  # a clean sweep: the forget can complete
+    with seeded_engine.connect() as connection:
+        features = connection.execute(
+            text("SELECT features FROM resolution_decisions WHERE decision_id = :d"),
+            {"d": decision},
+        ).scalar_one()
+    assert "rationale" not in features
