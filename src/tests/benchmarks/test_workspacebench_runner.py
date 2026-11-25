@@ -357,7 +357,7 @@ def test_mcp_discovery_launches_stdio_and_binds_allowlist(tmp_path: Path) -> Non
     assert "initialize" in str(seen["stdin"])
     assert "tools/list" in str(seen["stdin"])
     assert discovery.enabled_tools == tuple(_tool_names())
-    assert {"ingest", "delete_document"}.isdisjoint(discovery.enabled_tools)
+    assert {"ingest", "archive_document"}.isdisjoint(discovery.enabled_tools)
     assert discovery.write_tools_present is False
     assert discovery.discovered_over_stdio is True
     assert discovery.catalog_sha256
@@ -1211,7 +1211,7 @@ def test_catalog_missing_search_documents_is_rejected() -> None:
         )
 
 
-@pytest.mark.parametrize("extra", ["ingest", "delete_document", "not_a_memory_tool"])
+@pytest.mark.parametrize("extra", ["ingest", "archive_document", "not_a_memory_tool"])
 def test_catalog_with_non_read_only_tool_is_rejected(extra: str) -> None:
     from benchmarks.workspacebench.mcp import bind_listed_tools
     from benchmarks.workspacebench.mcp import McpDiscoveryError

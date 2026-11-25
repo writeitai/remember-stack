@@ -23,7 +23,7 @@ The shapes group into five families:
 | Context bundle | [`ContextBundle/v2`](#contextbundlev2) | `combined_context`. |
 | Query result | [`QueryResult/v1`](#queryresultv1) | `POST /query/sql`, `POST /query/sql/explain`, `POST /query/saved/{namespace}/{name}/run`. |
 | Write and readiness | [`IngestedVersion`](#ingestedversion), [`PipelineReadinessReport`](#pipelinereadinessreport), [`DocumentPage`](#documentpage) | `POST /ingest`, `POST /readiness`, `GET /documents`. |
-| Documents | [Documents](#documents), [Effective periods](#effective-periods), [Sections and references](#sections-and-references) | `POST /documents/search`, `DELETE /documents/{doc_id}`, the effective-period and reference routes, `section_history`, `document_references`. |
+| Documents | [Documents](#documents), [Effective periods](#effective-periods), [Sections and references](#sections-and-references) | `POST /documents/search`, `POST /documents/{doc_id}/archive`, `POST /documents/{doc_id}/unarchive`, the effective-period and reference routes, `section_history`, `document_references`. |
 | Deployment | [`ToolDescriptor`](#tooldescriptor), [`DeploymentBuildInfo`](#deploymentbuildinfo) | `GET /operations`, `GET /deployment`. |
 
 ## Conventions
@@ -240,6 +240,7 @@ One claim with its provenance.
 | `representation_id` | UUID, nullable | The converted reading of that version. |
 | `effective` | array of [`EffectiveInterval`](#effectiveinterval) | That version's in-force intervals. Empty for documents without declared periods. |
 | `occurrences` | array of [`ClaimOccurrence`](#claimoccurrence) | One per selected version that carries the claim, earliest period first. The first is the one the fields above describe. Empty for documents without declared periods. |
+| `archived` | boolean, absent | `true` for a claim of an [archived](/docs/reference/http-api/ingest#post-documentsdoc_idarchive) document, which only a read with `documents.include_archived` returns. Absent otherwise. |
 
 Without those fields set, `chunk_id` and the offsets are where the claim was
 first extracted. With them, they are where the claim occurs in a version in
@@ -310,6 +311,7 @@ One source passage.
 | `published_at` | UTC date-time, nullable | |
 | `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The version's in-force intervals, when its document has declared effective periods. |
 | `served_version` | boolean | Whether `version_id` is the document's served version (its newest processed one). Default `true`. |
+| `archived` | boolean, absent | `true` for a passage of an [archived](/docs/reference/http-api/ingest#post-documentsdoc_idarchive) document, which only a read with `documents.include_archived` returns. Absent otherwise. |
 
 ### EffectiveInterval
 
@@ -704,9 +706,10 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `source_kind` | string | `upload` for a file sent without a source identity. |
 | `source_uri` | string, nullable | The `source_ref`, for documents sent with one. |
 | `first_seen_at` | date-time | Never changes. |
-| `latest` | [`DocumentVersionSummary`](#documentversionsummary) | The newest version that has not been deleted. |
-| `serving` | boolean | Some version of this document is `ready` and not deleted. |
+| `latest` | [`DocumentVersionSummary`](#documentversionsummary) | The newest version that has not been removed. |
+| `serving` | boolean | Some version of this document is `ready` and not removed. |
 | `tags` | array of strings | The names of the document's [tags](#tag), ordered by name ignoring letter case. Empty when it has none. |
+| `archived_at` | date-time, nullable | When the document was [archived](/docs/reference/http-api/ingest#post-documentsdoc_idarchive); `null` when it is not. Archived documents are listed only with `include_archived=true`. |
 
 ### DocumentVersionSummary
 
@@ -749,6 +752,7 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `thread_ref` | string, nullable | | |
 | `doc_ids` | array of UUIDs | `[]` | |
 | `tags` | [`DocumentTagFilter`](#documenttagfilter), nullable | | The document's current tags. |
+| `include_archived` | boolean | `false` | Also consider archived documents. Their claims and passages are marked `archived`, and their claims never count as current support for a fact. |
 
 ### DocumentTagFilter
 
@@ -801,6 +805,7 @@ must hold. A tag that is not registered refuses the read with `unknown_tag`.
 | `other_matching_version_ids` | array of UUIDs | With `versions: all`, the document's other versions that matched. |
 | `matched_by` | array of `name` \| `content` | Which part of the query matched. Empty without a query. |
 | `score` | number, nullable | The combined rank score with a query; `null` without one. |
+| `archived_at` | date-time, nullable | When the document was archived; `null` when it is not. Archived documents are returned only with `filters.include_archived`. |
 
 ### MatchingEdition
 
@@ -821,18 +826,30 @@ must hold. A tag that is not registered refuses the read with `unknown_tag`.
 | `address` | string, nullable | |
 | `documents` | integer | Matching documents that list this person. |
 
-### DocumentDeletion
+### DocumentArchive
 
-What [`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id)
-changed. The counts describe this call only.
+What [`POST /documents/{doc_id}/archive`](/docs/reference/http-api/ingest#post-documentsdoc_idarchive)
+changed. The counts describe this call only: archiving an archived document
+answers the same `archived_at` with zero counts.
 
 | Field | Type | Contents |
 |---|---|---|
-| `doc_id` | UUID | The deleted document. |
-| `deleted_at` | date-time | When the document was deleted. For a call that finished a deletion another path started, when the document was first hidden. |
+| `doc_id` | UUID | The archived document. |
+| `archived_at` | date-time | When the document was archived. |
 | `claims_retired` | integer | Claims that stopped counting as evidence. |
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |
+
+### DocumentUnarchive
+
+What [`POST /documents/{doc_id}/unarchive`](/docs/reference/http-api/ingest#post-documentsdoc_idunarchive)
+restored. A document that is not archived answers zero counts.
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | The document. |
+| `claims_restored` | integer | Claims whose testimony the archive ended that count as evidence again. |
+| `facts_reopened` | integer | Facts the archive closed that reopened because they have support again. |
 
 ## Tags
 

@@ -98,8 +98,8 @@ BASELINE: dict[str, int] = {
     "surfaces/mcp.py::OperationMcpServer.call_tool": 1,
     "surfaces/query_engine.py::QueryEngine._embedding_resolve_hits": 1,
     "surfaces/query_engine.py::QueryEngine._nominate_facts_context": 1,
-    "surfaces/query_engine.py::QueryEngine.default_facts_context": 3,
-    "surfaces/query_engine.py::QueryEngine.default_facts_context.confirmed_facts": 2,
+    "surfaces/query_engine.py::QueryEngine._default_facts_context": 3,
+    "surfaces/query_engine.py::QueryEngine._default_facts_context.confirmed_facts": 2,
     "surfaces/query_engine.py::_with_fact_snapshot.wrapped": 1,
     "surfaces/query_sandbox/executor.py::QuerySandboxExecutor._execute": 6,
     "workers/e0.py::StructureHandler._assign_roles": 2,
@@ -110,7 +110,7 @@ BASELINE: dict[str, int] = {
     "workers/e0_summary.py::SectionSummarizer._load_cache": 2,
     "workers/knowledge_driver.py::KnowledgeCommitDriver._collect_parallel_wave": 1,
     "workers/knowledge_driver.py::KnowledgeCommitDriver._record_aborted_wave": 1,
-    "workers/reconcile.py::DocumentDeleter.delete_document": 1,
+    "workers/reconcile.py::DocumentArchiver._refresh_profiles": 1,
     "workers/sync.py::SyncCycleRunner.run_cycle": 1,
 }
 

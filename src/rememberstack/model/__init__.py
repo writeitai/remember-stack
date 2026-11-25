@@ -63,11 +63,12 @@ from rememberstack.model.client import ConnectorCreate
 from rememberstack.model.client import ConnectorDescriptor
 from rememberstack.model.client import ConnectorNotFoundError
 from rememberstack.model.client import DeploymentBuildInfo
-from rememberstack.model.client import DocumentDeletion
+from rememberstack.model.client import DocumentArchive
 from rememberstack.model.client import DocumentPage
 from rememberstack.model.client import DocumentStatus
 from rememberstack.model.client import DocumentStatusFilter
 from rememberstack.model.client import DocumentSummary
+from rememberstack.model.client import DocumentUnarchive
 from rememberstack.model.client import DocumentVersionSummary
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import PipelineStageReadiness
@@ -573,7 +574,8 @@ __all__ = (
     "PackedChunk",
     "PerimeterCredential",
     "PipelineComponent",
-    "DocumentDeletion",
+    "DocumentArchive",
+    "DocumentUnarchive",
     "DocumentPage",
     "DocumentStatus",
     "DocumentStatusFilter",

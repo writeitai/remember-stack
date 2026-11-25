@@ -515,13 +515,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "05fef4cec127d8001b3b871ea4f9e5c33a8005e70c84c2114342b8f62735eb69",
-      "source_digest": "ab10fb0a62a6ab8774a12c064953cc4f1c1d7658ad8e568eab814e0439b755fc"
+      "schema_profile_digest": "409a8efd94f46eadaed68edd1e71877719c81c186f0205c33005df48752ca932",
+      "source_digest": "a501f4976ba5eaddbd0af8af0f077570895328676c4b476b62f1cc3dc0ddf3f6"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "6e32f586b579c04b4529853033684bacce080e75e1d47929c8f55440cc93dd80",
+      "classification_digest": "86b5eb1191e3f9d00742a7c37ac0137e1590982b2ebda71b572a965f09b03038",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1150,30 +1150,30 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "3e89fdb3fe5c7df5cad0d60f30ed327c3b71c1b4ef20d5ff697ce242be420f32",
+      "profile_digest": "01072e4b7d4ee724f366617af74eff6ae1a7e1a8e4a698804ab0b7fc88f87de5",
       "release_margin_us": 500000,
-      "schema_digest": "00d0c5257934e18363fbad11c2686c4095a5ad90fad5a9e9c8619f2939a662c6",
-      "schema_profile_digest": "05fef4cec127d8001b3b871ea4f9e5c33a8005e70c84c2114342b8f62735eb69",
-      "source_digest": "ab10fb0a62a6ab8774a12c064953cc4f1c1d7658ad8e568eab814e0439b755fc",
+      "schema_digest": "e24a396670d5af10356a92bf3332009f58803b527c86c8a379bc2b691179dbf0",
+      "schema_profile_digest": "409a8efd94f46eadaed68edd1e71877719c81c186f0205c33005df48752ca932",
+      "source_digest": "a501f4976ba5eaddbd0af8af0f077570895328676c4b476b62f1cc3dc0ddf3f6",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "6e32f586b579c04b4529853033684bacce080e75e1d47929c8f55440cc93dd80",
+    "classification_digest": "86b5eb1191e3f9d00742a7c37ac0137e1590982b2ebda71b572a965f09b03038",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "3e89fdb3fe5c7df5cad0d60f30ed327c3b71c1b4ef20d5ff697ce242be420f32",
-    "operator_mapping_digest": "df66b200862ba545295d90d9d57707d50c48bbc520d484c8f781744643ff7393",
-    "schema_profile_digest": "05fef4cec127d8001b3b871ea4f9e5c33a8005e70c84c2114342b8f62735eb69",
+    "native_capture_profile_digest": "01072e4b7d4ee724f366617af74eff6ae1a7e1a8e4a698804ab0b7fc88f87de5",
+    "operator_mapping_digest": "ca5525f645860446ff16bbb01242cd55932dba270590be70ce652c81b542954d",
+    "schema_profile_digest": "409a8efd94f46eadaed68edd1e71877719c81c186f0205c33005df48752ca932",
     "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },
   "schema": {
     "catalog": {
       "EXPECTED_CONSTRAINT_COUNTS": {
-        "c": 120,
+        "c": 122,
         "f": 150,
         "n": 656,
         "p": 87,
@@ -1609,7 +1609,7 @@
       "template_public_testimony_currency_events",
       "testimony_currency_events"
     ],
-    "head": "p9_54_0075",
+    "head": "p9_55_0076",
     "migrations": {
       "__init__.py": "6c0a82ef11830b8d5cb49eac5ac1f0d2e967699377fab1cb34d751585c97366c",
       "p0_02_0001_extensions_enums.py": "d52a438d07c205fe7645249f286f1d7a8edde1215b0298cadc69d34eb999747d",
@@ -1686,7 +1686,8 @@
       "p9_51_0072_corpus_paths.py": "43840fe88f2a637bc48517174fadd273eb5eb88eeb51e60505824306a927d668",
       "p9_52_0073_corpus_reconcile.py": "2c5593ed0f388f835f8c08da880ee15e7825aca44208db41ef881291739f7255",
       "p9_53_0074_document_tags.py": "82705ca088868fcd1b1f6d0a6d0fca4c9bc4d43688c18bf0bcfe583a371ac57a",
-      "p9_54_0075_forget_records.py": "5f8f128b349140a73e83e45aa65437281a6355b52e2a764f1a0ba4f128cf0acd"
+      "p9_54_0075_forget_records.py": "5f8f128b349140a73e83e45aa65437281a6355b52e2a764f1a0ba4f128cf0acd",
+      "p9_55_0076_archive.py": "2ea2b4112e4be8d58b515d0cb8770132ba0d73b402a63a14bda8ad5a39b9b4fc"
     },
     "records": {
       "NativeCatalogAcquisition": {
@@ -2422,7 +2423,7 @@
             "type": "string"
           },
           "schema_head": {
-            "const": "p9_54_0075",
+            "const": "p9_55_0076",
             "title": "Schema Head",
             "type": "string"
           },

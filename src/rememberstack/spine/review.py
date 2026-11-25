@@ -26,6 +26,7 @@ from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.clustering import apply_merge
 from rememberstack.spine.fact_applications import application_block
 from rememberstack.spine.lifecycle import LIVE_CARRIAGE_SQL
+from rememberstack.spine.lifecycle import REVIEW_MOOT_SQL
 from rememberstack.spine.profile_refresher import profile_refresh_targets
 
 REVIEW_RECONCILIATION_NAMESPACE: Final = UUID("5e51e77e-0000-4000-8000-000000000000")
@@ -66,7 +67,9 @@ class ReviewQueue:
         """Whether an undecided support_withdrawn flag already marks the fact.
 
         The reconcile stage's retry guard: a replayed run must not stack a
-        second flag on a fact the first attempt already queued.
+        second flag on a fact the first attempt already queued. A flag on a
+        claim no live version carries (its document is archived) does not
+        count (D159).
         """
         with self._engine.connect() as connection:
             return (
@@ -367,11 +370,12 @@ class ReviewQueue:
         if connection.execute(
             _CLAIM_DELETED, {"claim_id": claim_id, "deployment_id": deployment_id}
         ).scalar_one():
-            # D135: deletion is the source acting. Restoring testimony that no
-            # live version carries would bring a deleted document back.
+            # D159: an archive (or a removal) is the source acting. Restoring
+            # testimony no live version carries would bring the document back;
+            # unarchive does that, and the review applies again afterwards.
             raise ReviewDecisionError(
-                f"claim {claim_id} belongs to a deleted document or version;"
-                " its support cannot be restored"
+                f"claim {claim_id} belongs to an archived or removed document or"
+                " version; its support cannot be restored"
             )
         doc_id = connection.execute(
             _CLAIM_DOC, {"claim_id": claim_id, "deployment_id": deployment_id}
@@ -457,11 +461,21 @@ class ReviewQueue:
         claim_id: UUID,
         review_id: UUID,
     ) -> None:
-        """The invalidate path: learned-wrong, recorded, out of the current layer."""
+        """The invalidate path: learned-wrong, recorded, out of the current layer.
+
+        The column and the event carry one instant, read at the write (not
+        the transaction start), so a belief read never sees them disagree and
+        a closure cannot be dated before a reopen that committed first (D159).
+        """
+        closed_at = connection.execute(text("SELECT clock_timestamp()")).scalar_one()
         if fact_kind == "relation":
             connection.execute(
                 _INVALIDATE_RELATION,
-                {"deployment_id": deployment_id, "relation_id": fact_id},
+                {
+                    "deployment_id": deployment_id,
+                    "relation_id": fact_id,
+                    "at": closed_at,
+                },
             )
             connection.execute(
                 _INSERT_RELATION_ADJUDICATION,
@@ -474,12 +488,17 @@ class ReviewQueue:
                         "review_id": str(review_id),
                         "claim_id": str(claim_id),
                     },
+                    "at": closed_at,
                 },
             )
         else:
             connection.execute(
                 _INVALIDATE_OBSERVATION,
-                {"deployment_id": deployment_id, "observation_id": fact_id},
+                {
+                    "deployment_id": deployment_id,
+                    "observation_id": fact_id,
+                    "at": closed_at,
+                },
             )
             connection.execute(
                 _INSERT_OBSERVATION_ADJUDICATION,
@@ -492,6 +511,7 @@ class ReviewQueue:
                         "action": "invalidate_fact",
                         "review_id": str(review_id),
                     },
+                    "at": closed_at,
                 },
             )
 
@@ -604,12 +624,11 @@ def _lock_support_review(
         raise ReviewDecisionError("invalid support review fact plane")
     fact_id, claim_id = UUID(candidate["fact_id"]), UUID(candidate["claim_id"])
     params = {"dep": deployment_id, "fact": fact_id, "claim": claim_id}
-    # D135: serialize with document deletion BEFORE any deletion check or
-    # currency write. A deletion takes the lineage row, then its version
-    # rows, then claims; a verdict takes the same rows in the same order
-    # (shared), so either the deletion commits first and the verdict sees
-    # it, or the verdict commits first and the deletion retires what it
-    # restored.
+    # D159: serialize with archive BEFORE any archive check or currency
+    # write. An archive takes the lineage row exclusively; a verdict takes it
+    # (then its version rows) shared, so either the archive commits first and
+    # the verdict sees it, or the verdict commits first and the archive
+    # retires what it restored.
     connection.execute(_LOCK_CLAIM_LINEAGE, params)
     connection.execute(_LOCK_CLAIM_VERSIONS, params)
     table = "relations" if kind == "relation" else "observations"
@@ -689,13 +708,16 @@ _SELECT_ITEM_LOCKED = text(
 )
 
 _SELECT_OPEN_FLAG = text(
-    """
-    SELECT review_id FROM review_queue
-    WHERE deployment_id = :deployment_id
-      AND item_kind = 'support_withdrawn'
-      AND status IN ('pending', 'deferred')
-      AND candidate ->> 'fact_kind' = :fact_kind
-      AND candidate ->> 'fact_id' = :fact_id
+    f"""
+    SELECT q.review_id FROM review_queue q
+    WHERE q.deployment_id = :deployment_id
+      AND q.item_kind = 'support_withdrawn'
+      AND q.status IN ('pending', 'deferred')
+      AND q.candidate ->> 'fact_kind' = :fact_kind
+      AND q.candidate ->> 'fact_id' = :fact_id
+      -- D159: a review on an archived document's claim is moot while it is
+      -- archived; it neither holds the fact nor blocks a live review
+      AND NOT {REVIEW_MOOT_SQL}
     LIMIT 1
     """
 )
@@ -771,7 +793,8 @@ _CLAIM_DELETED = text(
     f"""
     SELECT EXISTS (
                SELECT 1 FROM documents dd
-               WHERE dd.doc_id = cl.doc_id AND dd.deleted_at IS NOT NULL
+               WHERE dd.doc_id = cl.doc_id
+                 AND (dd.deleted_at IS NOT NULL OR dd.archived_at IS NOT NULL)
            )
         OR (
             EXISTS (
@@ -787,7 +810,7 @@ _CLAIM_DELETED = text(
     WHERE cl.claim_id = :claim_id AND cl.deployment_id = :deployment_id
     """
 )
-"""A claim of a deleted lineage, or one only deleted versions carry (D135)."""
+"""A claim of an archived or hidden lineage, or one only removed versions carry."""
 
 _CLAIM_DOC = text(
     """
@@ -845,7 +868,7 @@ _RESTORE_CLAIM_CURRENCY = text(
 
 _INVALIDATE_RELATION = text(
     """
-    UPDATE relations SET invalidated_at = now(), updated_at = now()
+    UPDATE relations SET invalidated_at = :at, updated_at = now()
     WHERE deployment_id = :deployment_id AND relation_id = :relation_id
       AND invalidated_at IS NULL
     """
@@ -853,7 +876,7 @@ _INVALIDATE_RELATION = text(
 
 _INVALIDATE_OBSERVATION = text(
     """
-    UPDATE observations SET invalidated_at = now(), updated_at = now()
+    UPDATE observations SET invalidated_at = :at, updated_at = now()
     WHERE deployment_id = :deployment_id AND observation_id = :observation_id
       AND invalidated_at IS NULL
     """
@@ -863,10 +886,10 @@ _INSERT_RELATION_ADJUDICATION = text(
     """
     INSERT INTO relation_adjudications (
         adjudication_id, deployment_id, relation_id, outcome, method,
-        confidence, features, adjudicator_version, decided_by
+        confidence, features, adjudicator_version, decided_by, decided_at
     ) VALUES (
         :adjudication_id, :deployment_id, :relation_id, 'invalidated', 'exact',
-        1.0, :features, 'review-2026.07', 'human'
+        1.0, :features, 'review-2026.07', 'human', :at
     )
     """
 ).bindparams(bindparam("features", type_=JSON))
@@ -876,10 +899,10 @@ _INSERT_OBSERVATION_ADJUDICATION = text(
     INSERT INTO observation_adjudications (
         adjudication_id, deployment_id, observation_id, outcome, method,
         confidence, triggering_claim_id, features, adjudicator_version,
-        decided_by
+        decided_by, decided_at
     ) VALUES (
         :adjudication_id, :deployment_id, :observation_id, 'invalidated', 'exact',
-        1.0, :triggering_claim_id, :features, 'review-2026.07', 'human'
+        1.0, :triggering_claim_id, :features, 'review-2026.07', 'human', :at
     )
     """
 ).bindparams(bindparam("features", type_=JSON))

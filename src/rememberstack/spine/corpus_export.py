@@ -89,4 +89,6 @@ JOIN public.document_sections s
   ON s.deployment_id = g.deployment_id AND s.representation_id = g.representation_id
  AND s.structure_generation_id = g.structure_generation_id AND s.node_path = '0'
 WHERE d.deployment_id = :deployment_id AND d.deleted_at IS NULL
+  -- D159: the corpus is the current corpus; an archived document leaves it
+  AND d.archived_at IS NULL
 """

@@ -125,6 +125,7 @@ def _periodised(
     return LineageScope(
         doc_id=_TARGET,
         live=True,
+        archived=False,
         periodised=True,
         served_version_id=_V2,
         versions={
@@ -182,6 +183,7 @@ def test_target_statuses_without_a_readable_section() -> None:
     dead = LineageScope(
         doc_id=_TARGET,
         live=False,
+        archived=False,
         periodised=False,
         served_version_id=None,
         versions={},
@@ -211,6 +213,7 @@ def test_undeclared_target_is_its_served_version() -> None:
     scope = LineageScope(
         doc_id=_TARGET,
         live=True,
+        archived=False,
         periodised=False,
         served_version_id=_V1,
         versions={_V1: _version(_V1, key="a"), _V2: _version(_V2, key="b")},

@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { OutputEffectiveInterval } from './OutputEffectiveInterval';
 export type OutputChunkEvidenceResult = {
+    archived: boolean | null;
     char_end: number;
     char_start: number;
     chunk_id: string;

@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 from typing import Any
 from typing import cast
+from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
@@ -64,6 +65,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.tags import TagCatalog
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
+from rememberstack.workers import DocumentArchiver
 from rememberstack.workers import E0_STRUCTURE_VERSION
 from rememberstack.workers import E1_EMBED_VERSION
 from rememberstack.workers import E1Settings
@@ -724,8 +726,14 @@ def _observe_mode(
     )
 
 
-def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
-    """Ingest v1 and the one-paragraph v2; return per-chunk reuse evidence."""
+def _edit_trace(
+    rig: _ReuseRig, *, dated: bool, archived: bool = False
+) -> dict[str, Any]:
+    """Ingest v1 and the one-paragraph v2; return per-chunk reuse evidence.
+
+    ``archived`` archives the lineage between the two (D159): the changed
+    version must then cost exactly what the same live edit costs.
+    """
     first = _observe_mode(
         rig,
         content=_sectioned(edited=False),
@@ -733,6 +741,10 @@ def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
         at=datetime(2024, 1, 10, tzinfo=UTC),
     )
     rig.drain()
+    if archived:
+        DocumentArchiver(
+            engine=rig.engine, profile_refresher=MagicMock()
+        ).archive_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
     baseline_selection = rig.selection_calls()
     baseline_embeds = len(rig.provider.embedded_texts)
     baseline_calls = len(rig.calls)
@@ -845,10 +857,15 @@ def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize("archived", [False, True], ids=["live", "archived"])
 @pytest.mark.parametrize("dated", [False, True], ids=["living", "dated"])
 @pytest.mark.parametrize("mixed_origins", [False, True], ids=["direct", "mixed"])
 def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
-    rig: _ReuseRig, dated: bool, mixed_origins: bool, monkeypatch: pytest.MonkeyPatch
+    rig: _ReuseRig,
+    dated: bool,
+    mixed_origins: bool,
+    archived: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Owner invariant (D56/D80/D140, restated for D142): incremental ingestion.
 
@@ -860,6 +877,12 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
     (no embedding call), and — where Claimify was reused — exactly its v1
     claim ids. Claimify's own window is a known Rule 4 gap, pinned by the
     expected-failure test below.
+
+    D159: when the lineage was archived before v2 arrived, the changed
+    version is ordinary ingest — it costs exactly what the live edit costs
+    and the lineage is live again (reused claims becoming current and
+    reopening facts is proven on the full chain in
+    test_lifecycle_reconciliation).
     """
     if mixed_origins:
         original_convert = MarkdownPassthroughConverter.convert
@@ -913,7 +936,33 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
         monkeypatch.setattr(
             MarkdownPassthroughConverter, "convert", convert_with_origins
         )
-    trace = _edit_trace(rig, dated=dated)
+    control: dict[str, Any] | None = None
+    if archived:
+        # The same edit to a live document first: the archived run must cost
+        # exactly what it cost, call for call.
+        control = _edit_trace(rig, dated=dated)
+        _fresh_deployment(engine=rig.engine)
+    trace = _edit_trace(rig, dated=dated, archived=archived)
+    if control is not None:
+
+        def positions(run: dict[str, Any], key: str) -> list[int]:
+            return sorted(run["position"][chunk] for chunk in run[key])
+
+        assert trace["selection_v2"] == control["selection_v2"]
+        assert trace["embeds_v2"] == control["embeds_v2"]
+        for key in ("extracted", "embedded", "claimify_changed", "minted"):
+            assert positions(trace, key) == positions(control, key), key
+        assert [len(targets) for targets in trace["claimify_called"]] == [
+            len(targets) for targets in control["claimify_called"]
+        ]
+    if archived:
+        with rig.engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT count(*) FROM documents WHERE archived_at IS NOT NULL")
+                ).scalar_one()
+                == 0
+            ), "a changed version brings the lineage back"
     if mixed_origins:
         extraction_prompts = [
             prompt

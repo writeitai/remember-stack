@@ -58,6 +58,11 @@ export default {
         "property": false,
         "returns": "Envelope"
       },
+      "archive_document": {
+        "arguments": "self, *, doc_id: UUID | str",
+        "property": false,
+        "returns": "DocumentArchive"
+      },
       "call_open_query": {
         "arguments": "self, *, name: str, arguments: Mapping[str, object], layers: Sequence[str] | None=None",
         "property": false,
@@ -97,11 +102,6 @@ export default {
         "arguments": "self, *, name: str, description: str",
         "property": false,
         "returns": "Tag"
-      },
-      "delete_document": {
-        "arguments": "self, *, doc_id: UUID | str",
-        "property": false,
-        "returns": "DocumentDeletion"
       },
       "delete_tag": {
         "arguments": "self, *, tag: UUID | str",
@@ -174,7 +174,7 @@ export default {
         "returns": "IngestedVersion"
       },
       "list_documents": {
-        "arguments": "self, *, limit: int=50, cursor: str | None=None, status: DocumentStatusFilter | None=None",
+        "arguments": "self, *, limit: int=50, cursor: str | None=None, status: DocumentStatusFilter | None=None, include_archived: bool=False",
         "property": false,
         "returns": "DocumentPage"
       },
@@ -303,6 +303,11 @@ export default {
         "property": false,
         "returns": "Envelope"
       },
+      "unarchive_document": {
+        "arguments": "self, *, doc_id: UUID | str",
+        "property": false,
+        "returns": "DocumentUnarchive"
+      },
       "update_document_tags": {
         "arguments": "self, *, doc_id: UUID | str, add: Sequence[str] | None=None, remove: Sequence[str] | None=None, set: Sequence[str] | None=None",
         "property": false,
@@ -333,7 +338,7 @@ export default {
     "ContextBundleV2",
     "DeclaredEffectivePeriod",
     "DeploymentBuildInfo",
-    "DocumentDeletion",
+    "DocumentArchive",
     "DocumentPage",
     "DocumentReference",
     "DocumentReferenceSource",
@@ -348,6 +353,7 @@ export default {
     "DocumentSummary",
     "DocumentTagFilter",
     "DocumentTags",
+    "DocumentUnarchive",
     "DocumentVersionSummary",
     "EffectiveInterval",
     "EffectivePeriodInput",
@@ -549,15 +555,19 @@ export default {
           "disposition": "public client support export",
           "typescript": "ADJACENT_CHUNKS_TOOL_NAME"
         },
-        "DELETE_DOCUMENT_TOOL_NAME": {
+        "ARCHIVE_DOCUMENT_TOOL_NAME": {
           "disposition": "public client support export",
-          "typescript": "DELETE_DOCUMENT_TOOL_NAME"
+          "typescript": "ARCHIVE_DOCUMENT_TOOL_NAME"
+        },
+        "ARCHIVE_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "ARCHIVE_TOOL_NAMES"
         },
         "DOCUMENT_REFERENCES_TOOL_NAME": {
           "disposition": "public client support export",
           "typescript": "DOCUMENT_REFERENCES_TOOL_NAME"
         },
-        "DocumentDeleteBackend": {
+        "DocumentArchiveBackend": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "DocumentReferencesBackend": {
@@ -638,11 +648,15 @@ export default {
           "disposition": "public client support export",
           "typescript": "ToolError"
         },
+        "UNARCHIVE_DOCUMENT_TOOL_NAME": {
+          "disposition": "public client support export",
+          "typescript": "UNARCHIVE_DOCUMENT_TOOL_NAME"
+        },
         "error_result": {
           "disposition": "public client support export",
           "typescript": "errorResult"
         },
-        "handle_delete_document_tool": {
+        "handle_archive_tool": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "handle_document_references_tool": {

@@ -108,7 +108,8 @@ def test_the_checked_in_schema_matches_the_app() -> None:
 #: caught: not by the machine, but by the edit being visible.
 _SURFACE: frozenset[tuple[str, str]] = frozenset(
     (
-        ("DELETE", "/documents/{doc_id}"),
+        ("POST", "/documents/{doc_id}/archive"),
+        ("POST", "/documents/{doc_id}/unarchive"),
         ("DELETE", "/documents/{doc_id}/effective-periods"),
         ("PUT", "/documents/{doc_id}/versions/{version_id}/effective-periods"),
         ("GET", "/chunks/{chunk_id}/adjacent"),
@@ -178,7 +179,7 @@ _CAPABILITY_PORTS = frozenset(
         "section_history",
         "references",
         "document_references",
-        "deletion",
+        "archive",
         "effective_time",
         "tags",
         "graph",

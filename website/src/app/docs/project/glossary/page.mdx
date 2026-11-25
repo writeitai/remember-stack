@@ -61,6 +61,12 @@ has a field or value in the API, it is shown in code.
   transcript. Its identity stays the same when its content changes. See
   [Documents, versions and sources](/docs/concepts/documents-and-sources).
 
+**Archived document** (`archived_at`)
+: A document the memory no longer believes. Its claims stop counting as
+  evidence and facts only it supported are closed, but the document stays
+  readable as history; unarchiving undoes it exactly. See
+  [Archiving a document](/docs/concepts/documents-and-sources#archiving-a-document).
+
 **Version** (`version_id`)
 : One snapshot of a document's bytes. Versions are append-only and never
   edited. See [Documents, versions and sources](/docs/concepts/documents-and-sources).
@@ -174,7 +180,7 @@ has a field or value in the API, it is shown in code.
 **Current testimony** (`is_current_testimony`)
 : Whether a claim still counts as what its source currently says. Claims
   stop being current when re-extracted, superseded in a living document, or
-  deleted. See [Claims](/docs/concepts/claims#current-and-superseded-testimony).
+  when their document is archived. See [Claims](/docs/concepts/claims#current-and-superseded-testimony).
 
 **Fact** (`fact_id`)
 : A piece of knowledge the memory holds true, built from claims: either a
@@ -211,7 +217,7 @@ has a field or value in the API, it is shown in code.
   [Facts](/docs/concepts/facts#support-withdrawn).
 
 **Retraction**
-: A fact losing belief because a living source removed, or a deletion took
+: A fact losing belief because a living source removed, or an archive took
   away, its only support. Recorded as `retracted_source_removal`. See
   [Updating a source](/docs/concepts/updating-sources).
 

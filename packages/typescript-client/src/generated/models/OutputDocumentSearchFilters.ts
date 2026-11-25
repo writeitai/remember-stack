@@ -19,6 +19,7 @@ export type OutputDocumentSearchFilters = {
     created_to: string | null;
     doc_ids: Array<string>;
     family: Array<string>;
+    include_archived: boolean;
     language: string | null;
     modified_from: string | null;
     modified_to: string | null;

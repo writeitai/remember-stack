@@ -20,7 +20,7 @@ export type { OutputDeclaredEffectivePeriod as DeclaredEffectivePeriod, Declared
 export type { OutputDeploymentBuildInfo as DeploymentBuildInfo, DeploymentBuildInfo as DeploymentBuildInfoInput } from './generated';
 export type { OutputDeviceAuthorization as DeviceAuthorization, DeviceAuthorization as DeviceAuthorizationInput } from './generated';
 export type { OutputDiscoveryHit as DiscoveryHit, DiscoveryHit as DiscoveryHitInput } from './generated';
-export type { OutputDocumentDeletion as DocumentDeletion, DocumentDeletion as DocumentDeletionInput } from './generated';
+export type { OutputDocumentArchive as DocumentArchive, DocumentArchive as DocumentArchiveInput } from './generated';
 export type { OutputDocumentPage as DocumentPage, DocumentPage as DocumentPageInput } from './generated';
 export type { OutputDocumentPeopleMatch as DocumentPeopleMatch, DocumentPeopleMatch as DocumentPeopleMatchInput } from './generated';
 export type { OutputDocumentReference as DocumentReference, DocumentReference as DocumentReferenceInput } from './generated';
@@ -39,6 +39,7 @@ export type { OutputDocumentSummary as DocumentSummary, DocumentSummary as Docum
 export type { OutputDocumentTagFilter as DocumentTagFilter, DocumentTagFilter as DocumentTagFilterInput } from './generated';
 export type { OutputDocumentTags as DocumentTags, DocumentTags as DocumentTagsInput } from './generated';
 export type { OutputDocumentTagsUpdate as DocumentTagsUpdate, DocumentTagsUpdate as DocumentTagsUpdateInput } from './generated';
+export type { OutputDocumentUnarchive as DocumentUnarchive, DocumentUnarchive as DocumentUnarchiveInput } from './generated';
 export type { OutputDocumentVersionSummary as DocumentVersionSummary, DocumentVersionSummary as DocumentVersionSummaryInput } from './generated';
 export type { OutputEffectiveInterval as EffectiveInterval, EffectiveInterval as EffectiveIntervalInput } from './generated';
 export type { OutputEffectivePeriodInput as EffectivePeriodInput, EffectivePeriodInput as EffectivePeriodInputInput } from './generated';

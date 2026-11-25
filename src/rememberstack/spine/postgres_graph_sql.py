@@ -115,6 +115,11 @@ CROSS JOIN stats AS s
 
 
 _GATE_NOW = "statement_timestamp(), statement_timestamp(), statement_timestamp())"
+_BELIEVED = (
+    "rememberstack_graph_internal.fact_believed_at("
+    "'relation', {relation}, CAST(:believed_at AS timestamptz))"
+)
+"""D159: belief at the instant from the fact's close and reopen events."""
 _GATE_HISTORY = (
     "CAST(:valid_at AS timestamptz), CAST(:believed_at AS timestamptz),"
     " statement_timestamp())"
@@ -122,8 +127,22 @@ _GATE_HISTORY = (
 
 
 def _history_statement(*, statement: str) -> str:
-    """Derive an as-of statement with both half-open clocks on every edge scan."""
+    """Derive an as-of statement with both half-open clocks on every edge scan.
+
+    The edge scans keep the single-column belief test, which every fact
+    believed at the instant passes; the close/reopen refinement (D159) runs
+    with the evidence gate, lazily over the anchored candidates only.
+    """
     statement = _replace_exact(statement=statement, old=_GATE_NOW, new=_GATE_HISTORY)
+    statement = _replace_exact(
+        statement=statement,
+        old="    WHERE rememberstack_graph_internal.relation_evidence_in_scope(\n"
+        "          b.deployment_id, gated.relation_id,",
+        new="    WHERE "
+        + _BELIEVED.format(relation="gated.relation_id")
+        + "\n      AND rememberstack_graph_internal.relation_evidence_in_scope(\n"
+        "          b.deployment_id, gated.relation_id,",
+    )
     return _replace_exact(
         statement=statement,
         old=(
@@ -181,7 +200,7 @@ CROSS JOIN LATERAL (
   -- down to every relation row of the deployment inside the edge view
   OFFSET 0
 ) AS edge
-WHERE rememberstack_graph_internal.relation_evidence_in_scope(
+WHERE {belief}rememberstack_graph_internal.relation_evidence_in_scope(
       b.deployment_id, edge.relation_id,
       {gate}
 """
@@ -194,12 +213,16 @@ _HISTORY_CLOCK = """
 
 
 CURRENT_NEIGHBORHOOD_ONE_HOP: Final = _ONE_HOP.format(
-    edges="rememberstack_graph_internal.relations_current", clock="", gate=_GATE_NOW
+    edges="rememberstack_graph_internal.relations_current",
+    clock="",
+    belief="",
+    gate=_GATE_NOW,
 )
 
 
 HISTORY_NEIGHBORHOOD_ONE_HOP: Final = _ONE_HOP.format(
     edges="rememberstack_graph_internal.relations_history",
     clock=_HISTORY_CLOCK,
+    belief=_BELIEVED.format(relation="edge.relation_id") + "\n  AND ",
     gate=_GATE_HISTORY,
 )

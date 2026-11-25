@@ -11,8 +11,8 @@ view optimization and again for D154's pagination rename (browse ``limit`` /
 ``next_cursor``, MCP tool schemas), and for D156 document tags (five tag
 tools, ``ingest`` ``tags`` at ``tool_version`` 3, two tag views; then the
 ``search_documents`` ``tags`` filter at ``tool_version`` 4, and the context
-operations' ``documents`` filter at versions 5, 5 and 6), and D157's PostgreSQL 18
-manifest declaration. The current branch, composed the way the
+operations' ``documents`` filter at versions 5, 5 and 6), D157's PostgreSQL 18
+manifest declaration, and D159's archive tools and ``include_archived``. The current branch, composed the way the
 self-host profile composes it (layers port included, reporting no
 configuration), must reproduce every byte.
 """
@@ -50,9 +50,9 @@ def test_fixture_pins_the_full_default_catalogue() -> None:
         "facts_context",
         "combined_context",
     ]
-    assert len(baseline["deployment"]["tools"]) == 23
-    assert len(baseline["mcp_in_process_tools"]) == 23
-    assert len(baseline["mcp_engine_tools"]["stdio"]) == 23
+    assert len(baseline["deployment"]["tools"]) == 24
+    assert len(baseline["mcp_in_process_tools"]) == 24
+    assert len(baseline["mcp_engine_tools"]["stdio"]) == 24
     assert len(baseline["readiness_expected_components"]) == 12
     assert len(baseline["query_surface_manifest"]["surface_manifest_hash"]) == 64
 

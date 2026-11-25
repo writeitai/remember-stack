@@ -10,6 +10,7 @@ import type { OutputMatchingEdition } from './OutputMatchingEdition';
  * One matching document, described by the version it was judged by.
  */
 export type OutputDocumentSearchResult = {
+    archived_at: string | null;
     authors: Array<OutputDocumentSearchPerson>;
     created_at: string | null;
     doc_id: string;

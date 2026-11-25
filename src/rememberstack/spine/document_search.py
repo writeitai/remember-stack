@@ -283,6 +283,7 @@ class _Scope:
         self.parameters: dict[str, Any] = {
             "deployment_id": deployment_id,
             "as_of": as_of,
+            "include_archived": filters.include_archived,
             **time_scope.parameters(),
         }
         self.author_terms = people_terms(filters.authors)
@@ -328,7 +329,7 @@ class _Scope:
         ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id
       WHERE d.deployment_id = :deployment_id
         AND d.doc_id = ANY(CAST(:probe_doc_ids AS uuid[]))
-        AND d.deleted_at IS NULL
+        AND d.deleted_at IS NULL{_ARCHIVED_HIDDEN}
         AND v.deleted_at IS NULL
         AND v.ingested_at <= :as_of{_CURRENT_VERSION}
     ),
@@ -360,7 +361,7 @@ class _Scope:
       JOIN document_versions v
         ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id
       WHERE d.deployment_id = :deployment_id
-        AND d.deleted_at IS NULL
+        AND d.deleted_at IS NULL{_ARCHIVED_HIDDEN}
         AND v.deleted_at IS NULL
         AND v.ingested_at <= :as_of{judged}
         AND NOT EXISTS (
@@ -376,7 +377,7 @@ class _Scope:
         ON d.deployment_id = :deployment_id AND d.doc_id = e.doc_id
       JOIN document_versions v
         ON v.deployment_id = d.deployment_id AND v.version_id = e.version_id
-      WHERE d.deleted_at IS NULL
+      WHERE d.deleted_at IS NULL{_ARCHIVED_HIDDEN}
         AND v.deleted_at IS NULL
         AND v.ingested_at <= :as_of
     ),
@@ -389,6 +390,10 @@ class _Scope:
     )
 """
 
+
+_ARCHIVED_HIDDEN: Final = """
+        AND (CAST(:include_archived AS boolean) OR d.archived_at IS NULL)"""
+"""D159: an archived document is history, a candidate only on request."""
 
 _NEWEST_LIVE: Final = """
           (SELECT nv.version_id FROM document_versions nv
@@ -444,6 +449,7 @@ def _filtered_page(
             as_of=as_of,
             after=position,
             limit=batch_limit,
+            include_archived=scope.parameters["include_archived"],
         )
         judged = (
             _judge_batch(
@@ -484,6 +490,7 @@ def _filtered_page(
             as_of=as_of,
             after=position,
             limit=1,
+            include_archived=scope.parameters["include_archived"],
         )
         resume = position if peek else None
     next_cursor = (
@@ -503,6 +510,7 @@ def _walk(
     as_of: datetime,
     after: tuple[datetime, UUID] | None,
     limit: int,
+    include_archived: bool,
 ) -> list[tuple[UUID, datetime]]:
     """The next lineages in the belief-independent walk order (§3.6)."""
     keyset = "TRUE"
@@ -510,6 +518,7 @@ def _walk(
         "deployment_id": deployment_id,
         "as_of": as_of,
         "limit": limit,
+        "include_archived": include_archived,
     }
     if after is not None:
         parameters["cursor_at"], parameters["cursor_doc"] = after
@@ -533,7 +542,7 @@ def _walk(
               LIMIT 1) AS walk_at
       FROM documents d
       WHERE d.deployment_id = :deployment_id
-        AND d.deleted_at IS NULL
+        AND d.deleted_at IS NULL{_ARCHIVED_HIDDEN}
     )
     SELECT w.doc_id, w.walk_at
     FROM walk w
@@ -753,6 +762,10 @@ _PENDING_IN_FORCE: Final = text(
       AND s.in_force && {WINDOW_SQL}
       AND (CAST(:pending_doc_ids AS uuid[]) IS NULL
            OR s.doc_id = ANY(CAST(:pending_doc_ids AS uuid[])))
+      -- D159: an archived lineage is never pending for a read
+      AND NOT EXISTS (SELECT 1 FROM documents archived
+                      WHERE archived.doc_id = s.doc_id
+                        AND archived.archived_at IS NOT NULL)
     ORDER BY s.doc_id
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
@@ -1018,6 +1031,7 @@ def _describe(
                 other_matching_version_ids=pick.others,
                 matched_by=pick.matched_by,
                 score=pick.score,
+                archived_at=row["archived_at"],
             )
         )
     return tuple(results)
@@ -1159,7 +1173,7 @@ _DETAILS: Final = text(
     SELECT m.version_id, m.family, m.file_name, m.title, m.source_path,
            m.created_at, m.modified_at, m.language, m.thread_ref, m.extra,
            v.version_no, v.status::text AS status, d.title AS lineage_title,
-           v.current_representation_id, d.current_version_id,
+           v.current_representation_id, d.current_version_id, d.archived_at,
            {LINEAGE_TAG_NAMES_SQL} AS tags,
            (SELECT s.summary
             FROM document_representations r

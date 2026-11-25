@@ -6,6 +6,7 @@ import type { OutputClaimOccurrence } from './OutputClaimOccurrence';
 import type { OutputEffectiveInterval } from './OutputEffectiveInterval';
 import type { OutputEvidenceSpan } from './OutputEvidenceSpan';
 export type OutputEvidenceResult = {
+    archived: boolean | null;
     asserted_at: string | null;
     char_end: number;
     char_start: number;

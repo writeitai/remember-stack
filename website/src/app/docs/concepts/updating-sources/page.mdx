@@ -124,7 +124,7 @@ keeps them apart:
 The first is the source speaking: it stopped saying something. The second
 is RememberStack reading the same bytes differently, and it cannot tell
 whether the old reading or the new one is right. So a fact is taken back
-only when the source acts, or when its document is deleted. See [Facts](/docs/concepts/facts#support-withdrawn).
+only when the source acts, or when its document is archived. See [Facts](/docs/concepts/facts#support-withdrawn).
 
 ## Editions that apply for a period
 
@@ -152,15 +152,16 @@ version. When a sync sees a new revision marker but identical bytes, the
 existing version's marker advances, so the sync does not fetch that revision
 again. The version's `source_modified_at` does not change.
 
-## Deleting a document
+## Archiving a document
 
-Deleting a document ends the currency of its claims (reason
-`version_deleted`) and retracts facts that only it supported, the same way
-as a living removal. You delete a whole document, every version at once,
-with `DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
-`remember documents delete` or the `delete_document` MCP tool. Deleting a
-single version is not offered. See
-[Deleting a document](/docs/concepts/documents-and-sources#deleting-a-document).
+Archiving a document says it no longer holds. It ends the currency of its
+claims (reason `version_archived`) and retracts facts that only it supported,
+the same way as a living removal, while the document stays readable as
+history. You archive a whole document, every version at once, with
+`POST /documents/{doc_id}/archive`, `MemoryClient.archive_document`,
+`remember documents archive` or the `archive_document` MCP tool, and
+`unarchive` undoes it exactly. Archiving a single version is not offered. See
+[Archiving a document](/docs/concepts/documents-and-sources#archiving-a-document).
 
 ## Where to go next
 

@@ -8,7 +8,9 @@ import { ToolError, ToolArgumentError, invalidArguments } from './tool-errors';
 export type Permission = 'memory:read' | 'memory:write';
 export const INGEST_TOOL_NAME='ingest';
 export const PIPELINE_READINESS_TOOL_NAME='pipeline_readiness';
-export const DELETE_DOCUMENT_TOOL_NAME='delete_document';
+export const ARCHIVE_DOCUMENT_TOOL_NAME='archive_document';
+export const UNARCHIVE_DOCUMENT_TOOL_NAME='unarchive_document';
+export const ARCHIVE_TOOL_NAMES=Object.freeze([ARCHIVE_DOCUMENT_TOOL_NAME,UNARCHIVE_DOCUMENT_TOOL_NAME]);
 export const SEARCH_DOCUMENTS_TOOL_NAME='search_documents';
 export const ADJACENT_CHUNKS_TOOL_NAME='adjacent_chunks';
 export const SECTION_HISTORY_TOOL_NAME='section_history';
@@ -124,7 +126,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
       validateSchema({schema:definition.input_schema,value:args});
       return {version_ids:(args.version_ids as unknown[]).map(value=>uuid({value,field:'version_id'})),require:validateModel({name:'ReadinessRequirements',value:args.require})};
     }
-    if(name==='delete_document')return {doc_id:uuid({value:args.doc_id,field:'doc_id'})};
+    if(ARCHIVE_TOOL_NAMES.includes(name))return {doc_id:uuid({value:args.doc_id,field:'doc_id'})};
     if(name==='adjacent_chunks') {
       const window=args.window??1;if(!Number.isInteger(window)||(window as number)<1||(window as number)>2)refuse({detail:'window must be an integer (1 or 2).'});
       return {chunk_id:uuid({value:args.chunk_id,field:'chunk_id'}),window};

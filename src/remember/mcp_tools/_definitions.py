@@ -24,7 +24,13 @@ from remember.retrieval import MAX_CONTEXT_K
 
 INGEST_TOOL_NAME: Final = "ingest"
 PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
-DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
+ARCHIVE_DOCUMENT_TOOL_NAME: Final = "archive_document"
+UNARCHIVE_DOCUMENT_TOOL_NAME: Final = "unarchive_document"
+#: The D159 archive tools, composed together on writable servers only.
+ARCHIVE_TOOL_NAMES: Final[tuple[str, ...]] = (
+    ARCHIVE_DOCUMENT_TOOL_NAME,
+    UNARCHIVE_DOCUMENT_TOOL_NAME,
+)
 SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
 ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
 SECTION_HISTORY_TOOL_NAME: Final = "section_history"
@@ -316,19 +322,30 @@ _PIPELINE_READINESS_DESCRIPTION: Final = (
     " same way."
 )
 
-_DELETE_DOCUMENT_DESCRIPTION: Final = (
-    "Remove one document from this deployment's memory. Use only when the user"
-    " asks to delete or forget a specific document, or it is plainly wrong or"
-    " unwanted — never to tidy up, and never to change a fact (ingest a"
-    " correcting document instead). Takes the doc_id that ingest returned or"
-    " that a claim or source cites. The effect is immediate: the document leaves"
-    " search, facts and the document list; its claims stop counting as"
-    " evidence; facts that no other document supports are closed. Facts other"
-    " documents also support stay. The claims and stored original are kept as"
-    " history, so this is not an erasure. Ingesting the same document again later"
-    " adds it back as a new version. Returns claims_retired, relations_closed and"
-    " observations_closed. A document_not_found error means the id is unknown or"
-    " the document is already deleted: do not retry it."
+_ARCHIVE_DOCUMENT_DESCRIPTION: Final = (
+    "Archive one document: the memory stops believing it but keeps it readable"
+    " as history. Use when the user says a document no longer holds (a dead"
+    " plan, an outdated policy, a replaced price list) — never to tidy up, and"
+    " never to change one fact (ingest a correcting document instead). Takes the"
+    " doc_id that ingest returned or that a claim or source cites. The effect is"
+    " immediate: its claims stop counting as evidence and facts that no other"
+    " document supports are closed; facts other documents also support stay."
+    " The document leaves search, context and the document list unless a call"
+    " sets include_archived; it is not erased. unarchive_document undoes it"
+    " exactly, and a changed version of the document brings it back. Returns"
+    " archived_at, claims_retired, relations_closed and observations_closed; a"
+    " repeat returns the same archived_at with zero counts. A document_not_found"
+    " error means the id is unknown: do not retry it."
+)
+
+_UNARCHIVE_DOCUMENT_DESCRIPTION: Final = (
+    "Undo an archive exactly: the document's claims count as evidence again and"
+    " the facts its archive closed reopen when they have support again. Use"
+    " only when the user says an archived document holds again. Takes the"
+    " archived document's doc_id. Its only model call is a best-effort refresh"
+    " of the entity profiles whose facts changed. Returns claims_restored"
+    " and facts_reopened; a document that is not archived returns zero counts."
+    " A document_not_found error means the id is unknown: do not retry it."
 )
 
 _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
@@ -342,7 +359,8 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     ' recipients (a name or an address; "alice" matches "Alice Novak"),'
     " created/modified date ranges, language, thread_ref, doc_ids and tags"
     ' (registered caller tags: {"all": [...], "any": [...], "none": [...]};'
-    " call list_tags to see which exist). Each"
+    " call list_tags to see which exist). Archived documents are left out"
+    " unless include_archived is true; each one returned has archived_at. Each"
     ' result is a document judged by its current version (versions="all"'
     " searches every live version and returns the newest match); it carries"
     " doc_id, version_id, file_name, title, family, processing status, authors,"
@@ -442,12 +460,21 @@ _DOCUMENTS_FILTER: Final[dict[str, object]] = {
             "description": "Only these documents (UUIDs).",
         },
         "tags": _TAGS_FILTER,
+        "include_archived": {
+            "type": "boolean",
+            "default": False,
+            "description": (
+                "Also consider archived documents (history, hidden by default);"
+                " each result from one is marked archived."
+            ),
+        },
     },
     "description": (
         "Only read what these documents say: the search_documents filters"
         " (family, authors, recipients, created/modified ranges, language,"
         " thread_ref, doc_ids) and tags. Call list_tags before filtering by"
-        " tag; an unknown tag is unknown_tag."
+        " tag; an unknown tag is unknown_tag. include_archived also reads"
+        " archived documents, whose claims never count as current support."
     ),
 }
 
@@ -515,6 +542,14 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "description": "Only these documents (UUIDs).",
         },
         "tags": _TAGS_FILTER,
+        "include_archived": {
+            "type": "boolean",
+            "default": False,
+            "description": (
+                "Also consider archived documents (history, hidden by default);"
+                " each result from one is marked archived."
+            ),
+        },
         "versions": {
             "type": "string",
             "enum": ["current", "all"],
@@ -697,7 +732,7 @@ _DOCUMENT_REFERENCES_INPUT_SCHEMA: Final[dict[str, object]] = {
     },
 }
 
-_DELETE_DOCUMENT_INPUT_SCHEMA: Final[dict[str, object]] = {
+_DOCUMENT_ID_INPUT_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["doc_id"],
@@ -1016,20 +1051,27 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         http_route="POST /readiness",
     ),
     ToolDefinition(
-        name=DELETE_DOCUMENT_TOOL_NAME,
-        description=_DELETE_DOCUMENT_DESCRIPTION,
-        input_schema=_DELETE_DOCUMENT_INPUT_SCHEMA,
+        name=ARCHIVE_DOCUMENT_TOOL_NAME,
+        description=_ARCHIVE_DOCUMENT_DESCRIPTION,
+        input_schema=_DOCUMENT_ID_INPUT_SCHEMA,
         permission="memory:write",
         tool_version=1,
-        http_route="DELETE /documents/{doc_id}",
-        destructive=True,
+        http_route="POST /documents/{doc_id}/archive",
+    ),
+    ToolDefinition(
+        name=UNARCHIVE_DOCUMENT_TOOL_NAME,
+        description=_UNARCHIVE_DOCUMENT_DESCRIPTION,
+        input_schema=_DOCUMENT_ID_INPUT_SCHEMA,
+        permission="memory:write",
+        tool_version=1,
+        http_route="POST /documents/{doc_id}/unarchive",
     ),
     ToolDefinition(
         name=SEARCH_DOCUMENTS_TOOL_NAME,
         description=_SEARCH_DOCUMENTS_DESCRIPTION,
         input_schema=_SEARCH_DOCUMENTS_INPUT_SCHEMA,
         permission="memory:read",
-        tool_version=4,
+        tool_version=5,
         http_route="POST /documents/search",
     ),
     ToolDefinition(
@@ -1120,7 +1162,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=5,
+        tool_version=6,
         http_route="POST /operations/claims_and_sources_context",
     ),
     ToolDefinition(
@@ -1153,7 +1195,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=5,
+        tool_version=6,
         http_route="POST /operations/facts_context",
     ),
     ToolDefinition(
@@ -1177,7 +1219,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=6,
+        tool_version=7,
         http_route="POST /operations/combined_context",
     ),
     ToolDefinition(

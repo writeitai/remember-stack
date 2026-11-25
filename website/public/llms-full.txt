@@ -574,7 +574,8 @@ The `remember mcp` server gives the agent these tools:
 | `combined_context` | Facts and claims together, when the agent wants everything in one call. |
 | `ingest` | Store a note, a decision or a file. |
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
-| `delete_document` | Remove a document from the memory when the user asks. |
+| `archive_document` | Tell the memory a document no longer holds, when the user says so. It stays readable as history. |
+| `unarchive_document` | Undo an archive when the user says the document holds again. |
 | `search_documents` | Find a file by its name, title, path, authors, dates or text. |
 | `section_history` | Follow one section of a document across its versions. |
 | `document_references` | See what a passage, section or document points to, and what points to it, at a given time. |
@@ -582,7 +583,8 @@ The `remember mcp` server gives the agent these tools:
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
-two tools that change memory (`ingest` and `delete_document`).
+tools that change memory (`ingest`, `archive_document`, `unarchive_document`
+and the tag tools that change tags).
 
 ## Teach the agent the order
 
@@ -743,7 +745,7 @@ version's date and is read afresh.
 The rule only ever looks back to earlier dates. If you ingest the 2026
 edition of a document first and the identical 2024 edition later, the 2024
 passages take 2024 and are read afresh; nothing already stamped is re-dated.
-Passages of deleted versions are never drawn on, and the date is recorded
+Passages of versions a hard forget removed are never drawn on, and the date is recorded
 once and never changes. `chunks_live.text_origin_at` in the
 [query space](https://remember.dev/docs/reference/query-space#chunks_live) shows it. Passages
 written by an earlier release have no recorded origin, so the first new
@@ -779,9 +781,8 @@ Bytes that match an **older** version (the file was changed and then changed
 back) create a new version. The document moves forward; it never silently
 jumps back to an old snapshot.
 
-Bytes sent again after the document was [deleted](#deleting-a-document)
-also create a new version (`created=true`), and it is processed from the
-start.
+Bytes sent again after the document was [archived](#archiving-a-document)
+that match its latest version leave it archived (`created=false`).
 
 ## Editions in force
 
@@ -855,40 +856,59 @@ processed can already be found by name. Say John uploaded
 `billing-migration.md`: searching for either name finds the one document.
 See [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
-## Deleting a document
+## Archiving a document
 
-Deleting a document removes it from the memory: every version of it, in one
-call (`DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
-`remember documents delete`, or the `delete_document` MCP tool).
+Archiving a document tells the memory that it no longer holds, such as a dead
+plan or a replaced price list. It acts on every version of the document in one
+call (`POST /documents/{doc_id}/archive`, `MemoryClient.archive_document`,
+`remember documents archive`, or the `archive_document` MCP tool). The
+document is kept and stays readable as history.
 
 Say Dana uploaded a draft of the billing migration plan that says "the
-migration finishes in March", and John's status note says the same. Dana
-deletes the draft. From then on:
+migration finishes in March", and John's status note says the same. The plan
+is abandoned, so Dana archives the draft. From then on:
 
-- the draft is gone from `GET /documents`, search, facts, the graph and SQL
-  queries;
 - its claims stop counting as evidence (their currency ends with reason
-  `version_deleted`);
+  `version_archived`);
 - "the migration finishes in March" stays believed, because John's note still
   supports it; it now has one supporter instead of two;
-- a fact that only the draft supported is closed, and the closure is recorded
-  as a retraction (`retracted_source_removal`), exactly as when a living
-  document drops a passage.
+- a fact that only the draft supported is closed: the memory stops believing
+  it, its world-time window stays as the draft stated it, and the closure is
+  recorded as a retraction (`retracted_source_removal`), exactly as when a
+  living document drops a passage;
+- the draft is left out of `GET /documents`, search and the context
+  operations, and its folder leaves the corpus filesystem.
 
-Deleting is not erasing. The claims, the stored original and the record of
-what changed stay in the deployment as history, which is why a deletion can
-be audited. Erasing a document's bytes and every trace of it is a separate,
-heavier operator operation that is not offered through the API.
+Archiving is not erasing. The document, its versions, its stored original and
+the facts it closed stay in the deployment as history. Reads that pass
+`include_archived` return the archived document, and mark each of its claims
+and passages as archived; those claims never count as current support. A read
+of belief as of a time before the archive sees the closed facts as they were.
+In SQL queries, `documents_live` lists the draft with `archived_at` set.
 
-If you send the same file again later, it is added back as a new version and
-processed like a new document. The facts that were closed stay closed; its
-new claims support facts in the usual way.
+An archive takes effect when you call it. To say that an edition applied only
+for a period, use [effective periods](#editions-in-force) instead.
 
-A deletion is all or nothing. A document that was still being processed
-when you deleted it publishes no further claims, and anything it had already
-produced is never visible and is retired when its version reaches the
-`reconcile` stage. Details and errors:
-[`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
+### Bringing it back
+
+`POST /documents/{doc_id}/unarchive` (`MemoryClient.unarchive_document`,
+`remember documents unarchive`, or the `unarchive_document` MCP tool) undoes
+the archive exactly: the claims it retired count again, and the facts it
+closed reopen when they have support again. The reopening is recorded as a new
+event, so a read of belief as of a time inside the archive still sees those
+facts closed then.
+
+Sending the same bytes again does not bring an archived document back; it
+stays archived. A new version of it does: it is ingested as usual, and
+sections whose text did not change reuse their claims instead of being read
+again.
+
+A connector sync that sees a file deleted at its source archives the
+document. When the source shows the same file again,
+that archive is undone; a changed file is a new version.
+
+Details and errors:
+[`POST /documents/{doc_id}/archive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
 
 ## Document statuses
 
@@ -901,7 +921,7 @@ Each version carries a processing status for its early stages:
 | `structuring` | Converted; sections are being detected. |
 | `ready` | Converted and structured. |
 | `failed` | Conversion or structuring failed; the version's `error` says why. |
-| `deleted` | Removed. |
+| `deleted` | Removed by an operator's hard forget. |
 
 **Warning:**
 
@@ -913,7 +933,8 @@ check [readiness](https://remember.dev/docs/concepts/pipeline#readiness), not th
 `GET /documents` lists documents newest first, reports the newest version's
 status, and adds a `serving` flag that is `true` when any version of the
 document has reached `ready`. A document whose newest upload failed can still
-be serving an older version. See
+be serving an older version. Archived documents are listed only when you ask
+for them (`include_archived=true`). See
 [Ingest, readiness, documents](https://remember.dev/docs/reference/http-api/ingest).
 
 ## Who ingested a version
@@ -1170,9 +1191,11 @@ currently says. It starts `true`. It becomes `false` when:
 |---|---|
 | `reextracted` | A newer extractor processed the same file; its claims replace these. |
 | `version_superseded` | In `living` mode, a new version of the document no longer contains this passage. |
-| `version_deleted` | The version was deleted. |
+| `version_archived` | The document was [archived](https://remember.dev/docs/concepts/documents-and-sources#archiving-a-document). |
 
 A fourth reason, `review_restored`, returns a claim to current testimony.
+Unarchiving the document, or a new version of it that reuses the claim, also
+returns it, recorded under `version_archived`.
 
 Currency is bookkeeping, not truth. A non-current claim still exists, can
 still be read for audit, and still says what it said. What changes is that it
@@ -1348,7 +1371,7 @@ A withdrawn fact is still returned, with `support: "withdrawn"`, so an agent
 sees that the ground moved before it relies on it.
 
 This is different from a source removing content. When a `living` source
-drops the text that was a fact's only support, or a document is deleted, the
+drops the text that was a fact's only support, or a document is archived, the
 fact is closed and the closure is recorded. See
 [Updating a source](https://remember.dev/docs/concepts/updating-sources).
 
@@ -2296,7 +2319,7 @@ keeps them apart:
 The first is the source speaking: it stopped saying something. The second
 is RememberStack reading the same bytes differently, and it cannot tell
 whether the old reading or the new one is right. So a fact is taken back
-only when the source acts, or when its document is deleted. See [Facts](https://remember.dev/docs/concepts/facts#support-withdrawn).
+only when the source acts, or when its document is archived. See [Facts](https://remember.dev/docs/concepts/facts#support-withdrawn).
 
 ## Editions that apply for a period
 
@@ -2324,15 +2347,16 @@ version. When a sync sees a new revision marker but identical bytes, the
 existing version's marker advances, so the sync does not fetch that revision
 again. The version's `source_modified_at` does not change.
 
-## Deleting a document
+## Archiving a document
 
-Deleting a document ends the currency of its claims (reason
-`version_deleted`) and retracts facts that only it supported, the same way
-as a living removal. You delete a whole document, every version at once,
-with `DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
-`remember documents delete` or the `delete_document` MCP tool. Deleting a
-single version is not offered. See
-[Deleting a document](https://remember.dev/docs/concepts/documents-and-sources#deleting-a-document).
+Archiving a document says it no longer holds. It ends the currency of its
+claims (reason `version_archived`) and retracts facts that only it supported,
+the same way as a living removal, while the document stays readable as
+history. You archive a whole document, every version at once, with
+`POST /documents/{doc_id}/archive`, `MemoryClient.archive_document`,
+`remember documents archive` or the `archive_document` MCP tool, and
+`unarchive` undoes it exactly. Archiving a single version is not offered. See
+[Archiving a document](https://remember.dev/docs/concepts/documents-and-sources#archiving-a-document).
 
 ## Where to go next
 
@@ -2674,7 +2698,7 @@ The same reads are available from four places. Pick by who is asking:
 |---|---|---|
 | [Python client](https://remember.dev/docs/reference/python-sdk) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
 | [CLI](https://remember.dev/docs/reference/cli) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
-| [MCP](https://remember.dev/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, delete, document search, section history, document references, the four operations, adjacent chunks, and the seven SQL query tools. |
+| [MCP](https://remember.dev/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, archive and unarchive, document search, section history, document references, the four operations, adjacent chunks, and the seven SQL query tools. |
 | [HTTP API](https://remember.dev/docs/reference/http-api) | Any other language or runtime. | Every route; the other three are built on it. |
 
 ## The four assured operations
@@ -4426,11 +4450,13 @@ versions; the loop waits only for what changed.
 
 Not sending a file does not remove its document: RememberStack has no
 signal that the file is gone, and its claims keep counting. When a file
-leaves the folder, delete its document too. Each document the loop above
+leaves the folder, archive its document. Each document the loop above
 sent lists its `source_ref` as `source_uri`, so one pass over
-`list_documents` finds the ones whose file is gone:
+`list_documents` finds the ones whose file is gone, and the ones whose file
+came back:
 
 ```python
+import json
 from pathlib import Path
 
 import remember
@@ -4438,22 +4464,49 @@ import remember
 client = remember.Client.from_env()
 root = Path("specs")
 present = {f"specs/{path.name}" for path in root.glob("*.md")}
+# The archives this pass made itself (document ID -> archived_at); it undoes
+# only those, never an archive someone made on purpose.
+ledger = Path(".remember-archived.json")
+archived_here = json.loads(ledger.read_text()) if ledger.exists() else {}
 
 cursor = None
 while True:
-    page = client.list_documents(cursor=cursor)
+    page = client.list_documents(cursor=cursor, include_archived=True)
     for document in page.documents:
-        if document.source_kind == "file" and document.source_uri not in present:
-            client.delete_document(doc_id=document.doc_id)
+        # only the folder and pattern the ingest loop covers
+        uri = document.source_uri or ""
+        if document.source_kind != "file" or not (
+            uri.startswith("specs/")
+            and "/" not in uri.removeprefix("specs/")
+            and uri.endswith(".md")
+        ):
+            continue
+        doc_id = str(document.doc_id)
+        gone = uri not in present
+        if gone and document.archived_at is None:
+            archive = client.archive_document(doc_id=document.doc_id)
+            archived_here[doc_id] = archive.archived_at.isoformat()
+        elif (
+            not gone
+            and document.archived_at is not None
+            and archived_here.get(doc_id) == document.archived_at.isoformat()
+        ):
+            client.unarchive_document(doc_id=document.doc_id)
+            del archived_here[doc_id]
     if page.next_cursor is None:
         break
     cursor = page.next_cursor
+ledger.write_text(json.dumps(archived_here))
 ```
 
-Deleting removes the document's claims from the evidence and closes the
-facts only it supported; the claims stay as history. If the file comes back
-later, the sync loop adds it back as a new version. See
-[Deleting a document](https://remember.dev/docs/concepts/documents-and-sources#deleting-a-document).
+Archiving takes the document's claims out of the evidence and closes the
+facts only it supported; the document and its claims stay as history. Run
+this pass after the sync loop. A file that came back edited has already
+returned as a new version, which brings its document back. A file that came
+back unchanged is a no-op for the sync loop and its document stays archived,
+so the pass unarchives it if the pass archived it: its claims count again, and the facts the archive
+closed reopen when they have support again. See
+[Archiving a document](https://remember.dev/docs/concepts/documents-and-sources#archiving-a-document).
 
 To remove only some passages of a living document, send a version without
 them instead.
@@ -4603,7 +4656,8 @@ curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5
   the tag is registered.
 - Every tag named must be registered; otherwise nothing changes and the
   call is refused with `unknown_tag`.
-- A deleted document cannot be tagged (`404` `document_not_found`).
+- An archived document can be tagged; a document that does not exist cannot
+  (`404` `document_not_found`).
 
 Tags belong to the document, not to one version: every version, old and
 new, carries the document's current tags. Changing them never reprocesses
@@ -4768,12 +4822,13 @@ the name and look the id up.
   `documents`. See
   [MCP tools](https://remember.dev/docs/reference/mcp#tag-tools).
 
-## Tags and deleted documents
+## Tags and archived documents
 
-A deleted document never shows its tags: it leaves `GET /documents`, search
-and the SQL views, and its tags with it. The engine keeps the record of which
-tags it carried, so if you ingest the document again it comes back with
-those tags. Forgetting a document removes that
+An [archived](https://remember.dev/docs/concepts/documents-and-sources#archiving-a-document)
+document keeps its tags. It leaves `GET /documents` and search unless a read
+asks for archived documents with `include_archived`, and then it is listed
+with its tags. When it comes back, by unarchiving or by a new version, it
+still carries them. Forgetting a document removes that
 record; the registered tags themselves stay, because they are the
 deployment's vocabulary, not content from any document.
 
@@ -5714,8 +5769,8 @@ supports. After the call commits, the `review_fact_windows` stage (in `worker-ll
 the model, once for each fact whose evidence's periods moved, whether the
 fact's dates still fit; it keeps them or replaces them with dates grounded in
 the claims, and records the decision in the fact's adjudication history. The
-same check runs when a new edition finishes processing and when a version or
-document is deleted. A fact whose periods did not move is not rechecked.
+same check runs when a new edition finishes processing, and when a document
+is archived, unarchived or forgotten. A fact whose periods did not move is not rechecked.
 
 Two other tools:
 
@@ -8784,8 +8839,8 @@ REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.exa
   `http://localhost`, `http://127.0.0.1` and `http://[::1]`, with any port,
   are accepted, so `http://localhost:3000` works during development.
 - Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
-  headers are allowed. `DELETE` (deleting a document) still needs a token with
-  `write` scope. Cookies are not allowed; the browser must send a token.
+  headers are allowed. `DELETE` (removing a tag or a document's effective
+  periods) still needs a token with `write` scope. Cookies are not allowed; the browser must send a token.
 - Browsers may cache the permission for up to 600 seconds after you remove
   an origin. Revoking the token is what stops access immediately.
 
@@ -10469,11 +10524,12 @@ of served documents reconciled. Matching digests avoid recopying originals and
 media. Ordinary publication touches only the changed document and its navigation
 ancestors.
 
-## Deletion, forget and restore
+## Archive, forget and restore
 
-Normal document deletion removes that document's recorded corpus folders and
-repairs navigation before reporting success. A store failure reports failure and
-leaves durable retry work.
+The filesystem is the current corpus. Archiving a document removes its
+recorded corpus folders and repairs navigation before reporting success. A
+store failure reports failure and leaves durable retry work; the archive
+itself is already recorded.
 
 A forget erases every folder carrying the document's suffix, including
 unfinished uploads and retained object versions, and rewrites the navigation
@@ -10506,7 +10562,7 @@ The API has 40 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
+| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `POST /documents/{doc_id}/archive`, `POST /documents/{doc_id}/unarchive`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references`, `GET /tags`, `POST /tags`, `PATCH /tags/{tag_id}`, `DELETE /tags/{tag_id}`, `POST /documents/{doc_id}/tags` |
 | Sections and references | [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references) | `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` |
 | Assured operations | [Operations](https://remember.dev/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](https://remember.dev/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
@@ -10638,7 +10694,8 @@ their arguments do not fit in a query string.
 | `PUT` | `/documents/{doc_id}/versions/{version_id}/references` | `write` |
 | `PUT` | `/documents/{doc_id}/versions/{version_id}/effective-periods` | `write` |
 | `DELETE` | `/documents/{doc_id}/effective-periods` | `write` |
-| `DELETE` | `/documents/{doc_id}` | `write` |
+| `POST` | `/documents/{doc_id}/archive` | `write` |
+| `POST` | `/documents/{doc_id}/unarchive` | `write` |
 | `GET` | `/tags` | `read` |
 | `POST` | `/tags` | `write` |
 | `PATCH` | `/tags/{tag_id}` | `write` |
@@ -10769,8 +10826,10 @@ to withdraw. `POST /documents/{doc_id}/tags` repeated with the same body
 leaves the same tags, and `PATCH /tags/{tag_id}` repeated leaves the same
 tag. `POST /tags` repeated is refused with `409` `conflict`, and
 `DELETE /tags/{tag_id}` repeated with `404` `unknown_tag`: in both cases the
-first call already did the work. Every other route except
-`DELETE /documents/{doc_id}` only reads, so repeating it is safe.
+first call already did the work. `POST /documents/{doc_id}/archive`
+repeated answers the same `archived_at` with zero counts, and
+`POST /documents/{doc_id}/unarchive` repeated answers zero counts. Every
+other route only reads, so repeating it is safe.
 
 ## Pagination and truncation
 
@@ -10895,8 +10954,9 @@ These routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
 enough to query. `GET /documents` lists what the deployment holds, newest
 document first. `POST /documents/search` finds documents by name, metadata
-and text. `DELETE /documents/{doc_id}` removes a document from the
-memory.
+and text. `POST /documents/{doc_id}/archive` tells the memory a document no
+longer holds, keeping it as history, and `POST /documents/{doc_id}/unarchive`
+undoes that.
 
 Four more routes describe versions after ingest.
 `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` declares
@@ -10953,9 +11013,10 @@ attribution, which travels in headers so that it never lands in access logs.
 
 Without `source_kind` and `source_ref`, the file's content is its identity:
 the document id is derived from the SHA-256 of the bytes. Sending the same
-bytes again is a no-op, and different bytes are a different document. After
-you [delete](#delete-documentsdoc_id) a document, sending its bytes again adds
-it back as a new version (`"created": true`), processed from the start.
+bytes again is a no-op, and different bytes are a different document. Sending
+the bytes of an [archived](#post-documentsdoc_idarchive) document again is a
+no-op too: it stays archived until you
+[unarchive](#post-documentsdoc_idunarchive) it.
 
 With `source_kind` and `source_ref`, the pair is the identity. Use it for
 anything that changes over time — a spec that gets edited, a page in another
@@ -11067,8 +11128,8 @@ kept. Change or remove tags with
 
 Tags never decide whether a version is created. Sending bytes identical to
 the latest version with new tags adds the tags and is still a no-op
-(`"created": false`); a new `version_key` or a document added back after a
-delete still creates a version, as without tags. Tags are not part of what is
+(`"created": false`); a new `version_key` still creates a version, as
+without tags. Tags are not part of what is
 processed, so adding them starts no work.
 
 Every tag must be registered first. If any is not, the whole ingest is
@@ -11269,10 +11330,12 @@ first.
 | `limit` | query | integer | no | `50` | 1 to 200. |
 | `cursor` | query | string | no | | The `next_cursor` from the previous page. Opaque. |
 | `status` | query | `ingesting` \| `converting` \| `structuring` \| `ready` \| `failed` | no | | Filters on the newest version's status. |
+| `include_archived` | query | boolean | no | `false` | Also list [archived](#post-documentsdoc_idarchive) documents. |
 
 Documents are ordered by when each was first seen, then by id. Re-ingesting a
 document does not move it: it is the same document, first seen when it was
-first seen. Deleted documents and deleted versions are not listed.
+first seen. Archived documents are listed only with `include_archived=true`;
+removed versions are never listed.
 
 The order is fixed on purpose. "Most recently changed first" would move a
 document every time a new version arrived, and a client paging through the
@@ -11309,7 +11372,8 @@ does not mean the document is searchable yet; use
         "error": null
       },
       "serving": true,
-      "tags": ["kind:decision", "project:billing-migration"]
+      "tags": ["kind:decision", "project:billing-migration"],
+      "archived_at": null
     }
   ],
   "next_cursor": null
@@ -11317,8 +11381,9 @@ does not mean the document is searchable yet; use
 ```
 
 `tags` holds the names of the document's [tags](#get-tags), ordered by name
-ignoring letter case; it is empty for an untagged document. `next_cursor` is
-`null` on the last page.
+ignoring letter case; it is empty for an untagged document. `archived_at` is
+when the document was archived, and `null` for a document that is not.
+`next_cursor` is `null` on the last page.
 
 ### Errors
 
@@ -11344,7 +11409,8 @@ for document in page.documents:
 # page.next_cursor is None on the last page; pass it back to read the next one.
 ```
 
-`remember documents list` prints the same page as JSON.
+`remember documents list` prints the same page as JSON;
+`--include-archived` also lists archived documents.
 
 ## POST /documents/search
 
@@ -11380,6 +11446,7 @@ A [`DocumentSearchRequest`](https://remember.dev/docs/reference/result-types#doc
 | `thread_ref` | string | The conversation or thread key, exact match. |
 | `doc_ids` | array of UUIDs | Only these documents. |
 | `tags` | object | The document's [tags](#get-tags): `{"all": [...], "any": [...], "none": [...]}`. See below. |
+| `include_archived` | boolean | Also consider [archived](#post-documentsdoc_idarchive) documents. Default `false`. |
 
 Unknown fields are rejected (`422`).
 
@@ -11412,8 +11479,9 @@ processing, by its newest version. Without a `query` (paged results), it is
 judged by its newest version that had arrived when the search started (see
 [Order and paging](#order-and-paging)). With `versions: all` any version may match, and the result is the
 newest version that did, with the others in `other_matching_version_ids`.
-Filters and names always use the returned version's own metadata. Deleted
-documents and deleted versions never match.
+Filters and names always use the returned version's own metadata. Removed
+versions never match, and archived documents match only with
+`filters.include_archived`; each such result carries `archived_at`.
 
 `p3_path` is the relative corpus folder only when the described version is
 served and its nullable publication marker matches the current export inputs.
@@ -11529,7 +11597,8 @@ than `limit` results and still return a `next_cursor`: keep paging until `next_c
       "overview": "Quarterly sales by region …",
       "other_matching_version_ids": [],
       "matched_by": ["name"],
-      "score": 0.0328
+      "score": 0.0328,
+      "archived_at": null
     }
   ],
   "next_cursor": null,
@@ -11540,7 +11609,8 @@ than `limit` results and still return a `next_cursor`: keep paging until `next_c
 ```
 
 Each result's `tags` holds the names of the document's [tags](#get-tags),
-as in `GET /documents`.
+and `archived_at` when it was archived (`null` if it is not), as in
+`GET /documents`.
 
 ### Errors
 
@@ -11570,11 +11640,14 @@ for result in page.documents:
 
 `remember documents search "q3 sales" --family spreadsheet` prints the same page
 as JSON. `--tag T` (all), `--any-tag T` and `--not-tag T`, each repeatable,
-fill `filters.tags`.
+fill `filters.tags`, and `--include-archived` sets
+`filters.include_archived`.
 
-## DELETE /documents/{doc_id}
+## POST /documents/{doc_id}/archive
 
-Remove one document from the memory: every version of it, all at once.
+Archive one document: the memory stops believing it, and it stays readable as
+history. Use it when a document no longer holds, such as a dead plan or a
+replaced price list. It acts on every version of the document at once.
 
 **Scope:** `write`.
 
@@ -11586,48 +11659,66 @@ Remove one document from the memory: every version of it, all at once.
 
 There is no body.
 
-### What deleting does
+### What archiving does
 
-When the call returns, the document is out of the memory:
+When the call returns:
 
-- it no longer appears in `GET /documents`, search, facts, the graph or SQL
-  queries;
-- its claims stop counting as evidence (their reason becomes
-  `version_deleted`);
-- a fact that only this document supported is closed, with a recorded
-  retraction (`retracted_source_removal`); a fact other documents also
-  support stays, with one supporter fewer.
+- the document's claims stop counting as evidence (their currency ends with
+  reason `version_archived`);
+- a fact that only this document supported is closed: the memory stops
+  believing it (`invalidated_at` is set), its world-time window stays as the
+  evidence stated it, and the closure is recorded as a retraction
+  (`retracted_source_removal`);
+- a fact other documents also support stays, with one supporter fewer;
+- the document leaves `GET /documents`, `POST /documents/search`, the search
+  routes and the context operations, unless a read asks for archived
+  documents with `include_archived` (see below);
+- its folder leaves the corpus filesystem, and a supplied reference that
+  names it as a target answers `target_unavailable`.
 
-Deleting is not erasing. The claims and the stored original stay in the
-deployment as history, and the retraction is recorded. Erasing a document's
-bytes and every trace of it is a separate operator operation that is not
-offered through the API.
+Archiving is not erasing. The document, its versions and its stored original
+stay in the deployment, and the facts it closed stay readable as history with
+their closure. A read of belief as of a time before the archive sees those
+facts as they were.
 
-Processing that was still running for the document stops publishing new
-claims. Anything it already produced is never visible and is retired when
-that version reaches the `reconcile` stage.
+Archived documents are left out of reads by default. To read them as history:
 
-A pending review of whether the document's claims were extracted correctly is
-closed as moot, because the document is gone.
+- `GET /documents?include_archived=true` lists them, each with `archived_at`;
+- `POST /documents/search` with `filters.include_archived: true` returns them,
+  each with `archived_at`;
+- the search routes and the context operations take
+  `documents.include_archived: true`, and mark each claim and passage of an
+  archived document with `"archived": true`. Those claims never count as
+  current support for a fact.
 
-If you ingest the same file again later, it is added back as a new version
-and processed from the start, like any new document. The facts that closed
-stay closed; the new claims support facts as usual.
+In the [query space](https://remember.dev/docs/reference/query-space#documents_live),
+`documents_live` lists an archived document with `archived_at` set, and every
+current-testimony view leaves it out.
+
+Processing that was still running for the document finishes, but nothing it
+publishes counts as current testimony while the document is archived; it is
+retired when its version reaches the `reconcile` stage. An open review of
+whether a claim's support was rightly withdrawn stays open: it has no effect
+while the document is archived and applies again if the document comes back.
+
+An archive takes effect when you call it; it never back-dates. To say that an
+edition was in force only for a period, declare
+[effective periods](#versions-in-force) instead.
 
 The route starts no pipeline work. Its one possible
 model call re-embeds the profile text of entities whose facts changed; that
 call is recorded with the deployment's other request-time model calls. If
-the model provider is down, the deletion still succeeds and those profiles
+the model provider is down, the archive still succeeds and those profiles
 catch up the next time the entity's evidence changes.
 
 ### Response
 
-`200` with a [`DocumentDeletion`](https://remember.dev/docs/reference/result-types#documentdeletion):
+`200` with a [`DocumentArchive`](https://remember.dev/docs/reference/result-types#documentarchive):
 
 ```json
 {
   "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
-  "deleted_at": "2026-09-23T10:41:07.318Z",
+  "archived_at": "2026-09-23T10:41:07.318Z",
   "claims_retired": 12,
   "relations_closed": 2,
   "observations_closed": 1
@@ -11636,45 +11727,127 @@ catch up the next time the entity's evidence changes.
 
 The counts describe what this call changed.
 
-### Deleting twice
+### Archiving twice
 
-A deletion is all or nothing: the document is hidden and its evidence
-updated in one step, or nothing changes. A second `DELETE` of the same
-document answers `404` `document_not_found`, the same as an id the deployment
-never held, so retrying after a timeout is safe. The one exception is a
-document that was hidden some other way but whose evidence was never updated;
-deleting it finishes the job and answers `200` with what it finished.
+An archive is all or nothing: the document is archived and its evidence
+updated in one step, or nothing changes. Archiving an archived document
+answers `200` with the same `archived_at` and zero counts, so retrying after a
+timeout is safe.
 
-If you ingest the document again while a `DELETE` of it is running, the
-ingest waits for the delete to finish and then adds the document back as a
-new version.
+### Bringing a document back
+
+- [`POST /documents/{doc_id}/unarchive`](#post-documentsdoc_idunarchive) undoes
+  the archive exactly.
+- Ingesting bytes identical to the latest version changes nothing
+  (`"created": false`): the document stays archived.
+- Ingesting a new version (`"created": true`) brings the document back as
+  ordinary ingest. Sections whose text did not change reuse their claims
+  instead of being extracted again.
+- When a connector sync sees a file deleted at its source, it archives the
+  document. If the source shows the same file again, that archive is undone;
+  if the file changed, the change is a new version. A connector never undoes
+  an archive you made yourself with identical bytes.
 
 ### Errors
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or it is already deleted. Do not retry. |
+| `404` | `document_not_found` | No such document. Do not retry. |
 | `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
 | `422` | validation list | `doc_id` is not a UUID. |
 
 ### Example
 
 ```bash
-curl -s -X DELETE "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b" \
+curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b/archive" \
   -H "Authorization: Bearer $REMEMBER_API_KEY"
 ```
 
 ```python
-from remember import Client, MemoryApiError
+from remember import Client
 
 memory = Client()
-try:
-    deletion = memory.delete_document(doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b")
-    print(deletion.claims_retired, deletion.relations_closed)
-except MemoryApiError as error:
-    if error.status_code != 404:
-        raise
+archive = memory.archive_document(doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b")
+print(archive.archived_at, archive.claims_retired, archive.relations_closed)
 ```
+
+`remember documents archive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b` prints the
+same result as JSON.
+
+## POST /documents/{doc_id}/unarchive
+
+Undo an archive exactly: the document's testimony is current again, and the
+facts its archive closed reopen when they have support again.
+
+**Scope:** `write`.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | The archived document's `doc_id`. |
+
+There is no body.
+
+### What unarchiving does
+
+In one step:
+
+- every claim whose testimony the archive ended counts as evidence again;
+- each fact the archive closed reopens when the returning claims support it
+  again. The reopening is a new recorded event: a read of belief as of a time
+  inside the archive interval, such as `facts_as_of` or a graph read with
+  `believed_at`, still sees the fact closed then. A fact that something else
+  has changed since, for example closed for another reason or superseded, is
+  left as it is;
+- the document is listed, searched and read again without
+  `include_archived`, and its corpus folder is published again;
+- processing that the archive cut short continues from the next stage that
+  had not run; finished work is reused.
+
+Unarchiving makes no model call except the same best-effort profile refresh
+as archiving.
+
+### Response
+
+`200` with a [`DocumentUnarchive`](https://remember.dev/docs/reference/result-types#documentunarchive):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "claims_restored": 12,
+  "facts_reopened": 3
+}
+```
+
+Unarchiving a document that is not archived answers `200` with zero counts.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document. Do not retry. |
+| `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
+| `422` | validation list | `doc_id` is not a UUID. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Nothing changed; retry later. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b/unarchive" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client
+
+memory = Client()
+restored = memory.unarchive_document(doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b")
+print(restored.claims_restored, restored.facts_reopened)
+```
+
+`remember documents unarchive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b` prints the
+same result as JSON.
 
 ## PUT /documents/{doc_id}/versions/{version_id}/effective-periods
 
@@ -11747,7 +11920,7 @@ with a cursor keeps seeing the periods as they were when it started.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
 | `404` | `version_not_found` | The version is not a live version of this document. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version (`version_id`) already declares that start. |
 | `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | The document is `living`. |
@@ -11818,7 +11991,7 @@ paged read that started earlier still sees the periods it started with.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
 | `422` | validation list | `doc_id` is not a UUID. |
 
 ### Example
@@ -11951,7 +12124,7 @@ and read references with
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
 | `404` | `version_not_found` | The version is not a live version of this document. |
 | `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | The body is over 64 MiB. |
 | `422` | `{"code": "invalid_reference_set", "line": 3, "message": "…"}` | A line is not a JSON object, or not a valid reference: a missing or unknown field, a pinned reference without `target.version_key`, an `amends` without `change_date_known`, or a date on another kind. `line` is the first failing line. Nothing was recorded. |
@@ -12022,7 +12195,7 @@ release finds none ([What is not built yet](https://remember.dev/docs/project/no
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
 | `404` | `version_not_found` | The version is not a live version of this document. |
 
 ### Example
@@ -12269,7 +12442,7 @@ document's tags after the change, ordered by name ignoring letter case.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
 | `409` | `{"code": "tag_limit_exceeded", "message": …}` | The document would carry more than 64 tags. Nothing changed. |
 | `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": […]}` | A tag in `add`, `remove` or `set` is not registered; `tags` lists every one. Nothing changed. |
 | `422` | validation list | `set` together with `add` or `remove`, a list over 64 items, an empty or over-long tag, an unknown field, or `doc_id` not a UUID. |
@@ -12425,7 +12598,7 @@ to read the section.
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
-| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
 | `422` | validation list | A malformed key, a missing `at`, `from` or `to` for its mode, `to` before `from`, a timestamp without a time zone, or `k` out of range. |
 
 ### Example
@@ -12509,7 +12682,7 @@ row says so; it never falls back to another version.
 |---|---|
 | `resolved` | The target version is readable, and the named section is in it. `target` has the version, its `representation_id`, the section's title and `first_chunk_ids` (empty when the reference names the whole document). |
 | `target_processing` | The target version is not fully processed yet. `target` has the version and `applies_during`, not the section. |
-| `target_unavailable` | No live document has the named `source_kind` and `source_ref`: it was never ingested, or it is deleted or forgotten. One status for all three, so a deletion is not revealed. `target` is `null`. |
+| `target_unavailable` | No live document has the named `source_kind` and `source_ref`: it was never ingested, it is archived, or it was forgotten. One status for all three, so a forget is not revealed. `target` is `null`. An archived target resolves again once it comes back. |
 | `target_not_in_force` | Floating reference: the target exists, but none of its versions is in force during the window. |
 | `section_not_in_version` | The target version has no section with the named key. |
 | `section_not_indexed` | The target version's sections have not been indexed for keys yet, so whether it has the section is unknown. |
@@ -12582,8 +12755,8 @@ instant window has `from` equal to `until` and `until_inclusive: true`.
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
-| `404` | `document_not_found` | No such document, or it is deleted. |
-| `404` | `chunk_not_found` | No such passage, or its document is deleted. |
+| `404` | `document_not_found` | No such document, or a hard forget removed it. |
+| `404` | `chunk_not_found` | No such passage, or a hard forget removed its document. |
 | `422` | validation list | Both or neither of `chunk_id` and `doc_id`, `section_key` without `doc_id`, an unknown kind, a bad `time`, `k` out of range, or an unknown field. |
 
 ### Example
@@ -13130,8 +13303,8 @@ The `POST` forms accept a `documents` filter with the same fields as
 `family`, `authors`, `recipients`, `created_from`/`created_to`,
 `modified_from`/`modified_to`, `language`, `thread_ref`, `doc_ids` and
 `tags` (`{"all": [...], "any": [...], "none": [...]}`, the document's
-[tags](https://remember.dev/docs/guides/tag-documents)). The filter decides which results are
-included:
+[tags](https://remember.dev/docs/guides/tag-documents)), and `include_archived`. The filter
+decides which results are included:
 
 - **chunks** match when the chunk's document version matches;
 - **claims** match when at least one place the claim occurs is in a matching
@@ -13142,7 +13315,14 @@ included:
   claim looks exactly as it does without a filter, with the `chunk_id`,
   offsets and `evidence_spans` of the passage it was first extracted from.
 
-Deleted documents and deleted versions never match. The filter is applied
+Removed versions never match. [Archived](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive)
+documents are left out of every search, with or without a filter, unless
+`documents.include_archived` is `true`; then archived passages are included,
+each marked `"archived": true`. Claims are ranked from current testimony only:
+an archived document's claims come back only while its archive is still
+settling, marked `"archived": true`, and never count as current support for a
+fact. Once settled, read them as history through `claims_as_of` or the SQL
+view `claims_visible_history`. The filter is applied
 while ranking, before the `k` best are chosen, so asking for `k: 10` returns
 up to ten matching results even when better-scoring results from other
 documents exist.
@@ -14196,16 +14376,17 @@ None.
   },
   "document_binding_generation": "…",
   "tools": {
-    "ingest": 2,
+    "ingest": 3,
     "pipeline_readiness": 1,
-    "delete_document": 1,
-    "search_documents": 2,
+    "archive_document": 1,
+    "unarchive_document": 1,
+    "search_documents": 5,
     "section_history": 1,
     "document_references": 1,
     "resolve_entity": 1,
-    "claims_and_sources_context": 3,
-    "facts_context": 3,
-    "combined_context": 4,
+    "claims_and_sources_context": 6,
+    "facts_context": 6,
+    "combined_context": 7,
     "query_sql": 1,
     "…": 1
   }
@@ -14217,7 +14398,7 @@ None.
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
 | `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`, plus `openrouter_embedding_provider_only` when the embedding host allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) is set. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
-| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `delete_document` only when document deletion is, `search_documents`
+| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `archive_document` and `unarchive_document` only when archiving is, `search_documents`
 only when document search is, and `section_history` and
 `document_references` only when their routes are. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
@@ -14505,8 +14686,16 @@ optional `documents` object that limits the read to certain documents. It is
 the same filter claim and chunk search take
 ([Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents)):
 `family`, `authors`, `recipients`, `created_from`, `created_to`,
-`modified_from`, `modified_to`, `language`, `thread_ref`, `doc_ids` and
-`tags`. Every field given must hold.
+`modified_from`, `modified_to`, `language`, `thread_ref`, `doc_ids`,
+`tags` and `include_archived`. Every field given must hold.
+
+[Archived](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive)
+documents are left out of every operation, with or without a filter. With
+`"include_archived": true` their passages are included, each marked
+`"archived": true`. Claims are ranked from current testimony only, so settled
+archived claims are not returned here; they never count as current support for
+a fact, and stay readable as history through `claims_as_of` and
+`claims_visible_history`.
 
 ```json
 {"query": "worker restart interval",
@@ -14920,7 +15109,7 @@ The shapes group into five families:
 | Context bundle | [`ContextBundle/v2`](#contextbundlev2) | `combined_context`. |
 | Query result | [`QueryResult/v1`](#queryresultv1) | `POST /query/sql`, `POST /query/sql/explain`, `POST /query/saved/{namespace}/{name}/run`. |
 | Write and readiness | [`IngestedVersion`](#ingestedversion), [`PipelineReadinessReport`](#pipelinereadinessreport), [`DocumentPage`](#documentpage) | `POST /ingest`, `POST /readiness`, `GET /documents`. |
-| Documents | [Documents](#documents), [Effective periods](#effective-periods), [Sections and references](#sections-and-references) | `POST /documents/search`, `DELETE /documents/{doc_id}`, the effective-period and reference routes, `section_history`, `document_references`. |
+| Documents | [Documents](#documents), [Effective periods](#effective-periods), [Sections and references](#sections-and-references) | `POST /documents/search`, `POST /documents/{doc_id}/archive`, `POST /documents/{doc_id}/unarchive`, the effective-period and reference routes, `section_history`, `document_references`. |
 | Deployment | [`ToolDescriptor`](#tooldescriptor), [`DeploymentBuildInfo`](#deploymentbuildinfo) | `GET /operations`, `GET /deployment`. |
 
 ## Conventions
@@ -15135,6 +15324,7 @@ One claim with its provenance.
 | `representation_id` | UUID, nullable | The converted reading of that version. |
 | `effective` | array of [`EffectiveInterval`](#effectiveinterval) | That version's in-force intervals. Empty for documents without declared periods. |
 | `occurrences` | array of [`ClaimOccurrence`](#claimoccurrence) | One per selected version that carries the claim, earliest period first. The first is the one the fields above describe. Empty for documents without declared periods. |
+| `archived` | boolean, absent | `true` for a claim of an [archived](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive) document, which only a read with `documents.include_archived` returns. Absent otherwise. |
 
 Without those fields set, `chunk_id` and the offsets are where the claim was
 first extracted. With them, they are where the claim occurs in a version in
@@ -15205,6 +15395,7 @@ One source passage.
 | `published_at` | UTC date-time, nullable | |
 | `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The version's in-force intervals, when its document has declared effective periods. |
 | `served_version` | boolean | Whether `version_id` is the document's served version (its newest processed one). Default `true`. |
+| `archived` | boolean, absent | `true` for a passage of an [archived](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive) document, which only a read with `documents.include_archived` returns. Absent otherwise. |
 
 ### EffectiveInterval
 
@@ -15599,9 +15790,10 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `source_kind` | string | `upload` for a file sent without a source identity. |
 | `source_uri` | string, nullable | The `source_ref`, for documents sent with one. |
 | `first_seen_at` | date-time | Never changes. |
-| `latest` | [`DocumentVersionSummary`](#documentversionsummary) | The newest version that has not been deleted. |
-| `serving` | boolean | Some version of this document is `ready` and not deleted. |
+| `latest` | [`DocumentVersionSummary`](#documentversionsummary) | The newest version that has not been removed. |
+| `serving` | boolean | Some version of this document is `ready` and not removed. |
 | `tags` | array of strings | The names of the document's [tags](#tag), ordered by name ignoring letter case. Empty when it has none. |
+| `archived_at` | date-time, nullable | When the document was [archived](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive); `null` when it is not. Archived documents are listed only with `include_archived=true`. |
 
 ### DocumentVersionSummary
 
@@ -15644,6 +15836,7 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `thread_ref` | string, nullable | | |
 | `doc_ids` | array of UUIDs | `[]` | |
 | `tags` | [`DocumentTagFilter`](#documenttagfilter), nullable | | The document's current tags. |
+| `include_archived` | boolean | `false` | Also consider archived documents. Their claims and passages are marked `archived`, and their claims never count as current support for a fact. |
 
 ### DocumentTagFilter
 
@@ -15696,6 +15889,7 @@ must hold. A tag that is not registered refuses the read with `unknown_tag`.
 | `other_matching_version_ids` | array of UUIDs | With `versions: all`, the document's other versions that matched. |
 | `matched_by` | array of `name` \| `content` | Which part of the query matched. Empty without a query. |
 | `score` | number, nullable | The combined rank score with a query; `null` without one. |
+| `archived_at` | date-time, nullable | When the document was archived; `null` when it is not. Archived documents are returned only with `filters.include_archived`. |
 
 ### MatchingEdition
 
@@ -15716,18 +15910,30 @@ must hold. A tag that is not registered refuses the read with `unknown_tag`.
 | `address` | string, nullable | |
 | `documents` | integer | Matching documents that list this person. |
 
-### DocumentDeletion
+### DocumentArchive
 
-What [`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id)
-changed. The counts describe this call only.
+What [`POST /documents/{doc_id}/archive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive)
+changed. The counts describe this call only: archiving an archived document
+answers the same `archived_at` with zero counts.
 
 | Field | Type | Contents |
 |---|---|---|
-| `doc_id` | UUID | The deleted document. |
-| `deleted_at` | date-time | When the document was deleted. For a call that finished a deletion another path started, when the document was first hidden. |
+| `doc_id` | UUID | The archived document. |
+| `archived_at` | date-time | When the document was archived. |
 | `claims_retired` | integer | Claims that stopped counting as evidence. |
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |
+
+### DocumentUnarchive
+
+What [`POST /documents/{doc_id}/unarchive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idunarchive)
+restored. A document that is not archived answers zero counts.
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | The document. |
+| `claims_restored` | integer | Claims whose testimony the archive ended that count as evidence again. |
+| `facts_reopened` | integer | Facts the archive closed that reopened because they have support again. |
 
 ## Tags
 
@@ -16034,9 +16240,12 @@ Source: https://remember.dev/docs/reference/query-space
 SQL queries run over **the query space**, `memory_v1`: a fixed set of
 prepared, read-only views and functions over your memory. Every statement is
 parsed and validated against it before it runs, and anything outside it is
-rejected. The views already apply the memory's rules — deleted versions,
-forgotten sources and superseded readings are absent — so a statement can only
-see what the memory itself would return.
+rejected. The views already apply the memory's rules — removed versions,
+forgotten sources and superseded readings are absent, and an archived
+document's claims are no longer current testimony. `documents_live` still lists
+an archived document, marked with `archived_at`, and history views (mentions,
+claim history) keep it, so a statement that joins them filters on
+`archived_at IS NULL` for live documents only, as `documents_about` does.
 
 This page is the reference for the query space: [identity and
 versioning](#version-and-manifest-hash), [the grammar a statement must
@@ -17053,7 +17262,7 @@ One row per non-tombstoned version of a live document lineage, keyed by (deploym
 
 ### documents_live
 
-One row per live document lineage, keyed by (deployment_id, doc_id). A tombstoned lineage is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name deleted state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.
+One row per document lineage that has not been forgotten, keyed by (deployment_id, doc_id): the inventory. An [archived](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive) lineage is listed with archived_at set; its claims are not current testimony, so every current-testimony relation leaves it out. A lineage hidden by forget is absent, and the current version and representation coordinates are produced only from a non-tombstoned version and a ready representation, so no column can name removed state. The two optional joins project coordinates of an already authorized lineage and admit no row of their own. This is a live-content relation, not a fact or evidence relation: title and source metadata are orientation, never asserted evidence, and the view carries no counts and no clock semantics beyond the observation instants it names.
 
 - **Grain:** one live document lineage (`document_lineage_live`)
 - **Row key:** `deployment_id`, `doc_id`
@@ -17079,6 +17288,7 @@ One row per live document lineage, keyed by (deployment_id, doc_id). A tombstone
 | `source_modified_at` | timestamp with time zone | yes | When the source says the current snapshot was authored, which dates derived testimony. |
 | `published_at` | timestamp with time zone | yes | The document's own publication date on the current version, null when unknown. |
 | `language` | text | yes | Detected primary language of the current version, null when undetected. |
+| `archived_at` | timestamp with time zone | yes | When the lineage was archived: its testimony ended and it is kept as history; null while live. Search and the context operations leave an archived lineage out unless asked. |
 
 ### entities_current
 
@@ -17477,7 +17687,7 @@ One row per visible D54 testimony-currency transition, keyed by (deployment_id, 
 | `doc_id` | uuid | no | The live lineage whose basis change drove the transition. |
 | `reconciliation_id` | uuid | no | The single reconciliation run that emitted the transition, so a retried run is recognizable as one run. |
 | `became_current` | boolean | no | True when the claim regained currency and false when it lost currency. |
-| `reason` | text | no | Why currency changed, one of reextracted, version_superseded, version_deleted, or review_restored. Values: `reextracted`, `version_superseded`, `version_deleted`, `review_restored`. |
+| `reason` | text | no | Why currency changed, one of reextracted, version_superseded, version_archived, or review_restored. Values: `reextracted`, `version_superseded`, `version_archived`, `review_restored`. |
 | `from_extractor_version` | text | yes | The superseded extractor generation for a re-extraction, null for the other reasons. |
 | `from_version_id` | uuid | yes | The superseded document version, exposed only while that version is itself visible and null otherwise. |
 | `occurred_at` | timestamp with time zone | no | When the transition occurred, which is a transaction-time instant and never a validity clock. |
@@ -17595,7 +17805,7 @@ The client is synchronous. There is no async client yet
 | `ContextBundleV2` | model | [Models](#models) |
 | `DeclaredEffectivePeriod` | model | [Models](#models) |
 | `DeploymentBuildInfo` | model | [`deployment_build_info`](#deployment_build_info) |
-| `DocumentDeletion` | model | [Models](#models) |
+| `DocumentArchive` | model | [Models](#models) |
 | `DocumentPage` | model | [Models](#models) |
 | `DocumentReference` | model | [Models](#models) |
 | `DocumentReferenceSource` | model | [Models](#models) |
@@ -17610,6 +17820,7 @@ The client is synchronous. There is no async client yet
 | `DocumentSummary` | model | [Models](#models) |
 | `DocumentTagFilter` | model | [Models](#models) |
 | `DocumentTags` | model | [Models](#models) |
+| `DocumentUnarchive` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `EffectiveInterval` | model | [Models](#models) |
 | `EffectivePeriodInput` | model | [Models](#models) |
@@ -17807,7 +18018,8 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`processing_layers`](#processing_layers) | `GET /processing-layers` | `ProcessingLayerStates` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
-| [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
+| [`archive_document`](#archive_document) | `POST /documents/{doc_id}/archive` | `DocumentArchive` |
+| [`unarchive_document`](#unarchive_document) | `POST /documents/{doc_id}/unarchive` | `DocumentUnarchive` |
 | [`list_tags`](#list_tags) | `GET /tags` | `TagList` |
 | [`create_tag`](#create_tag) | `POST /tags` | `Tag` |
 | [`update_tag`](#update_tag) | `PATCH /tags/{tag_id}` | `Tag` |
@@ -18044,6 +18256,7 @@ MemoryClient.list_documents(
     limit: int = 50,
     cursor: str | None = None,
     status: Literal["ingesting", "converting", "structuring", "ready", "failed"] | None = None,
+    include_archived: bool = False,
 ) -> DocumentPage
 ```
 
@@ -18051,8 +18264,9 @@ Returns one page of the deployment's documents, newest document first, as a
 [`DocumentPage`](https://remember.dev/docs/reference/result-types#documentpage). Pass the
 returned `next_cursor` as `cursor` to read the next page; it is `None` on the last page.
 `status` keeps only documents whose newest version has that status. `limit`
-is 1 to 200; the deployment answers `422` outside that range. Deleted
-documents are not listed. See
+is 1 to 200; the deployment answers `422` outside that range. Archived
+documents are listed, each with `archived_at`, only with
+`include_archived=True`. See
 [`GET /documents`](https://remember.dev/docs/reference/http-api/ingest#get-documents).
 
 ```python
@@ -18088,9 +18302,10 @@ and their text, and returns a
 [`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters)
 (`from remember import DocumentSearchFilters`): `family`, `authors`,
 `recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`,
-`doc_ids` and `tags`, a
+`doc_ids`, `tags`, a
 [`DocumentTagFilter`](https://remember.dev/docs/reference/result-types#documenttagfilter)
-(`all`, `any`, `none`) of tag names or ids. With a `query` the results are ranked and not paged; without
+(`all`, `any`, `none`) of tag names or ids, and `include_archived` (default
+`False`), which also returns archived documents, each with `archived_at`. With a `query` the results are ranked and not paged; without
 one they are newest ingested first and `limit` (default 50) / `cursor` pages them.
 Read `next_cursor` for continuation; ranked responses disclose `truncated`. Passing `cursor` with a
 `query`, a date without a timezone, `k` / `limit` outside 1 to 200, or an
@@ -18131,33 +18346,55 @@ decisions = memory.search_documents(
 )
 ```
 
-#### `delete_document`
+#### `archive_document`
 
 ```python
-MemoryClient.delete_document(*, doc_id: UUID | str) -> DocumentDeletion
+MemoryClient.archive_document(*, doc_id: UUID | str) -> DocumentArchive
 ```
 
-Removes one document, every version of it, from the memory and returns a
-[`DocumentDeletion`](https://remember.dev/docs/reference/result-types#documentdeletion) with
-`doc_id`, `deleted_at`, `claims_retired`, `relations_closed` and
+Archives one document, every version of it: the memory stops believing it,
+and it stays readable as history. Returns a
+[`DocumentArchive`](https://remember.dev/docs/reference/result-types#documentarchive) with
+`doc_id`, `archived_at`, `claims_retired`, `relations_closed` and
 `observations_closed`. Its claims stop counting as evidence, and facts that
-only it supported are closed with a recorded retraction. The claims and the
-stored original are kept as history. Needs a `write` credential. See
-[`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
+only it supported are closed with a recorded retraction. Reads leave the
+document out unless they pass `include_archived`. Archiving an archived
+document returns the same `archived_at` with zero counts. Needs a `write`
+credential. See
+[`POST /documents/{doc_id}/archive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
 
 Raises `ValueError` before sending anything when `doc_id` is not a UUID, and
 `MemoryApiError` with `status_code` 404 and `detail` `"document_not_found"`
-when the document does not exist or is already deleted.
+when the document does not exist.
 
 ```python
 from remember import MemoryApiError
 
 try:
-    deletion = memory.delete_document(doc_id=version.doc_id)
-    print(f"{deletion.claims_retired} claims retired")
+    archive = memory.archive_document(doc_id=version.doc_id)
+    print(f"{archive.claims_retired} claims retired at {archive.archived_at}")
 except MemoryApiError as error:
     if error.status_code != 404:
         raise
+```
+
+#### `unarchive_document`
+
+```python
+MemoryClient.unarchive_document(*, doc_id: UUID | str) -> DocumentUnarchive
+```
+
+Undoes an archive exactly and returns a
+[`DocumentUnarchive`](https://remember.dev/docs/reference/result-types#documentunarchive) with
+`doc_id`, `claims_restored` and `facts_reopened`. The claims the archive
+retired count again, and the facts it closed reopen when they have support
+again. A document that is not archived returns zero counts. Needs a `write`
+credential, and raises like `archive_document`. See
+[`POST /documents/{doc_id}/unarchive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idunarchive).
+
+```python
+restored = memory.unarchive_document(doc_id=version.doc_id)
+print(restored.claims_restored, restored.facts_reopened)
 ```
 
 ### Tags
@@ -18246,7 +18483,7 @@ Raises `ValueError` before sending anything when `doc_id` is not a UUID or a
 list is a single string, `pydantic.ValidationError` when `set` is combined
 with `add` or `remove`, `UnknownTag` when a tag is not registered (nothing
 changes), and `MemoryApiError` with `status_code` 404 for an unknown or
-deleted document, or 409 with `code` `"tag_limit_exceeded"` past 64 tags.
+forgotten document, or 409 with `code` `"tag_limit_exceeded"` past 64 tags.
 
 ```python
 tags = memory.update_document_tags(
@@ -18293,7 +18530,7 @@ MemoryClient.clear_effective_time(*, doc_id: UUID | str) -> EffectiveTimeCleared
 Withdraws every declared period of a document and returns it to "the newest
 processed version is current". `cleared_at` is `None` when the document had
 no declared periods. Needs a `write` credential. Raises `MemoryApiError`
-with `status_code` 404 for an unknown or deleted document.
+with `status_code` 404 for an unknown or forgotten document.
 
 #### `set_references`
 
@@ -18344,7 +18581,7 @@ to `{"mode": "history"}`. Each row is a version with its `effective`
 intervals and a `status` of `present`, `absent`, `not_indexed` or
 `processing`. Raises `pydantic.ValidationError` for a malformed key or `limit`
 outside 1 to 200, and `MemoryApiError` with `status_code` 404 for an
-unknown or deleted document. `section_history_request(request=…)` sends a
+unknown or forgotten document. `section_history_request(request=…)` sends a
 prepared `SectionHistoryRequest`. See
 [`GET …/sections/{section_key}/history`](https://remember.dev/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory).
 
@@ -19051,9 +19288,10 @@ models below are Pydantic models (frozen) unless noted.
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
 | `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`), `version_key` (str or `None`). |
 | `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
-| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`, `tags` (tuple of tag names). |
+| `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`, `tags` (tuple of tag names), `archived_at` (`None` unless archived). |
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
-| `DocumentDeletion` | The result of `delete_document`: `doc_id`, `deleted_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
+| `DocumentArchive` | The result of `archive_document`: `doc_id`, `archived_at`, `claims_retired`, `relations_closed`, `observations_closed`. |
+| `DocumentUnarchive` | The result of `unarchive_document`: `doc_id`, `claims_restored`, `facts_reopened`. |
 | `Tag`, `TagList`, `DocumentTags` | One registered tag (`tag_id`, `name`, `description`, `created_at`, `updated_at`), the result of `list_tags` (`tags`), and the result of `update_document_tags` (`doc_id`, `tags`). |
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
@@ -19235,7 +19473,8 @@ objects and arrays, with validated defaults.
 | `referenceGenerations` | `ReferenceGenerations` |
 | `setEffectivePeriods` | `EffectivePeriodsSet` |
 | `clearEffectiveTime` | `EffectiveTimeCleared` |
-| `deleteDocument` | `DocumentDeletion` |
+| `archiveDocument` | `DocumentArchive` |
+| `unarchiveDocument` | `DocumentUnarchive` |
 | `listTags` | `TagList` |
 | `createTag`, `updateTag`, `deleteTag` | `Tag` |
 | `updateDocumentTags` | `DocumentTags` |
@@ -19250,7 +19489,7 @@ transport is never closed by the SDK.
 
 The complete schema-derived model and support-type vocabulary is:
 
-`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTagFilter`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentArchive`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentTagFilter`, `DocumentTags`, `DocumentTagsUpdate`, `DocumentUnarchive`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `Tag`, `TagCreate`, `TagList`, `TagUpdate`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
 Schema-owned public models have `Input` variants for inputs; connection and issuer
 types expose the SDK support contracts. CLI credential-response types are data
 contracts only and do not add login or key-writing operations to this package.
@@ -19305,6 +19544,21 @@ On `factsContext`, contradicting evidence from non-matching documents stays
 in the answer, marked `in_documents_filter: false`; see
 [The documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter).
 What tags are: [Tag documents](https://remember.dev/docs/guides/tag-documents).
+
+### Archive
+
+`archiveDocument({ docId })` archives one document: the memory stops
+believing it, and it stays readable as history. It returns a
+`DocumentArchive`; archiving an archived document returns the same
+`archived_at` with zero counts. `unarchiveDocument({ docId })` undoes the
+archive exactly and returns a `DocumentUnarchive`. Both need a `write`
+credential; an unknown `docId` raises MemoryApiError with statusCode 404
+and detail `document_not_found`. Archived documents are left out of reads unless you
+ask: `listDocuments({ includeArchived: true })`,
+`filters.include_archived` on `searchDocuments`, and
+`documents.include_archived` on `searchClaims`, `searchChunks` and the
+context operations. See
+[`POST /documents/{doc_id}/archive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
 
 ### Version history and references
 
@@ -19422,8 +19676,9 @@ The base package exports `ToolDefinition`, `Permission`, `memoryTools`, `tool`,
 Definitions carry routes, versions, permissions, schemas and annotations.
 `OPEN_QUERY_TOOL_NAMES`, `OPERATION_TOOL_NAMES` and `MEMORY_WRITE_TOOL_NAMES`
 identify the source-defined groups. Individual constants include
-INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, DELETE_DOCUMENT_TOOL_NAME,
-SEARCH_DOCUMENTS_TOOL_NAME and ADJACENT_CHUNKS_TOOL_NAME. `TAG_READ_TOOL_NAMES`,
+INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, ARCHIVE_DOCUMENT_TOOL_NAME,
+UNARCHIVE_DOCUMENT_TOOL_NAME, SEARCH_DOCUMENTS_TOOL_NAME and
+ADJACENT_CHUNKS_TOOL_NAME; `ARCHIVE_TOOL_NAMES` groups the two archive tools. `TAG_READ_TOOL_NAMES`,
 `TAG_WRITE_TOOL_NAMES` and `TAG_TOOL_NAMES` group the five tag tools.
 
 `validateArguments` checks every memory tool and returns parsed arguments.
@@ -19512,7 +19767,7 @@ standalone tool; `uvx remember …` runs it without installing.
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
-| | [`documents`](#remember-documents) | List and search documents, delete one from the memory, or change its tags. |
+| | [`documents`](#remember-documents) | List and search documents, archive or unarchive one, or change its tags. |
 | | [`tags`](#remember-tags) | List, register, change and delete document tags. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
@@ -19652,16 +19907,19 @@ readiness command. See [Wait until a document is queryable](https://remember.dev
 ```text
 remember documents list [--limit N] [--cursor CURSOR]
                         [--status {ingesting,converting,structuring,ready,failed}]
+                        [--include-archived]
                         [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS]...
                           [--recipient NAME_OR_ADDRESS]...
                           [--created-from T] [--created-to T]
                           [--modified-from T] [--modified-to T]
-                          [--language LANG] [--thread-ref REF] [--doc-id DOC_ID]...
+                          [--language LANG] [--include-archived]
+                          [--thread-ref REF] [--doc-id DOC_ID]...
                           [--tag TAG]... [--any-tag TAG]... [--not-tag TAG]...
                           [--versions {current,all}] [--limit N] [--cursor CURSOR]
                           [--api-url URL] [--api-key KEY] [--project PROJECT]
-remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents archive DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents unarchive DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID [--add TAG]... [--remove TAG]...
                               [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID --set TAG [--set TAG]...
@@ -19672,7 +19930,8 @@ remember documents tag DOC_ID --set TAG [--set TAG]...
 shape of [`DocumentPage`](https://remember.dev/docs/reference/result-types#documentpage). Pass the
 page's `next_cursor` to `--cursor` to read the next page; `next_cursor` is `null` on
 the last page. `--limit` is 1 to 200 (default 50). `--status` keeps only
-documents whose newest version has that status.
+documents whose newest version has that status. `--include-archived` also
+lists archived documents, each with `archived_at`.
 
 ```bash
 remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.title)"'
@@ -19684,7 +19943,8 @@ JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
 several; any listed value matches. `--tag` keeps documents that carry every
 listed tag, `--any-tag` those that carry at least one, and `--not-tag` those
 that carry none; each is repeatable, and a tag that is not registered is an
-error. Dates are ISO 8601 with a timezone, for
+error. `--include-archived` also returns archived documents, each with
+`archived_at`. Dates are ISO 8601 with a timezone, for
 example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
 there is no next page; without one they are newest ingested first and
 `--cursor` reads the next page. `--limit` is 1 to 200 (default 50), used as
@@ -19698,22 +19958,31 @@ remember documents search --author alice@acme.com --created-from 2025-01-01T00:0
 remember documents search --tag kind:decision --any-tag project:billing --any-tag project:support
 ```
 
-`delete` removes one document, every version of it, from the memory and
-prints what changed:
+`archive` archives one document, every version of it: the memory stops
+believing it, and it stays readable as history. It prints what changed:
 
 ```json
-{"doc_id":"…","deleted_at":"2026-09-23T10:41:07.318000Z","claims_retired":12,"relations_closed":2,"observations_closed":1}
+{"doc_id":"…","archived_at":"2026-09-23T10:41:07.318000Z","claims_retired":12,"relations_closed":2,"observations_closed":1}
 ```
 
 Its claims stop counting as evidence, and facts that only it supported are
-closed with a recorded retraction. The claims and the stored original stay
-as history. Deleting needs a `write` credential. Deleting a document that
-does not exist, or is already deleted, prints
-`error: API 404: document_not_found` and exits with status 1. See
-[`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
+closed with a recorded retraction. `list` and `search` leave it out unless
+you pass `--include-archived`. Archiving an archived document prints the same
+`archived_at` with zero counts. See
+[`POST /documents/{doc_id}/archive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
+
+`unarchive` undoes an archive exactly and prints
+`{"doc_id":"…","claims_restored":12,"facts_reopened":3}`: the claims the
+archive retired count again, and the facts it closed reopen when they have
+support again. A document that is not archived prints zero counts. See
+[`POST /documents/{doc_id}/unarchive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idunarchive).
+
+Both need a `write` credential. For a document that does not exist, both
+print `error: API 404: document_not_found` and exit with status 1.
 
 ```bash
-remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+remember documents archive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+remember documents unarchive a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
 ```
 
 `tag` changes the tags of one document in one step and prints its tags
@@ -19891,8 +20160,8 @@ and output and finds the deployment the same way as every other
 command.
 `--transport http` serves the same tools over HTTP at
 `http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
-`--read-only` removes the tools that change memory, `ingest` and
-`delete_document`. `--layers` narrows every read of the session to those
+`--read-only` removes the tools that change memory: `ingest`,
+`archive_document`, `unarchive_document` and the tag tools that change tags. `--layers` narrows every read of the session to those
 [processing layers](https://remember.dev/docs/concepts/retrieval#narrowing-a-read-to-layers) and
 leaves out the tools that read only other layers.
 
@@ -20131,8 +20400,9 @@ then environment variables, then the credential file. See [CLI: How the CLI find
 `--transport http` serves the same tools over HTTP; see
 [Over HTTP](#over-http).
 
-`--read-only` leaves out the two tools that change memory, `ingest` and
-`delete_document`, and refuses calls to them with the error `read_only`.
+`--read-only` leaves out the tools that change memory (`ingest`,
+`archive_document`, `unarchive_document` and the four tag tools that change
+tags), and refuses calls to them with the error `read_only`.
 `pipeline_readiness` and `search_documents` only read, so they stay.
 
 ### Protocol
@@ -20164,7 +20434,8 @@ its arguments change in a way an older engine could not handle.
 Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
-1. `ingest`, `pipeline_readiness`, `delete_document`, `search_documents`,
+1. `ingest`, `pipeline_readiness`, `archive_document`, `unarchive_document`,
+   `search_documents`,
    `section_history`, `document_references`, and the five tag tools
    `list_tags`, `create_tag`, `update_tag`, `delete_tag` and
    `update_document_tags` (with `--read-only`, only `pipeline_readiness`,
@@ -20179,7 +20450,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 23 tools: 11 + 4 + 1 + 7.
+lists 24 tools: 12 + 4 + 1 + 7.
 
 A deployment that does not process the facts
 [layer](https://remember.dev/docs/concepts/pipeline#processing-layers) does not report
@@ -20190,8 +20461,10 @@ needs a missing layer fails with `layer_unavailable`.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
-`ingest`, `delete_document` and the four tag tools that change tags, and
-`destructiveHint` is `true` only for `delete_document` and `delete_tag`.
+`ingest`, `archive_document`, `unarchive_document` and the four tag tools
+that change tags, and `destructiveHint` is `true` only for `delete_tag`.
+Archiving is not destructive: the document stays as history and
+`unarchive_document` undoes it.
 
 The server serves one deployment, so no tool takes a `project` argument; a
 call that passes one is refused with `project_routing_unavailable`. A call to
@@ -20370,27 +20643,46 @@ ingest that returned `created: false` is polled the same way, because an
 earlier run of the same bytes may still be processing. See
 [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness#over-mcp).
 
-### `delete_document`
+### `archive_document`
 
-Removes one document, every version of it, from the memory. Its claims stop
-counting as evidence, and facts that only it supported are closed with a
-recorded retraction; facts other documents also support stay. The claims and
-the stored original are kept as history. Ingesting the same file again later
-adds it back as a new version.
+Archives one document, every version of it: the memory stops believing it,
+and it stays readable as history. Its claims stop counting as evidence, and
+facts that only it supported are closed with a recorded retraction; facts
+other documents also support stay. Reads leave the document out unless they
+set `include_archived`.
 
 | Parameter | Type | Required | Limits |
 |---|---|---|---|
 | `doc_id` | string | yes | The document's UUID, as `ingest` returned it or a result cites it. No other arguments are accepted. |
 
-The result is a [`DocumentDeletion`](https://remember.dev/docs/reference/result-types#documentdeletion):
-`doc_id`, `deleted_at`, `claims_retired`, `relations_closed`,
-`observations_closed`.
+The result is a [`DocumentArchive`](https://remember.dev/docs/reference/result-types#documentarchive):
+`doc_id`, `archived_at`, `claims_retired`, `relations_closed`,
+`observations_closed`. Archiving an archived document returns the same
+`archived_at` with zero counts.
 
-The tool description tells the agent to delete only when the user asks to
-remove a specific document, or the document is plainly wrong or unwanted,
-and never as a way to correct a fact: to correct one, ingest a document that
-says the right thing. The token needs `write` scope. See
-[`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
+The tool description tells the agent to archive when the user says a
+document no longer holds (a dead plan, an outdated policy, a replaced price
+list), never to tidy up, and never as a way to correct one fact: to correct
+one, ingest a document that says the right thing. The token needs `write`
+scope. See
+[`POST /documents/{doc_id}/archive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idarchive).
+
+### `unarchive_document`
+
+Undoes an archive exactly: the document's claims count as evidence again, and
+the facts its archive closed reopen when they have support again. Its only
+model call is a best-effort refresh of the entity profiles whose facts changed.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The archived document's UUID. No other arguments are accepted. |
+
+The result is a [`DocumentUnarchive`](https://remember.dev/docs/reference/result-types#documentunarchive):
+`doc_id`, `claims_restored`, `facts_reopened`. A document that is not
+archived returns zero counts. The tool description tells the agent to use it
+only when the user says an archived document holds again. The token needs
+`write` scope. See
+[`POST /documents/{doc_id}/unarchive`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idunarchive).
 
 ### `search_documents`
 
@@ -20408,17 +20700,21 @@ Alice") rather than asking about its content.
 | `language`, `thread_ref` | string | no | Exact match. |
 | `doc_ids` | array of strings | no | Document UUIDs. |
 | `tags` | object | no | `{"all": [...], "any": [...], "none": [...]}`: tag names or ids the document carries (every one), carries at least one of, or carries none of. At least one non-empty list; up to 32 tags each, none twice. An unregistered tag is `unknown_tag`. |
+| `include_archived` | boolean | no | Default `false`. Also return archived documents, each with `archived_at`. |
 | `versions` | `"current"` or `"all"` | no | Default `"current"`. |
 | `time` | object | no | Default `{"mode": "current"}`. For a document with declared effective periods, which editions are candidates; the four forms are under [`facts_context`](#facts_context). |
 | `k` | integer | no | Ranked results with `query`: 1–200; default 20. |
 | `limit` | integer | no | Browse page size without `query`: 1–200; default 50. |
 | `cursor` | string | no | The previous page's `next_cursor`; only without `query`. |
 
-Unknown keys are refused. The result is a
+`search_documents` is at tool version 5, and `claims_and_sources_context`,
+`facts_context` and `combined_context` at 6, 6 and 7: `include_archived`
+raised each by one. Unknown keys are refused. The result is a
 [`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage):
 `documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
 `family`, `status`, `authors`, `recipients`, dates, `p3_path`,
-`served_version`, `effective`, `matching_editions` and `overview`),
+`served_version`, `effective`, `matching_editions`, `overview` and
+`archived_at`),
 `next_cursor`, `truncated`, `as_of`, `people_matched` and `scope_pending`. When a people filter matches several
 different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The
@@ -20451,7 +20747,7 @@ stable id a heading carries in the source: `per-diem` in
 The result is a [`SectionHistoryPage`](https://remember.dev/docs/reference/result-types#sectionhistorypage):
 one row per version with `status` `present`, `absent`, `not_indexed` or
 `processing`, and on the first page the `amends` references aimed at the
-section. An unknown or deleted document is `document_not_found`. The token
+section. An unknown or forgotten document is `document_not_found`. The token
 needs `read` scope. See
 [`GET …/sections/{section_key}/history`](https://remember.dev/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory).
 
@@ -20551,7 +20847,7 @@ Changes the document's tags in one step and returns
 the tags afterwards. Every tag must be registered; any unregistered one
 refuses the whole call with `unknown_tag`. Removing a registered tag the
 document does not carry is not an error. Changing tags never reprocesses
-the document. An unknown or deleted document is `document_not_found`. See
+the document. An unknown or forgotten document is `document_not_found`. See
 [`POST /documents/{doc_id}/tags`](https://remember.dev/docs/reference/http-api/ingest#post-documentsdoc_idtags).
 
 ### Assured operations
@@ -20614,9 +20910,12 @@ versions count as evidence: [Text in force](https://remember.dev/docs/reference/
 `documents` limits the read to certain documents, with the fields of
 `search_documents`' filters: `family`, `authors`, `recipients`,
 `created_from`, `created_to`, `modified_from`, `modified_to`, `language`,
-`thread_ref`, `doc_ids` and `tags` (`{"all": [...], "any": [...], "none":
-[...]}`). Call `list_tags` before filtering by tag; an unregistered tag is
-`unknown_tag`. Supporting evidence then comes only from matching documents,
+`thread_ref`, `doc_ids`, `tags` (`{"all": [...], "any": [...], "none":
+[...]}`) and `include_archived` (default `false`). Call `list_tags` before
+filtering by tag; an unregistered tag is `unknown_tag`. Archived documents
+are left out unless `include_archived` is `true`; then each claim and
+passage from one carries `"archived": true`, and its claims never count as
+current support. Supporting evidence then comes only from matching documents,
 while contradicting evidence and competing facts from every other document
 stay in the answer, marked `"in_documents_filter": false`:
 [The documents filter](https://remember.dev/docs/reference/assured-operations#the-documents-filter).
@@ -20718,7 +21017,7 @@ them. Every tool returns the same JSON:
 | `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
-| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`, `update_document_tags`: no such document, or it is deleted. |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`: no such document. `section_history`, `document_references`, `update_document_tags`: no such document, or a hard forget removed it. |
 | `unknown_tag` | 422, or 404 for `update_tag` and `delete_tag` | no | A tag the call names is not registered. `detail` names every one. |
 | `conflict` | 409 | no | `create_tag` or `update_tag`: a tag with that name, in any letter case, is already registered. |
 | `tag_limit_exceeded` | 409 | no | The deployment would have more than 10,000 tags, or the document more than 64. Nothing changed. |
@@ -21251,9 +21550,9 @@ their code in `code`. `wait_for_readiness` raises
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token. |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
-| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](https://remember.dev/docs/reference/http-api#scopes). |
+| `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `POST /documents/{doc_id}/archive`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](https://remember.dev/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
-| `404` | `document_not_found` | `DELETE /documents/{doc_id}`, or a period, reference or section route, for a document that does not exist or is deleted. | Do not retry; check the id with `GET /documents`. |
+| `404` | `document_not_found` | `POST /documents/{doc_id}/archive` or `/unarchive` for a document that does not exist, or a period, reference or section route for a document that does not exist or that a hard forget removed. | Do not retry; check the id with `GET /documents`. |
 | `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
 | `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |
 | `404` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `PATCH` or `DELETE /tags/{tag_id}` for a tag id that is not registered, or was deleted. | Check the id with `GET /tags`. |
@@ -21344,7 +21643,7 @@ timeouts, store codes).
 
 The MCP server returns a tool failure as a normal tool result with
 `"isError": true` and one JSON text block. Every tool — `ingest`,
-`pipeline_readiness`, `delete_document`, the assured operations and the SQL
+`pipeline_readiness`, `archive_document`, `unarchive_document`, the assured operations and the SQL
 query tools — returns the same object:
 
 ```json
@@ -21378,7 +21677,7 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_not_regular_file` | `null` | no | Point path at a regular file, or send text/content_base64. |
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
-| `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. (`update_document_tags`: Do not retry. Check the doc_id.) |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`: Do not retry. Check the doc_id with the user. (`section_history`, `update_document_tags`: Do not retry. Check the doc_id.) |
 | `unknown_tag`, `conflict`, `tag_limit_exceeded` | as sent (422 or 404; 409) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
@@ -21416,7 +21715,7 @@ See [MCP tools](https://remember.dev/docs/reference/mcp).
 | `structuring` | Being split into sections. |
 | `ready` | Converted and structured. Extraction may still be running; use readiness. |
 | `failed` | Conversion or structuring failed; `error` says why. |
-| `deleted` | Deleted. Not listed by `GET /documents`. |
+| `deleted` | Removed by a hard forget. Not listed by `GET /documents`. |
 
 ### Pipeline stage status
 
@@ -22591,17 +22890,17 @@ absent from the current release; nothing here has a date.
 
 - **Forgetting a document from a client.** The engine can forget (erase) a
   document, but no HTTP route, SDK method, CLI command or MCP tool requests a
-  forget yet, and `GET /forgets` does not exist. Deleting a document removes it
-  from the memory but keeps its claims and stored original as history. A
-  forgotten document's content cannot be ingested again: there is no
-  `allow_forgotten` option yet.
+  forget yet, and `GET /forgets` does not exist. Archiving a document stops the
+  memory believing it but keeps the document, its claims and its stored
+  original as history; there is no delete. A forgotten document's content
+  cannot be ingested again: there is no `allow_forgotten` option yet.
 - **Rewriting clean authored-page history on forget.** A forget erases the
   history of compiled knowledge pages that cited the document and of authored
   pages once their owner removes the citation; an authored page whose current
   file no longer cites the document but whose older revisions do keeps those
   revisions, and a page that still cites it gets no review flag yet: the
   forget's record lists its path while it waits.
-- **Deleting one version.** You can delete a whole document, not a single
+- **Archiving one version.** You can archive a whole document, not a single
   version of it.
 - **Document filters on fact lookups and SQL functions.** Claim and chunk
   search and the three context operations (`claims_and_sources_context`,
@@ -22690,6 +22989,12 @@ has a field or value in the API, it is shown in code.
 : One logical file over its whole life, such as a spec or a meeting
   transcript. Its identity stays the same when its content changes. See
   [Documents, versions and sources](https://remember.dev/docs/concepts/documents-and-sources).
+
+**Archived document** (`archived_at`)
+: A document the memory no longer believes. Its claims stop counting as
+  evidence and facts only it supported are closed, but the document stays
+  readable as history; unarchiving undoes it exactly. See
+  [Archiving a document](https://remember.dev/docs/concepts/documents-and-sources#archiving-a-document).
 
 **Version** (`version_id`)
 : One snapshot of a document's bytes. Versions are append-only and never
@@ -22804,7 +23109,7 @@ has a field or value in the API, it is shown in code.
 **Current testimony** (`is_current_testimony`)
 : Whether a claim still counts as what its source currently says. Claims
   stop being current when re-extracted, superseded in a living document, or
-  deleted. See [Claims](https://remember.dev/docs/concepts/claims#current-and-superseded-testimony).
+  when their document is archived. See [Claims](https://remember.dev/docs/concepts/claims#current-and-superseded-testimony).
 
 **Fact** (`fact_id`)
 : A piece of knowledge the memory holds true, built from claims: either a
@@ -22841,7 +23146,7 @@ has a field or value in the API, it is shown in code.
   [Facts](https://remember.dev/docs/concepts/facts#support-withdrawn).
 
 **Retraction**
-: A fact losing belief because a living source removed, or a deletion took
+: A fact losing belief because a living source removed, or an archive took
   away, its only support. Recorded as `retracted_source_removal`. See
   [Updating a source](https://remember.dev/docs/concepts/updating-sources).
 

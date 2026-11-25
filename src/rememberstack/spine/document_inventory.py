@@ -68,6 +68,7 @@ _PAGE = text(
            d.source_kind,
            d.source_uri,
            d.first_seen_at,
+           d.archived_at,
            v.version_id,
            v.version_no,
            v.status::text AS status,
@@ -102,6 +103,8 @@ _PAGE = text(
     ) v ON TRUE
     WHERE d.deployment_id = :deployment_id
       AND d.deleted_at IS NULL
+      -- D159: an archived document is history, listed only on request.
+      AND (CAST(:include_archived AS boolean) OR d.archived_at IS NULL)
       -- Every parameter is cast. PostgreSQL cannot infer the type of a bare
       -- placeholder compared against NULL, and refuses the statement rather
       -- than guessing.
@@ -131,6 +134,7 @@ class DocumentInventory:
         limit: int = DEFAULT_PAGE_SIZE,
         cursor: str | None = None,
         status: DocumentStatusFilter | None = None,
+        include_archived: bool = False,
     ) -> DocumentPage:
         """One page of documents, ordered by when each lineage was first seen.
 
@@ -139,10 +143,14 @@ class DocumentInventory:
         place, because it is the same document. The tie break on `doc_id` is
         what makes the cursor total: a bulk import gives many lineages one
         `first_seen_at`, and without it two of them can swap places between
-        pages, dropping one and repeating the other.
+        pages, dropping one and repeating the other. Archived documents are
+        listed only with ``include_archived`` (D159).
         """
         size = max(1, min(int(limit), MAX_PAGE_SIZE))
-        scope = cursor_scope_hash({"status": status}, deployment_id=deployment_id)
+        scope = cursor_scope_hash(
+            {"status": status, "include_archived": include_archived},
+            deployment_id=deployment_id,
+        )
         cursor_at, cursor_doc = _decode_cursor(cursor=cursor, scope_hash=scope)
         with self._engine.connect() as connection:
             rows = (
@@ -152,6 +160,7 @@ class DocumentInventory:
                         "deployment_id": deployment_id,
                         "limit": size + 1,
                         "status": status,
+                        "include_archived": include_archived,
                         "cursor_at": cursor_at,
                         "cursor_doc": cursor_doc,
                     },
@@ -180,6 +189,7 @@ class DocumentInventory:
                 ),
                 serving=bool(row["serving"]),
                 tags=tuple(row["tags"]),
+                archived_at=row["archived_at"],
             )
             for row in page
         )

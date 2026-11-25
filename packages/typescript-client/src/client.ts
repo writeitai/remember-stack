@@ -305,8 +305,8 @@ export class MemoryClient {
     const ordered=[...Object.entries(params).filter((entry):entry is [string,string]=>entry[1]!=null),...tagParams];
     return validateModel({name:'IngestedVersion',value:await this.json({method:'POST',path:'/ingest',params:ordered,content:bytes,headers:{'Content-Type':'application/octet-stream'},signal}),response:true});
   }
-  /** Read a page of the deployment's documents. */
-  async listDocuments({limit=50,cursor,status,signal}:{limit?:number;cursor?:string|null;status?:Models.DocumentStatusFilter|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentPage> {return validateModel({name:'DocumentPage',value:await this.json({method:'GET',path:'/documents',params:{limit,cursor,status},signal}),response:true});}
+  /** Read a page of the deployment's documents; archived ones only with includeArchived. */
+  async listDocuments({limit=50,cursor,status,includeArchived=false,signal}:{limit?:number;cursor?:string|null;status?:Models.DocumentStatusFilter|null;includeArchived?:boolean;signal?:AbortSignal}={}):Promise<Models.OutputDocumentPage> {return validateModel({name:'DocumentPage',value:await this.json({method:'GET',path:'/documents',params:{limit,cursor,status,include_archived:includeArchived?'true':null},signal}),response:true});}
   /** Search documents by name, metadata and content with source-owned defaults. */
   async searchDocuments({query=null,filters={},versions='current',k=20,limit=50,cursor=null,time=null,signal}:{query?:string|null;filters?:Models.DocumentSearchFilters;versions?:'current'|'all';k?:number;limit?:number;cursor?:string|null;time?:Models.ReadTime|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentSearchPage> {return this.searchDocumentsRequest({request:{query,filters,versions,k,limit,cursor,time},signal});}
   /** Send a prepared document search, excluding recursively default-valued fields. */
@@ -354,8 +354,10 @@ export class MemoryClient {
   async clearEffectiveTime({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputEffectiveTimeCleared> {
     return validateModel({name:'EffectiveTimeCleared',value:await this.json({method:'DELETE',path:`/documents/${uuid({value:docId,field:'docId'})}/effective-periods`,signal}),response:true});
   }
-  /** Delete one live document after locally validating its identity. */
-  async deleteDocument({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputDocumentDeletion> {return validateModel({name:'DocumentDeletion',value:await this.json({method:'DELETE',path:`/documents/${uuid({value:docId,field:'docId'})}`,signal}),response:true});}
+  /** Archive one document: the memory stops believing it, but keeps it readable as history (D159). */
+  async archiveDocument({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputDocumentArchive> {return validateModel({name:'DocumentArchive',value:await this.json({method:'POST',path:`/documents/${uuid({value:docId,field:'docId'})}/archive`,signal}),response:true});}
+  /** Undo an archive exactly: the document's testimony is current again (D159). */
+  async unarchiveDocument({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputDocumentUnarchive> {return validateModel({name:'DocumentUnarchive',value:await this.json({method:'POST',path:`/documents/${uuid({value:docId,field:'docId'})}/unarchive`,signal}),response:true});}
   /** List the deployment's registered tags (D156), optionally narrowed by a name or description substring. */
   async listTags({query=null,signal}:{query?:string|null;signal?:AbortSignal}={}):Promise<Models.OutputTagList> {return validateModel({name:'TagList',value:await this.json({method:'GET',path:'/tags',params:query==null?undefined:{query},signal}),response:true});}
   /** Register a tag before documents carry it; a name taken in any letter case is a 409 conflict. */

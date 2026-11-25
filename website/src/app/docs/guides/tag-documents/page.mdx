@@ -139,7 +139,8 @@ curl -s -X POST "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5
   the tag is registered.
 - Every tag named must be registered; otherwise nothing changes and the
   call is refused with `unknown_tag`.
-- A deleted document cannot be tagged (`404` `document_not_found`).
+- An archived document can be tagged; a document that does not exist cannot
+  (`404` `document_not_found`).
 
 Tags belong to the document, not to one version: every version, old and
 new, carries the document's current tags. Changing them never reprocesses
@@ -304,12 +305,13 @@ the name and look the id up.
   `documents`. See
   [MCP tools](/docs/reference/mcp#tag-tools).
 
-## Tags and deleted documents
+## Tags and archived documents
 
-A deleted document never shows its tags: it leaves `GET /documents`, search
-and the SQL views, and its tags with it. The engine keeps the record of which
-tags it carried, so if you ingest the document again it comes back with
-those tags. Forgetting a document removes that
+An [archived](/docs/concepts/documents-and-sources#archiving-a-document)
+document keeps its tags. It leaves `GET /documents` and search unless a read
+asks for archived documents with `include_archived`, and then it is listed
+with its tags. When it comes back, by unarchiving or by a new version, it
+still carries them. Forgetting a document removes that
 record; the registered tags themselves stay, because they are the
 deployment's vocabulary, not content from any document.
 

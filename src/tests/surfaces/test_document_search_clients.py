@@ -564,7 +564,7 @@ def test_mcp_search_documents_takes_a_flat_tags_field(
 ) -> None:
     client, search = tag_surface
     definition = tool("search_documents")
-    assert definition.tool_version == 4
+    assert definition.tool_version == 5
     properties = cast("dict[str, dict[str, object]]", definition.input_schema)
     tags_schema = cast("dict[str, object]", properties["properties"]["tags"])
     assert set(cast("dict[str, object]", tags_schema["properties"])) == {

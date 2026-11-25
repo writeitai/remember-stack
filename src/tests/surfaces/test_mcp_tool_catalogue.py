@@ -72,7 +72,8 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
     assert names == [
         "ingest",
         "pipeline_readiness",
-        "delete_document",
+        "archive_document",
+        "unarchive_document",
         "search_documents",
         "section_history",
         "document_references",
@@ -117,7 +118,8 @@ def test_read_only_omits_every_write_tool() -> None:
     """`read_only` drops exactly the memory:write tools."""
     rendered = _render(read_only=True)
     assert "ingest" not in rendered
-    assert "delete_document" not in rendered
+    assert "archive_document" not in rendered
+    assert "unarchive_document" not in rendered
     assert set(rendered) == {
         definition.name
         for definition in memory_tools()
@@ -145,12 +147,12 @@ def test_rendering_never_shares_the_catalogue_schema() -> None:
 
 
 def test_annotations_follow_permission() -> None:
-    """Read tools are read-only; only delete_document and delete_tag are destructive."""
+    """Read tools are read-only; only delete_tag is destructive (archive is not)."""
     for name, entry in _render().items():
         definition = tool(name)
         assert entry["annotations"] == {
             "readOnlyHint": definition.permission == "memory:read",
-            "destructiveHint": name in {"delete_document", "delete_tag"},
+            "destructiveHint": name == "delete_tag",
         }
 
 
@@ -190,11 +192,10 @@ def test_operations_registry_fields_are_generated_from_the_catalogue() -> None:
 
 
 def test_validate_arguments_parses_every_family() -> None:
-    """One entry point validates write, deletion, query, adjacent chunks, and operation calls."""
+    """One entry point validates write, archive, query, adjacent chunks, and operation calls."""
     doc_id = uuid4()
-    assert validate_arguments("delete_document", {"doc_id": str(doc_id)}) == {
-        "doc_id": doc_id
-    }
+    for name in ("archive_document", "unarchive_document"):
+        assert validate_arguments(name, {"doc_id": str(doc_id)}) == {"doc_id": doc_id}
     chunk_id = uuid4()
     assert validate_arguments(
         ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id)}
@@ -293,7 +294,7 @@ def _deployment_tools(**composed: object) -> dict[str, int]:
 
 
 def test_deployment_reports_exactly_the_composed_tools() -> None:
-    """`tools` follows composition: query tools with open query, delete with deletion."""
+    """`tools` follows composition: query tools with open query, archive with archive."""
     assert _deployment_tools() == {}
 
     surface = MagicMock()
@@ -305,7 +306,7 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         open_query=open_query,
         ingest=MagicMock(),
         pipeline_readiness=MagicMock(),
-        deletion=MagicMock(),
+        archive=MagicMock(),
         document_search=MagicMock(),
         section_history=MagicMock(),
         document_references=MagicMock(),
@@ -329,7 +330,7 @@ def test_read_only_mode_preserves_adjacent_chunks() -> None:
     read_only_tools = _render(read_only=True)
     assert ADJACENT_CHUNKS_TOOL_NAME in read_only_tools
     assert "ingest" not in read_only_tools
-    assert "delete_document" not in read_only_tools
+    assert "archive_document" not in read_only_tools
 
 
 def test_catalogue_imports_without_the_engine() -> None:

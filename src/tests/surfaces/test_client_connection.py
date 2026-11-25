@@ -417,13 +417,13 @@ def test_moved_deployment_is_re_resolved_and_retried_once(
 def _write(client: Client, kind: str) -> None:
     if kind == "ingest":
         client.ingest(content=b"# note", filename="note.md")
-    elif kind == "delete":
-        client.delete_document(doc_id=UUID(int=7))
+    elif kind == "archive":
+        client.archive_document(doc_id=UUID(int=7))
     else:
         client.add_connector(connector=ConnectorCreate(kind="k", name="n"))
 
 
-@pytest.mark.parametrize("write", ["ingest", "delete", "connector"])
+@pytest.mark.parametrize("write", ["ingest", "archive", "connector"])
 @pytest.mark.parametrize(
     "failure",
     [httpx.ReadError("reset"), httpx.WriteError("broken pipe"), 404],
@@ -439,7 +439,7 @@ def test_a_write_that_may_have_arrived_is_never_repeated(
     assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test"]
 
 
-@pytest.mark.parametrize("write", ["ingest", "delete", "connector"])
+@pytest.mark.parametrize("write", ["ingest", "archive", "connector"])
 @pytest.mark.parametrize(
     "failure",
     [httpx.ConnectError("refused"), httpx.ConnectTimeout("slow"), 421],

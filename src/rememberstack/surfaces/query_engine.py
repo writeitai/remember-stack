@@ -52,6 +52,7 @@ from remember.retrieval import MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from rememberstack.core.cursor_scope import assert_cursor_scope
 from rememberstack.core.cursor_scope import cursor_scope_hash
 from rememberstack.core.document_filters import any_live_document_matches
+from rememberstack.core.document_filters import archived_lineage_hidden
 from rememberstack.core.document_filters import claim_selected_matching
 from rememberstack.core.document_filters import fact_supported_matching
 from rememberstack.core.document_filters import is_empty
@@ -139,6 +140,7 @@ from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.effective_time import belief_watermark
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.lifecycle import REVIEW_MOOT_SQL
 from rememberstack.spine.processing_layers import admit_layers_on
 from rememberstack.spine.retrieval_eligibility import candidate_mention_coverage_ctes
 from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
@@ -1732,6 +1734,45 @@ class QueryEngine:
         _database_deadline: float | None = None,
         _snapshot_connection: Connection | None = None,
     ) -> Envelope:
+        """D97's facts context; evidence of an archived document is marked (D159)."""
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=self._default_facts_context(
+                deployment_id=deployment_id,
+                graph_queries=graph_queries,
+                query=query,
+                entity_ids=entity_ids,
+                k=k,
+                candidate_k=candidate_k,
+                evidence_per_fact=evidence_per_fact,
+                hops=hops,
+                predicate=predicate,
+                time=time,
+                evaluated_at=evaluated_at,
+                documents=documents,
+                _database_deadline=_database_deadline,
+                _snapshot_connection=_snapshot_connection,
+            ),
+        )
+
+    def _default_facts_context(
+        self,
+        *,
+        deployment_id: UUID,
+        graph_queries: "GraphQueries | None",
+        query: str,
+        entity_ids: tuple[UUID, ...] = (),
+        k: int = DEFAULT_CONTEXT_K,
+        candidate_k: int | None = None,
+        evidence_per_fact: int = 3,
+        hops: int = DEFAULT_FACTS_CONTEXT_HOPS,
+        predicate: str | None = None,
+        time: FactTime | None = None,
+        evaluated_at: datetime | None = None,
+        documents: DocumentSearchFilters | None = None,
+        _database_deadline: float | None = None,
+        _snapshot_connection: Connection | None = None,
+    ) -> Envelope:
         """Apply D97's default entity-neighborhood then fact-text recipe.
 
         Callers resolve names first and pass the complete candidate choice as
@@ -2018,6 +2059,35 @@ class QueryEngine:
 
     @_with_surface(SurfaceCostKind.OPERATION)
     def claims_and_sources_context(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        entity_ids: tuple[UUID, ...] = (),
+        k: int = DEFAULT_CONTEXT_K,
+        candidate_k: int | None = None,
+        evaluated_at: datetime | None = None,
+        time: ReadTime | FactTime | None = None,
+        layers: frozenset[ProcessingLayer] | None = None,
+        documents: DocumentSearchFilters | None = None,
+    ) -> Envelope:
+        """Claims and passages; an archived document's are marked (D159)."""
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=self._claims_and_sources_context(
+                deployment_id=deployment_id,
+                query=query,
+                entity_ids=entity_ids,
+                k=k,
+                candidate_k=candidate_k,
+                evaluated_at=evaluated_at,
+                time=time,
+                layers=layers,
+                documents=documents,
+            ),
+        )
+
+    def _claims_and_sources_context(
         self,
         *,
         deployment_id: UUID,
@@ -2476,6 +2546,29 @@ class QueryEngine:
         documents: DocumentSearchFilters | None = None,
         time: ReadTime | None = None,
     ) -> Envelope:
+        """Claim search; archived documents only on request, marked (D159)."""
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=self._search_claims(
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                channel=channel,
+                documents=documents,
+                time=time,
+            ),
+        )
+
+    def _search_claims(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
+    ) -> Envelope:
         """Claim search — EVIDENCE grain, never a current-fact answer.
 
         The claims channel nominates (current-testimony-only by default);
@@ -2608,6 +2701,29 @@ class QueryEngine:
         documents: DocumentSearchFilters | None = None,
         time: ReadTime | None = None,
     ) -> Envelope:
+        """Chunk search; archived documents only on request, marked (D159)."""
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=self._search_chunks(
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                channel=channel,
+                documents=documents,
+                time=time,
+            ),
+        )
+
+    def _search_chunks(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int = 10,
+        channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
+    ) -> Envelope:
         """Search live source chunks without pretending they are claims.
 
         ``documents`` (D134) keeps a chunk only when its document version
@@ -2685,6 +2801,43 @@ class QueryEngine:
         )
 
     @_with_surface(SurfaceCostKind.SEARCH)
+    def mark_archived(self, *, deployment_id: UUID, envelope: Envelope) -> Envelope:
+        """Mark the claims and passages of archived documents (D159).
+
+        Only a ``documents.include_archived`` read returns them; one indexed
+        lookup over the answer's documents decides.
+        """
+        doc_ids = {item.doc_id for item in envelope.evidence} | {
+            item.doc_id for item in envelope.chunks
+        }
+        if not doc_ids:
+            return envelope
+        with self._engine.connect() as connection:
+            archived = set(
+                connection.execute(
+                    _ARCHIVED_DOCUMENTS,
+                    {"deployment_id": deployment_id, "doc_ids": sorted(doc_ids)},
+                ).scalars()
+            )
+        if not archived:
+            return envelope
+        return envelope.model_copy(
+            update={
+                "evidence": tuple(
+                    item.model_copy(update={"archived": True})
+                    if item.doc_id in archived
+                    else item
+                    for item in envelope.evidence
+                ),
+                "chunks": tuple(
+                    item.model_copy(update={"archived": True})
+                    if item.doc_id in archived
+                    else item
+                    for item in envelope.chunks
+                ),
+            }
+        )
+
     def adjacent_chunks(
         self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1
     ) -> Envelope:
@@ -2735,20 +2888,25 @@ class QueryEngine:
                 .all()
             )
         adjacent_ids = tuple(UUID(str(row["chunk_id"])) for row in rows)
+        # An exact handle reads its neighbours even in an archived document
+        # (D140 §3.3); the passages are marked archived (D159).
         chunks, dropped, _ = self._confirm_chunks(
-            deployment_id=deployment_id, chunk_ids=adjacent_ids
+            deployment_id=deployment_id, chunk_ids=adjacent_ids, include_archived=True
         )
-        return _envelope(
-            grain=Grain.EVIDENCE,
-            chunks=chunks,
-            freshness=_freshness(),
-            dropped_by_hydration=dropped,
-            negative=None
-            if chunks
-            else Negative(
-                kind=NegativeKind.KNOWN_EMPTY,
-                explanation=f"adjacent chunks for {chunk_id} are not currently visible in storage",
-                workaround="verify that neighboring chunks are indexed in storage",
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=_envelope(
+                grain=Grain.EVIDENCE,
+                chunks=chunks,
+                freshness=_freshness(),
+                dropped_by_hydration=dropped,
+                negative=None
+                if chunks
+                else Negative(
+                    kind=NegativeKind.KNOWN_EMPTY,
+                    explanation=f"adjacent chunks for {chunk_id} are not currently visible in storage",
+                    workaround="verify that neighboring chunks are indexed in storage",
+                ),
             ),
         )
 
@@ -4336,6 +4494,11 @@ class QueryEngine:
                 )
                 extra.update(document_parameters)
                 statement = text(f"{statement.text}  AND {occurrence_sql}\n")
+            if current_only:
+                # D159: a source archive's claims stay current until its
+                # cycle settles; they are still hidden unless asked for.
+                hidden = archived_lineage_hidden(filters=documents, doc="c.doc_id")
+                statement = text(f"{statement.text}  AND {hidden}\n")
         rows: list[RowMapping] = []
         occurrences: dict[UUID, list[ClaimOccurrence]] = {}
         # Multiple chunks are one answer, so they must observe one database
@@ -4407,6 +4570,7 @@ class QueryEngine:
         entity_ids: tuple[UUID, ...] = (),
         documents: DocumentSearchFilters | None = None,
         scope: TextScope | None = None,
+        include_archived: bool = False,
     ) -> tuple[tuple[ChunkEvidenceResult, ...], int, dict[UUID, int]]:
         """Confirm chunk content and any entity scope, then hydrate P1 bodies.
 
@@ -4421,12 +4585,18 @@ class QueryEngine:
             return (), 0, {}
         statement = _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS
         extra: dict[str, Any] = {}
-        predicates: list[str] = []
+        # D159: an archived document's passage confirms only on request (the
+        # documents filter decides when there is one).
+        predicates: list[str] = (
+            []
+            if include_archived
+            else [archived_lineage_hidden(filters=None, doc="ch.doc_id")]
+        )
         if documents is not None:
             version_sql, document_parameters = live_version_matches(
                 filters=documents, version="ch.version_id", prefix="documents_"
             )
-            predicates.append(version_sql)
+            predicates = [version_sql]
             extra.update(document_parameters)
         if scope is not None:
             predicates.append(version_selected(version="ch.version_id"))
@@ -5487,6 +5657,7 @@ _DOCUMENTS_ABOUT = text(
           AND rd.entity_id = :entity_id
           AND rd.superseded_by IS NULL
           AND d.deleted_at IS NULL
+          AND d.archived_at IS NULL
         GROUP BY d.doc_id, d.title, d.source_kind, r.markdown_uri
     )
     SELECT mentioned.*, count(*) OVER () AS total_count
@@ -5856,16 +6027,31 @@ _RESOLVE_CONTEXT_HITS = text(
 )
 
 
-_LOOKUP_BELIEF_PREDICATE = (
-    "ingested_at <= :evaluated_at"
-    " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
+_ARCHIVED_DOCUMENTS = text(
+    """
+    SELECT doc_id FROM documents
+    WHERE deployment_id = :deployment_id
+      AND doc_id = ANY(CAST(:doc_ids AS uuid[]))
+      AND archived_at IS NOT NULL
+    """
 )
-"""One as-of belief/ingest predicate for every browse-lookup page (D154).
 
-Page one pins ``evaluated_at`` from the database clock; later pages reuse the
-cursor. Rows ingested after that instant stay out; rows invalidated after it
-stay in. There is no first-page-only ``invalidated_at IS NULL`` branch.
-"""
+
+def _lookup_belief_predicate(*, fact_kind: str, fact_id: str) -> str:
+    """One as-of belief/ingest predicate for every browse-lookup page (D154).
+
+    Page one pins ``evaluated_at`` from the database clock; later pages reuse
+    the cursor. Rows ingested after that instant stay out; rows closed after it
+    stay in. Belief at the instant comes from the fact's close and reopen
+    events (D159), so a reopen after page one cannot move a fact into a later
+    page. There is no first-page-only ``invalidated_at IS NULL`` branch.
+    """
+    return (
+        "ingested_at <= :evaluated_at"
+        " AND (invalidated_at IS NULL OR invalidated_at > :evaluated_at)"
+        " AND rememberstack_graph_internal.fact_believed_at("
+        f"'{fact_kind}', {fact_id}, :evaluated_at)"
+    )
 
 
 def _lookup_relations_sql() -> TextClause:
@@ -5878,7 +6064,7 @@ def _lookup_relations_sql() -> TextClause:
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
-      AND {_LOOKUP_BELIEF_PREDICATE}
+      AND {_lookup_belief_predicate(fact_kind="relation", fact_id="relation_id")}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (CAST(:subject_entity_id AS uuid) IS NULL
@@ -5908,7 +6094,7 @@ def _lookup_observations_sql() -> TextClause:
     FROM observations
     WHERE deployment_id = :deployment_id
       AND subject_entity_id = :entity_id
-      AND {_LOOKUP_BELIEF_PREDICATE}
+      AND {_lookup_belief_predicate(fact_kind="observation", fact_id="observation_id")}
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
       AND (
@@ -6363,6 +6549,11 @@ def _confirm_claims_in_scope_statement(
             current_testimony=current_testimony,
             prefix="documents_",
         )
+    if current_only:
+        # D159: a source archive's claims stay current until its cycle
+        # settles; they are still hidden unless asked for.
+        hidden = archived_lineage_hidden(filters=documents, doc="c.doc_id")
+        selected = f"({selected}) AND {hidden}"
     coverage_column = ", scope.coverage" if entity_scoped else ""
     coverage_ctes = (
         "WITH RECURSIVE "
@@ -6454,6 +6645,10 @@ _SCOPE_PENDING = text(
       AND s.doc_id = ANY(CAST(:doc_ids AS uuid[]))
       AND NOT s.selectable
       AND s.in_force && {WINDOW_SQL}
+      -- D159: an archived lineage is never pending for a read
+      AND NOT EXISTS (SELECT 1 FROM documents archived
+                      WHERE archived.doc_id = s.doc_id
+                        AND archived.archived_at IS NOT NULL)
     ORDER BY s.doc_id
     """  # noqa: S608 -- interpolated fragment is a module constant
 )
@@ -6575,6 +6770,10 @@ _PENDING_IN_FORCE = text(
       AND s.in_force && {WINDOW_SQL}
       AND (CAST(:pending_doc_ids AS uuid[]) IS NULL
            OR s.doc_id = ANY(CAST(:pending_doc_ids AS uuid[])))
+      -- D159: an archived lineage is never pending for a read
+      AND NOT EXISTS (SELECT 1 FROM documents archived
+                      WHERE archived.doc_id = s.doc_id
+                        AND archived.archived_at IS NOT NULL)
     ORDER BY s.doc_id
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
@@ -7158,18 +7357,20 @@ _CURRENT_FACT_LABELS = text(
 )
 
 _OPEN_SUPPORT_FLAGS = text(
-    """
+    f"""
     -- a fact under an OPEN support_withdrawn review carries support=withdrawn
     -- in the envelope (D54: flagged, not vanished). "Open" is pending OR
     -- deferred — an 'uncertain' verdict defers but leaves the flag standing,
-    -- matching review._SELECT_OPEN_FLAG and the lifecycle reconciler.
-    SELECT (candidate ->> 'fact_id')::uuid AS fact_id
-    FROM review_queue
-    WHERE deployment_id = :deployment_id
-      AND item_kind = 'support_withdrawn'
-      AND status IN ('pending', 'deferred')
-      AND candidate ->> 'fact_kind' = :fact_kind
-      AND (candidate ->> 'fact_id') = ANY(:fact_ids)
+    -- matching review._SELECT_OPEN_FLAG and the lifecycle reconciler; a
+    -- review on an archived document's claim is moot (D159).
+    SELECT (q.candidate ->> 'fact_id')::uuid AS fact_id
+    FROM review_queue q
+    WHERE q.deployment_id = :deployment_id
+      AND q.item_kind = 'support_withdrawn'
+      AND q.status IN ('pending', 'deferred')
+      AND q.candidate ->> 'fact_kind' = :fact_kind
+      AND (q.candidate ->> 'fact_id') = ANY(:fact_ids)
+      AND NOT {REVIEW_MOOT_SQL}
     """
 )
 
