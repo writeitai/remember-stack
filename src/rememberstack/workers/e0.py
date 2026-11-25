@@ -395,8 +395,10 @@ class UploadIngestor:
 
         ``allow_forgotten`` adds back a forgotten document's bytes for this
         call only (D159 §3.6). While the matching forget is still erasing it
-        raises :class:`ForgetNotCompleteError` unchanged and keeps the
-        object, so the same registration can be retried later.
+        raises :class:`ForgetNotCompleteError` and deletes the object unless
+        a content keeps ``key`` (no forget would erase staged forgotten
+        bytes); upload the file again to retry once the forget has left
+        ``erasing``.
         """
         if _STORED_KEY.fullmatch(key.root) is None:
             raise ValueError(
@@ -448,6 +450,10 @@ class UploadIngestor:
                 raise self._refused(
                     deployment_id=deployment_id, key=key, refusal=refusal
                 ) from refusal
+            except ForgetNotCompleteError:
+                # Staged forgotten bytes no record would erase; the code stays.
+                self.discard_unregistered(deployment_id=deployment_id, key=key)
+                raise
         doc_id = self._admission.lineage_doc_id(
             deployment_id=deployment_id,
             source_kind=UPLOAD_SOURCE_KIND,
@@ -484,6 +490,9 @@ class UploadIngestor:
             raise self._refused(
                 deployment_id=deployment_id, key=key, refusal=refusal
             ) from refusal
+        except ForgetNotCompleteError:
+            self.discard_unregistered(deployment_id=deployment_id, key=key)
+            raise
         self._release_unretained(
             deployment_id=deployment_id, content_hash=content_hash, key=key
         )

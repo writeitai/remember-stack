@@ -260,7 +260,7 @@ CREATE TABLE forgets (
   doc_id                uuid NOT NULL,          -- no FK: the document row is erased
   version_ids           uuid[] NOT NULL,        -- every version of the lineage at hide
   content_hashes        text[] NOT NULL,        -- every version's raw content hash
-  source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref); NULL for uploads
+  source_identity_hash  text,                   -- sha256(deployment_id, source_kind, source_ref), uploads included; NULL only for records upgraded from D74
   collected             jsonb,                  -- step 0: shared fact/entity IDs, K page/summary/transcript IDs, opaque original locators (IDs and keys only)
   blocking_k_paths      text[] NOT NULL DEFAULT '{}',  -- pending owner redaction; emptied on completion
   released_hashes       text[] NOT NULL DEFAULT '{}',  -- guard entries released by a flagged re-add (§3.6); never removes sweep keys

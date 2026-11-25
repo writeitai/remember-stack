@@ -47,9 +47,6 @@ MAX_SWEEP_ATTEMPTS: Final = 32_767
 """A sweep row's attempt ceiling: a crashed worker's sweep is simply retried."""
 
 
-UPLOAD_SOURCE_KIND: Final = "upload"
-"""A one-shot upload's lineage is its bytes; the content hash guards it."""
-
 _REPLACEMENT_LINEAGE: Final = uuid5(NAMESPACE_URL, "rememberstack:replacement-lineage")
 """The namespace of re-added lineages' IDs, disjoint from identity base IDs."""
 
@@ -187,19 +184,13 @@ class ForgetCatalog:
             .mappings()
             .one()
         )
-        # A one-shot upload's lineage is its bytes (source_ref is the content
-        # hash); an upload with an explicit stable source_ref is an identity.
-        one_shot = (
-            document["source_kind"] == UPLOAD_SOURCE_KIND
-            and connection.execute(
-                text("""SELECT EXISTS (SELECT 1 FROM document_versions
-            WHERE deployment_id = :d AND doc_id = :doc AND content_hash = :ref)"""),
-                {"d": deployment_id, "doc": doc_id, "ref": document["source_ref"]},
-            ).scalar_one()
-        )
+        # Every lineage's identity is guarded, a one-shot upload's included
+        # (its source_ref is its content hash): an upload lineage may also
+        # carry versions a caller sent under the same source_ref, and none of
+        # them may come back unguarded (D159 §3.6).
         identity = (
             None
-            if one_shot or document["source_ref"] is None
+            if document["source_ref"] is None
             else source_identity_hash(
                 deployment_id=deployment_id,
                 source_kind=str(document["source_kind"]),
@@ -455,7 +446,6 @@ def guard_forgotten_on(
                     deployment_id=deployment_id,
                     source_kind=source_kind,
                     source_ref=source_ref,
-                    content_hash=content_hash,
                 ),
                 "content_hash": content_hash,
             },
@@ -513,7 +503,6 @@ def release_forgotten_on(
                     deployment_id=deployment_id,
                     source_kind=source_kind,
                     source_ref=source_ref,
-                    content_hash=content_hash,
                 ),
                 "content_hash": content_hash,
             },
@@ -564,16 +553,8 @@ def _lineage_ids(
     return tuple(lineages)
 
 
-def _identity(
-    *, deployment_id: UUID, source_kind: str, source_ref: str, content_hash: str
-) -> str | None:
-    """The record's source-identity hash; a one-shot upload is guarded by its bytes.
-
-    A one-shot upload's ``source_ref`` is its content hash; an upload with an
-    explicit stable ``source_ref`` is an identity like any other.
-    """
-    if source_kind == UPLOAD_SOURCE_KIND and source_ref == content_hash:
-        return None
+def _identity(*, deployment_id: UUID, source_kind: str, source_ref: str) -> str:
+    """The request's source-identity hash, a one-shot upload's included."""
     return source_identity_hash(
         deployment_id=deployment_id, source_kind=source_kind, source_ref=source_ref
     )

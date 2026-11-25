@@ -659,7 +659,7 @@ them. Every tool returns the same JSON:
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
 | `confirmation_required` | `null` | no | `forget_document` without `confirm: true`. Nothing was forgotten. |
-| `document_not_found` | 404 | no | `delete_document`, `forget_document`, `section_history`, `document_references`, `update_document_tags`: no such document, or it is deleted or forgotten. |
+| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`, `update_document_tags`: no such document, or it is deleted or forgotten. `forget_document`: no such document (forgetting a forgotten document again returns its existing record). |
 | `document_forgotten` | 409 | no | `ingest` of content that belongs to a forgotten document, without `allow_forgotten`. |
 | `forget_not_complete` | 409 | no | `ingest` with `allow_forgotten` while the matching forget is still erasing. |
 | `unknown_tag` | 422, or 404 for `update_tag` and `delete_tag` | no | A tag the call names is not registered. `detail` names every one. |

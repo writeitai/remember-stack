@@ -316,9 +316,9 @@ def test_a_forgotten_upload_comes_back_under_a_fresh_doc_id(rig: _Rig) -> None:
     assert readded.created and readded.doc_id != base
     released = rig.release(forget_id)
     assert released["released_hashes"] == [_hash(_A)]
-    # A one-shot upload's identity is its bytes: no identity to release.
-    assert released["source_identity_hash"] is None
-    assert released["identity_released"] is False
+    # A one-shot upload's identity (its bytes) is guarded and released too.
+    assert released["source_identity_hash"] is not None
+    assert released["identity_released"] is True
     assert rig.upload(_A).doc_id == readded.doc_id
 
 
@@ -358,6 +358,35 @@ def test_a_caller_named_upload_identity_is_guarded_too(rig: _Rig) -> None:
     rig.settle()
     assert rig.rows(named.doc_id) == 0
     assert rig.release(forget_id)["identity_released"] is False
+
+
+def test_an_upload_named_by_its_first_bytes_hash_is_guarded(rig: _Rig) -> None:
+    """A lineage whose source_ref is version A's hash keeps its identity guard."""
+
+    def named(content: bytes, *, allow: bool = False) -> IngestedVersion:
+        return rig.ingestor.ingest_observed(
+            deployment_id=_DEPLOYMENT_ID,
+            source_kind="upload",
+            source_ref=_hash(_A),
+            upload=DocumentUpload(
+                filename="plan.md",
+                mime="text/markdown",
+                content=content,
+                allow_forgotten=allow,
+            ),
+            versioning_mode="snapshot",
+            source_modified_at=None,
+            source_version_ref=None,
+            sync_cycle_id=None,
+        )
+
+    first = named(_A)
+    assert named(_B).doc_id == first.doc_id
+    rig.forget(first.doc_id)
+    with pytest.raises(ForgetNotCompleteError):
+        named(b"# Plan\n\nVersion C of the plan.\n", allow=True)
+    rig.settle()
+    assert rig.rows(first.doc_id) == 0
 
 
 def test_a_re_add_releases_only_its_own_lineage_and_ids_never_collide(
@@ -407,8 +436,10 @@ def test_a_stored_object_waits_out_the_erasure_and_then_comes_back(rig: _Rig) ->
 
     with pytest.raises(ForgetNotCompleteError):
         stored(allow=True)
-    assert rig.raw.read_bytes(key=key) == _A
+    # Staged forgotten bytes are not left behind for no record to erase.
+    assert list(rig.raw.iter_keys(prefix="uploads/")) == []
     rig.settle()
+    rig.raw.write_bytes(key=key, content=_A, storage_class="hot")
     readded = stored(allow=True)
     assert readded.created and readded.doc_id != uploaded.doc_id
     assert rig.release(forget_id)["released_hashes"] == [_hash(_A)]
