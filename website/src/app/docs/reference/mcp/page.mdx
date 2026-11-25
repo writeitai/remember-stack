@@ -912,9 +912,10 @@ are removed first; the rest of the file is kept. Codex loads a project's
 
 ### Antigravity
 
-`<project>/.agents/mcp_config.json`, always with a stdio
-`mcpServers.remember` entry like Cursor's, and a skill file `<project>/.agents/skills/remember/SKILL.md`,
-replacing any earlier version:
+Setup writes a stdio `mcpServers.remember` entry in
+`<project>/.agents/mcp_config.json`. If `<project>/.agents/skills/remember/SKILL.md`
+is missing, setup creates it with the starter guidance below. Setup preserves
+an existing skill, including one from the [skill installer](/docs/start/skills).
 
 ```markdown
 ---

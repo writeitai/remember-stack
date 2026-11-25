@@ -605,9 +605,9 @@ workflow and instructions for recovering failed requests.
 Agents use memory best when they follow one order: resolve the entity,
 then ask for facts, then fall back to claims and sources, then to SQL.
 `remember setup` writes this guidance as a Cursor rule
-(`.cursor/rules/remember.mdc`) and an Antigravity skill
-(`.agents/skills/remember/SKILL.md`). For other agents, put this in the
-system prompt or project instructions:
+(`.cursor/rules/remember.mdc`). For Antigravity, setup creates a starter skill
+(`.agents/skills/remember/SKILL.md`) if none is installed. You can also add
+this guidance to your agent's system prompt or project instructions:
 
 ```text
 You have a project memory available through the "remember" tools.
@@ -21667,9 +21667,10 @@ are removed first; the rest of the file is kept. Codex loads a project's
 
 ### Antigravity
 
-`<project>/.agents/mcp_config.json`, always with a stdio
-`mcpServers.remember` entry like Cursor's, and a skill file `<project>/.agents/skills/remember/SKILL.md`,
-replacing any earlier version:
+Setup writes a stdio `mcpServers.remember` entry in
+`<project>/.agents/mcp_config.json`. If `<project>/.agents/skills/remember/SKILL.md`
+is missing, setup creates it with the starter guidance below. Setup preserves
+an existing skill, including one from the [skill installer](https://remember.dev/docs/start/skills).
 
 ```markdown
 ---
