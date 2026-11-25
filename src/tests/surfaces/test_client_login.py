@@ -538,3 +538,60 @@ def test_unavailable_metadata_names_the_url(issuer: FakeIssuer) -> None:
 def test_issuer_must_be_https() -> None:
     with pytest.raises(IssuerError, match="https"):
         fetch_issuer_metadata("http://issuer.example", http=httpx.Client())
+
+
+def test_json_account_commands_keep_the_key_and_device_token_out_of_output(
+    issuer: FakeIssuer, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Account results are parseable independently of the browser instructions."""
+    assert main(["--json", "whoami"]) == 1
+    missing = capsys.readouterr()
+    assert not missing.out
+    assert json.loads(missing.err)["error"]["code"] == "missing_credentials"
+
+    assert main(["login", "--issuer", ISSUER, "--json"]) == 0
+    login = capsys.readouterr()
+    stored = load_credentials()
+    assert stored is not None and stored.expires_at is not None
+    assert json.loads(login.out) == {
+        "issuer": ISSUER,
+        "key_id": "key-new",
+        "expires_at": stored.expires_at.isoformat(),
+    }
+    assert "ABCD-EFGH" in login.err
+    assert issuer.issued_key not in login.out + login.err
+    assert "Waiting for approval" not in login.out
+
+    assert main(["whoami", "--json"]) == 0
+    identity = capsys.readouterr()
+    assert json.loads(identity.out)["issuer"] == ISSUER
+    assert issuer.issued_key not in identity.out + identity.err
+
+    assert main(["--json", "switch", "notes"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "name": "notes",
+        "project": "p-notes",
+    }
+    assert main(["logout", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"removed": True}
+
+
+@pytest.mark.parametrize(
+    ("issuer_error", "public_suffix"),
+    [("invalid_client", " (invalid_client)"), ("device-secret", "")],
+)
+def test_json_login_keeps_only_public_oauth_error_codes(
+    issuer: FakeIssuer,
+    capsys: pytest.CaptureFixture[str],
+    issuer_error: str,
+    public_suffix: str,
+) -> None:
+    """Expose known OAuth codes while ignoring arbitrary value echoes."""
+    issuer.poll_script = [issuer_error]
+    assert main(["login", "--issuer", ISSUER, "--json"]) == 1
+    captured = capsys.readouterr()
+    assert not captured.out
+    diagnostic = json.loads(captured.err.splitlines()[-1])["error"]
+    assert diagnostic["code"] == "device_grant_failed"
+    assert diagnostic["detail"] == "token polling failed with HTTP 400" + public_suffix
+    assert "device-secret" not in captured.err

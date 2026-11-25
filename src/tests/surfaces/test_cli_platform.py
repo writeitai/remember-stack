@@ -346,7 +346,7 @@ def test_setup_handles_malformed_cursor_json_gracefully(
     assert exit_code == 1
 
     captured = capsys.readouterr()
-    assert "error: Cursor: Existing" in captured.err
+    assert "Cursor: Existing" in captured.err
     assert "contains invalid JSON" in captured.err
     assert "Traceback" not in captured.err
 
@@ -662,6 +662,168 @@ def test_setup_waits_for_a_concurrent_login_and_keeps_its_key(
     login.join(5)
     setup.join(5)
     assert result == [1]
-    assert "run `remember logout`" in capsys.readouterr().err
+    assert "Run `remember logout`" in capsys.readouterr().err
     stored = load_credentials()
     assert stored is not None and stored.issuer == "https://issuer.test"
+
+
+def test_machine_output_and_recovery_without_a_tty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive the installed CLI and MCP stdio against a controlled HTTP service."""
+    from http.server import BaseHTTPRequestHandler
+    from http.server import ThreadingHTTPServer
+    import subprocess
+    import sys
+    from threading import Thread
+
+    valid_key = "test-only-accepted-key"
+    invalid_key = "test-only-refused-key"
+    outcomes: list[int] = []
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("REMEMBER_API_KEY", raising=False)
+
+    class Engine(BaseHTTPRequestHandler):
+        """Serve repeated tag reads and echo the supplied credential on failure."""
+
+        def do_GET(self) -> None:
+            """Return a fixture response for the configured credential."""
+            authorization = self.headers.get("Authorization")
+            if authorization != f"Bearer {valid_key}":
+                status = 401
+                payload = {"detail": f"Key refused ({authorization or 'missing'})."}
+            elif self.path == "/deployment":
+                status = 200
+                payload = {"build_revision": "fixture", "tools": {}}
+            else:
+                status = outcomes.pop(0)
+                payload = (
+                    {"tags": []}
+                    if status == 200
+                    else {"detail": "Fixture deployment temporarily unavailable."}
+                )
+            body = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            """Keep the fixture's request log out of the command output."""
+
+    def run(*args: str, request: str | None = None) -> subprocess.CompletedProcess[str]:
+        """Invoke the CLI with a closed pipe or a single JSON-RPC request."""
+        return subprocess.run(
+            [sys.executable, "-m", "remember", *args],
+            input=request or "",
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=8,
+        )
+
+    setup = run(
+        "--json",
+        "setup",
+        "--self-hosted",
+        "--agent",
+        "cursor",
+        "--dir",
+        str(tmp_path),
+        "--dry-run",
+    )
+    assert setup.returncode == 0
+    assert json.loads(setup.stdout) == {
+        "backend": "self_hosted",
+        "dry_run": True,
+        "harnesses": ["cursor"],
+    }
+    assert not setup.stderr
+
+    invalid = run("query", "--json", "sql", "--max-rows", invalid_key, "SELECT 1")
+    assert invalid.returncode == 2
+    assert not invalid.stdout
+    assert json.loads(invalid.stderr)["error"]["code"] == "invalid_arguments"
+    assert invalid_key not in invalid.stderr
+
+    forget = run(
+        "documents", "forget", "00000000-0000-0000-0000-000000000001", "--json"
+    )
+    assert forget.returncode == 1
+    assert json.loads(forget.stderr)["error"]["code"] == "confirmation_required"
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Engine) as engine:
+        server = Thread(target=engine.serve_forever, daemon=True)
+        server.start()
+        try:
+            url = f"http://127.0.0.1:{engine.server_port}"
+
+            def call_tag_list(
+                *flags: str, arguments: dict[str, object] | None = None
+            ) -> tuple[bool, dict[str, object]]:
+                """Return the MCP tool result and payload from its stdio process."""
+                request = json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/call",
+                        "params": {"name": "list_tags", "arguments": arguments or {}},
+                    }
+                )
+                process = run("mcp", "--api-url", url, *flags, request=request + "\n")
+                assert process.returncode == 0  # A tool failure leaves MCP running.
+                assert not process.stderr
+                assert invalid_key not in process.stdout
+                result = json.loads(process.stdout)["result"]
+                return result["isError"], json.loads(result["content"][0]["text"])
+
+            invalid_call, invalid_payload = call_tag_list(arguments={"query": 5})
+            invalid_error = invalid_payload.get("error")
+            assert invalid_call and isinstance(invalid_error, dict)
+            assert invalid_error["code"] == "invalid_arguments"
+            assert invalid_error["retryable"] is False
+            assert "arguments" in invalid_error["agent_action"]
+            for flags in ((), ("--api-key", invalid_key)):
+                cli = run("tags", "list", "--json", "--api-url", url, *flags)
+                assert cli.returncode == 1 and not cli.stdout
+                cli_error = json.loads(cli.stderr)["error"]
+                mcp_failed, mcp = call_tag_list(*flags)
+                assert mcp_failed and mcp["error"] == cli_error
+                assert (cli_error["code"], cli_error["retryable"]) == (
+                    "unauthorized",
+                    False,
+                )
+                assert "remember login" in cli_error["agent_action"]
+                assert invalid_key not in cli.stderr
+
+            doctor = run("doctor", "--json", "--api-url", url, "--api-key", valid_key)
+            assert doctor.returncode == 0, doctor.stderr
+            report = json.loads(doctor.stdout)
+            assert report["ok"] is True
+            assert any(
+                check["name"] == "engine" and check["ok"] for check in report["checks"]
+            )
+            assert valid_key not in doctor.stdout + doctor.stderr
+
+            outcomes[:] = [503, 503, 200, 200]
+            flags = ("--api-url", url, "--api-key", valid_key)
+            failed = run("--json", "tags", "list", *flags)
+            assert failed.returncode == 1 and not failed.stdout
+            transient = json.loads(failed.stderr)["error"]
+            assert (transient["code"], transient["retryable"]) == (
+                "engine_unavailable",
+                True,
+            )
+            assert "back-off" in transient["agent_action"]
+            assert call_tag_list("--api-key", valid_key) == (True, {"error": transient})
+
+            recovered = run("--json", "tags", "list", *flags)
+            assert recovered.returncode == 0
+            assert json.loads(recovered.stdout) == {"tags": []}
+            assert not recovered.stderr
+            assert call_tag_list("--api-key", valid_key) == (False, {"tags": []})
+        finally:
+            engine.shutdown()
+            server.join()

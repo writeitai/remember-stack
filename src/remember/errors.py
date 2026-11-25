@@ -7,11 +7,27 @@ cases a caller branches on.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 from uuid import UUID
 
 if TYPE_CHECKING:
     from remember.models import PipelineReadinessReport
+
+
+def redact_diagnostic(text: str, *, secrets: tuple[str, ...] = ()) -> str:
+    """Remove credentials from diagnostic text, including echoed auth values."""
+    candidates = {value for value in secrets if value}
+    for value in tuple(candidates):
+        scheme, _, token = value.partition(" ")
+        if scheme.lower() == "bearer" and token.strip():
+            candidates.add(token.strip())
+    for value in sorted(candidates, key=len, reverse=True):
+        for spelling in {value, quote(value, safe=""), json.dumps(value)[1:-1]}:
+            text = text.replace(spelling, "[redacted]")
+    return re.sub(r"(https?://)[^/\s@]+@", r"\1[redacted]@", text)
 
 
 class MemoryApiError(RuntimeError):

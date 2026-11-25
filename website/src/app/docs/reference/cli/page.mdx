@@ -120,9 +120,39 @@ remember query "Who owns the billing migration?"
 
 ### Output
 
-Commands print their results to standard output: JSON for memory
-commands<Cloud>, plain text for account commands</Cloud>. Warnings and errors go to standard error, so
-you can pipe the output into `jq` safely.
+Pass `--json` before or after the command. A completed command writes one JSON
+value to stdout, with the protocol streams listed below as exceptions. Diagnostics,
+warnings and progress go to stderr. Check the exit status before using the result.
+
+```bash
+remember setup --json --self-hosted --agent cursor --dry-run
+remember --json tags list
+remember --json --version
+```
+
+| Command | JSON output |
+|---|---|
+| Memory commands and engine `ops` | Their documented result object. `operations list` and `connectors list` return arrays in JSON mode, including `[]` when empty. They keep one object per line in default mode. |
+| `setup` | `backend` (`cloud` or `self_hosted`), `dry_run` and the `harnesses` array. Harness IDs are `cursor`, `agy`, `codex`, `claude_code` and `claude_desktop`. JSON mode skips the backend question and requires an existing hosted key, `--headless`, or `--dry-run` for hosted setup. |
+| `doctor` | `version`, overall `ok` and `checks`. Each check contains `name`, `ok` and `detail`. A failed check still produces the report and exits nonzero. |
+| `login` | `issuer`, `key_id` and `expires_at` after approval. Instructions and the short browser approval code go to stderr. Complete the browser step while the command polls. |
+| `whoami` | `api_url` for a stored self-hosted connection. For a hosted key, `issuer`, `key_id`, `expires_at`, `projects`, `permissions`, `default_project` and `account` when available. |
+| `switch` | `project` (the new default project's ID) and `name`. |
+| `logout` | `removed` is true when the stored entry was removed and false when no entry was present. |
+| `unmount` | `{"unmounted":true}` on success. |
+| `--version` | `version`. |
+| `mcp`, `mount` | MCP stdout carries its JSON-RPC messages in stdio mode. Mount stdout carries newline-delimited JSON events as they happen. `--json` gives command-level failures the same stderr format as other commands. |
+| `--help` | Command help text. |
+
+In JSON mode a failure emits a JSON object under `error` on stderr. Read
+`code`, `retryable` and `agent_action` to choose the next step. Other stderr
+lines can contain progress or warnings. See [CLI and MCP errors](/docs/reference/errors#mcp-tool-errors).
+
+For SQL result reports, read `termination_reason` to tell whether the
+statement completed. See [SQL query results](/docs/reference/http-api/query#how-results-and-errors-come-back).
+
+For a confirmed permanent forget in a script, pass `--yes`. Without that flag,
+JSON mode exits with `confirmation_required` before sending the request.
 
 <Cloud>
 
@@ -583,7 +613,8 @@ Writes each coding agent's MCP entry for Remember.
 `--cloud` asks the issuer for its MCP endpoint (`remember_mcp_endpoint` in
 its metadata) and points each agent at it. With no stored key and no
 `REMEMBER_API_KEY`, it runs [`remember login`](#remember-login) first,
-except with `--headless` or `--dry-run`. Only a key minted by the selected
+except with `--headless` or `--dry-run`. With `--json`, setup directs the caller
+to run login separately when a key is needed. Only a key minted by the selected
 issuer counts: a stored key from elsewhere (or a self-hosted entry) is
 replaced by that login, and a `REMEMBER_API_KEY` from elsewhere is refused. It refuses `--api-key`,
 `--api-url` and `--mcp-url`: a remember.dev key comes from `remember login`

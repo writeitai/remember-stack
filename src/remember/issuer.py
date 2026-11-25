@@ -50,6 +50,18 @@ DEVICE_GRANT_TYPE: Final = "urn:ietf:params:oauth:grant-type:device_code"
 _MAX_REDIRECTS: Final = 3
 _POLL_CAP_SECONDS: Final = 30.0
 _SLOW_DOWN_STEP_SECONDS: Final = 5.0
+_PUBLIC_OAUTH_ERRORS: Final = frozenset(
+    {
+        "invalid_client",
+        "invalid_grant",
+        "invalid_request",
+        "invalid_scope",
+        "server_error",
+        "temporarily_unavailable",
+        "unauthorized_client",
+        "unsupported_grant_type",
+    }
+)
 
 
 class IssuerError(MemoryApiError):
@@ -441,7 +453,7 @@ def poll_for_key(
             raise DeviceGrantError(
                 detail=(
                     f"token polling failed with HTTP {response.status_code}"
-                    + (f" ({error_code})" if error_code else "")
+                    + (f" ({error_code})" if error_code in _PUBLIC_OAUTH_ERRORS else "")
                 )
             )
 
@@ -455,9 +467,7 @@ def _issued_key(response: httpx.Response) -> IssuedKey:
             detail="the issuer returned an unusable token response"
         ) from error
     if body.token_type.lower() != "bearer":
-        raise DeviceGrantError(
-            detail=f"the issuer returned token_type {body.token_type!r}, not Bearer"
-        )
+        raise DeviceGrantError(detail="the issuer returned an unsupported token type")
     key = body.access_token.get_secret_value()
     claims = signed_key_claims(key)
     expires_at = claims.expires_at if claims is not None else None

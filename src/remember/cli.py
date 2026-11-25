@@ -14,6 +14,7 @@ from importlib import import_module
 import json
 from pathlib import Path
 import sys
+from typing import NoReturn
 from uuid import UUID
 
 import httpx
@@ -25,15 +26,24 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from remember import __version__
+from remember.cli_output import CommandFailure
+from remember.cli_output import diagnostic_secrets
+from remember.cli_output import failure
+from remember.cli_output import report_error
+from remember.cli_output import usage_failure
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.connection import Connection
 from remember.credentials import CredentialError
 from remember.credentials import DurabilityUnconfirmed
+from remember.errors import redact_diagnostic
 from remember.errors import StoredKeyRefused
 from remember.issuer import DEFAULT_ISSUER
+from remember.issuer import DeviceGrantError
 from remember.issuer import fetch_issuer_metadata
+from remember.issuer import IssuerError
 from remember.issuer import same_origin
+from remember.mcp_tools import map_error
 from remember.models import ConnectorCreate
 from remember.models import DocumentSearchFilters
 from remember.models import DocumentTagFilter
@@ -67,47 +77,59 @@ class _ClientRequestSettings(BaseSettings):
 
 def main(argv: list[str] | None = None) -> int:
     """The ``remember`` entry point; returns the process exit code."""
-    from pydantic import ValidationError
-
+    effective_argv = list(sys.argv[1:] if argv is None else argv)
+    options = (
+        effective_argv[: effective_argv.index("--")]
+        if "--" in effective_argv
+        else effective_argv
+    )
+    machine = "--json" in options
     parser: argparse.ArgumentParser | None = None
+    args: argparse.Namespace | None = None
     try:
         _settle_journal()
-        effective_argv = list(sys.argv[1:] if argv is None else argv)
         internal_ops = _InternalOpsSettings.model_validate({}).internal_ops
-        if effective_argv:
-            subcmd = effective_argv[0]
-            if subcmd == "ops" and not internal_ops:
-                print(
-                    "error: 'remember ops' runs inside the engine container, "
-                    "for example 'docker compose exec api remember ops inspect "
-                    "--deployment <id>'. From a client, use "
-                    "'remember operations list|run'.",
-                    file=sys.stderr,
-                )
-                return 1
-            if subcmd == "query":
-                known_query_subcmds = {
-                    "text",
-                    "sql",
-                    "explain-sql",
-                    "space",
-                    "search-space",
-                    "list-saved",
-                    "describe-saved",
-                    "run-saved",
-                    "adjacent-chunks",
-                }
-                # Only the word right after `query` can name a subcommand;
-                # anywhere else it is part of the question or a flag value.
-                has_subcmd = (
-                    len(effective_argv) > 1 and effective_argv[1] in known_query_subcmds
-                )
-                has_help = any(arg in ("-h", "--help") for arg in effective_argv[1:])
-                if not has_subcmd and not has_help:
-                    effective_argv.insert(1, "text")
+        command_index = next(
+            (index for index, arg in enumerate(effective_argv) if arg != "--json"),
+            len(effective_argv),
+        )
+        subcmd = next(iter(effective_argv[command_index:]), None)
+        if subcmd == "ops" and not internal_ops:
+            raise failure(
+                code="command_unavailable",
+                detail="'remember ops' runs inside the engine container",
+                action=(
+                    "Run 'docker compose exec api remember ops inspect --deployment <id>'"
+                    " there, or use 'remember operations list|run' from a client."
+                ),
+            )
+        if subcmd == "query":
+            known_query_subcmds = {
+                "text",
+                "sql",
+                "explain-sql",
+                "space",
+                "search-space",
+                "list-saved",
+                "describe-saved",
+                "run-saved",
+                "adjacent-chunks",
+            }
+            # Skip output flags before looking for an explicit query command.
+            query_index = command_index + 1
+            while effective_argv[query_index : query_index + 1] == ["--json"]:
+                query_index += 1
+            has_subcmd = (
+                query_index < len(effective_argv)
+                and effective_argv[query_index] in known_query_subcmds
+            )
+            has_help = any(arg in ("-h", "--help") for arg in options[query_index:])
+            if not has_subcmd and not has_help:
+                effective_argv.insert(query_index, "text")
 
-        parser = _build_parser(include_internal_ops=internal_ops)
+        parser = _build_parser(include_internal_ops=internal_ops, machine=machine)
         args = parser.parse_args(effective_argv)
+        args.json = machine
 
         handlers = {
             "setup": _run_setup,
@@ -131,24 +153,26 @@ def main(argv: list[str] | None = None) -> int:
         handler = handlers.get(args.command)
         if handler is not None:
             return handler(args)
+    except _ParseFailure as error:
+        diagnostic = usage_failure(str(error))
+        report_error(error=diagnostic.error, machine=machine)
+        if not machine:
+            raise SystemExit(diagnostic.exit_code) from None
+        return diagnostic.exit_code
+    except CommandFailure as error:
+        report_error(
+            error=error.error, machine=machine, key=getattr(args, "api_key", None)
+        )
+        return error.exit_code
     except KeyboardInterrupt:
-        return 130
-    except ValidationError as error:
-        errors = error.errors()
-        if errors:
-            first = errors[0]
-            loc = ".".join(str(x) for x in first.get("loc", []))
-            msg = first.get("msg", str(error))
-            print(
-                f"error: Invalid environment configuration ({loc}): {msg}",
-                file=sys.stderr,
-            )
-        else:
-            print(f"error: Invalid environment configuration: {error}", file=sys.stderr)
-        return 1
-    except StoredKeyRefused as error:
-        print(f"error: {error.detail}", file=sys.stderr)
-        return 2
+        error = failure(
+            code="interrupted",
+            detail="Command interrupted.",
+            action="Check the operation's outcome before rerunning it.",
+            exit_code=130,
+        )
+        report_error(error=error.error, machine=machine)
+        return error.exit_code
     except (
         MemoryApiError,
         CredentialError,
@@ -158,11 +182,87 @@ def main(argv: list[str] | None = None) -> int:
         ValueError,
         OSError,
     ) as error:
-        print(f"error: {error}", file=sys.stderr)
+        diagnostic = _command_error(error)
+        report_error(
+            error=diagnostic.error, machine=machine, key=getattr(args, "api_key", None)
+        )
+        return diagnostic.exit_code
+    except Exception:  # noqa: BLE001 — CLI process boundary
+        report_error(
+            error=failure(
+                code="internal_error",
+                detail="An unexpected command failure occurred.",
+                action="Report the command and Remember version, omitting credentials.",
+            ).error,
+            machine=machine,
+        )
         return 1
-    if parser is not None:
+    if parser is not None and not machine:
         parser.print_help()
+    report_error(error=usage_failure("A command is required.").error, machine=machine)
     return 2
+
+
+def _command_error(error: Exception) -> CommandFailure:
+    """Convert client and local errors to an actionable command failure."""
+    if isinstance(error, StoredKeyRefused):
+        return failure(
+            code="stored_key_refused",
+            detail=error.detail,
+            action="Pass the destination's key explicitly with REMEMBER_API_KEY or --api-key.",
+            exit_code=2,
+        )
+    if isinstance(error, CredentialError):
+        return failure(
+            code="credentials_unusable",
+            detail=str(error),
+            action="Check the credential file or run `remember login`.",
+        )
+    if isinstance(error, DurabilityUnconfirmed):
+        return failure(
+            code="durability_unconfirmed",
+            detail=str(error),
+            action="Check the credential directory and disk, then inspect the current sign-in state.",
+        )
+    if isinstance(error, DeviceGrantError):
+        return failure(
+            code="device_grant_failed",
+            detail=error.detail,
+            action="Run `remember login` again and approve the request in the browser.",
+        )
+    if isinstance(error, IssuerError):
+        return failure(
+            code="issuer_error",
+            detail=error.detail,
+            action="Check the issuer URL and network and retry.",
+        )
+    if isinstance(error, MemoryApiError):
+        return CommandFailure(error=map_error(error))
+    if isinstance(error, httpx.RequestError):
+        return CommandFailure(
+            error=map_error(ConnectionError("Network request failed."))
+        )
+    if isinstance(error, ValidationError):
+        fields = ", ".join(
+            ".".join(str(part) for part in item["loc"])
+            for item in error.errors(include_input=False, include_context=False)
+        )
+        return failure(
+            code="invalid_configuration",
+            detail=f"Invalid environment configuration or input ({fields}).",
+            action="Check the named settings or arguments and rerun.",
+        )
+    if isinstance(error, (ValueError, httpx.InvalidURL)):
+        return failure(
+            code="invalid_arguments",
+            detail=str(error),
+            action="Check the command arguments and connection settings and rerun.",
+        )
+    return failure(
+        code="local_io_error",
+        detail=str(error),
+        action="Check the local files, permissions and available disk space.",
+    )
 
 
 def _issuer_http() -> httpx.Client:
@@ -192,11 +292,7 @@ def _run_setup(args: argparse.Namespace) -> int:
     """Bootstrap AI coding agent harnesses (D108)."""
     from remember.setup import run_setup
 
-    try:
-        return run_setup(args)
-    except (RuntimeError, ValueError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
+    return run_setup(args)
 
 
 def _run_doctor(args: argparse.Namespace) -> int:
@@ -208,41 +304,62 @@ def _run_doctor(args: argparse.Namespace) -> int:
     from remember.credentials import load_credentials
     from remember.setup import get_claude_desktop_config_path
 
-    print(f"Remember Doctor (v{__version__})\n")
-    all_ok = True
+    checks: list[dict[str, object]] = []
+    diagnostic: CommandFailure | None = None
+    secrets = diagnostic_secrets(key=args.api_key)
+
+    def check(*, name: str, detail: str, ok: bool = True) -> None:
+        """Capture one doctor check and render its terminal form if requested."""
+        detail = redact_diagnostic(detail, secrets=secrets)
+        checks.append({"name": name, "ok": ok, "detail": detail})
+        if not args.json:
+            print(detail)
+
+    if not args.json:
+        print(f"Remember Doctor (v{__version__})\n")
 
     # 1. Launcher resolution
     rem_cand = shutil.which("remember")
     uvx_cand = shutil.which("uvx")
     if rem_cand:
         resolved = Path(rem_cand).resolve().as_posix()
-        print(f"[✓] 'remember' binary found: {resolved}")
+        check(name="launcher", detail=f"[✓] 'remember' binary found: {resolved}")
     elif uvx_cand:
         resolved = Path(uvx_cand).resolve().as_posix()
-        print(f"[✓] 'uvx' runner found: {resolved} (remember available via uvx)")
-    else:
-        print(
-            "[!] Neither 'remember' nor 'uvx' found on PATH. Run 'uv tool install remember'."
+        check(
+            name="launcher",
+            detail=f"[✓] 'uvx' runner found: {resolved} (remember available via uvx)",
         )
-        all_ok = False
+    else:
+        check(
+            name="launcher",
+            ok=False,
+            detail="[!] Neither 'remember' nor 'uvx' found on PATH. Run 'uv tool install remember'.",
+        )
 
     # 2. Stored credentials
     cred_file = credentials_path()
     try:
         stored = load_credentials()
     except CredentialError as err:
-        print(f"[!] {err}")
-        stored = None
-        all_ok = False
-    if stored is None:
-        print(f"[-] No stored credentials at {cred_file}")
-    elif stored.issuer:
-        expires = stored.expires_at.isoformat() if stored.expires_at else "unknown"
-        print(
-            f"[✓] Signed in to {stored.issuer} (key {stored.key_id}, expires {expires})"
-        )
+        check(name="credentials", ok=False, detail=f"[!] {err}")
+        diagnostic = _command_error(err)
     else:
-        print(f"[✓] Self-hosted engine stored: {stored.api_url}")
+        if stored is None:
+            check(
+                name="credentials", detail=f"[-] No stored credentials at {cred_file}"
+            )
+        elif stored.issuer:
+            expires = stored.expires_at.isoformat() if stored.expires_at else "unknown"
+            check(
+                name="credentials",
+                detail=f"[✓] Signed in to {stored.issuer} (key {stored.key_id}, expires {expires})",
+            )
+        else:
+            check(
+                name="credentials",
+                detail=f"[✓] Self-hosted engine stored: {stored.api_url}",
+            )
 
     # 3. Engine connectivity and authentication, resolved like every command
     try:
@@ -255,19 +372,26 @@ def _run_doctor(args: argparse.Namespace) -> int:
             start_t = time.perf_counter()
             info = client.deployment_build_info()
             elapsed = int((time.perf_counter() - start_t) * 1000)
-        print(
-            f"[✓] Engine reachable and authenticated ({elapsed}ms, "
-            f"build {info.build_revision or 'unknown'})"
+        check(
+            name="engine",
+            detail=(
+                f"[✓] Engine reachable and authenticated ({elapsed}ms, "
+                f"build {info.build_revision or 'unknown'})"
+            ),
         )
         for line in _tool_version_mismatches(info.tools):
-            print(f"[!] {line}")
-            all_ok = False
-    except (MemoryApiError, CredentialError, ValueError) as err:
-        print(f"[!] Engine check failed: {err}")
-        all_ok = False
+            check(name="tool_version", ok=False, detail=f"[!] {line}")
+    except (MemoryApiError, httpx.InvalidURL, ValueError) as err:
+        diagnostic = _command_error(err)
+        check(
+            name="engine",
+            ok=False,
+            detail=f"[!] Engine check failed: {diagnostic.error.detail}",
+        )
 
     # 4. Harness configurations & syntax validation
-    print("\nCoding Agent Harnesses:")
+    if not args.json:
+        print("\nCoding Agent Harnesses:")
     harness_files = (
         (
             "Cursor",
@@ -288,11 +412,22 @@ def _run_doctor(args: argparse.Namespace) -> int:
     )
     for label, path, hint in harness_files:
         ok, line = _check_harness_file(label=label, path=path, hint=hint)
-        print(line)
-        all_ok = all_ok and ok
+        check(name=label, ok=ok, detail=line)
 
-    print()
-    return 0 if all_ok else 1
+    all_ok = all(item["ok"] for item in checks)
+    if args.json:
+        print(json.dumps({"version": __version__, "ok": all_ok, "checks": checks}))
+    else:
+        print()
+    if diagnostic is not None:
+        raise diagnostic
+    if not all_ok:
+        raise failure(
+            code="doctor_failed",
+            detail="One or more local or tool-version checks failed.",
+            action="Review the doctor report and resolve the failed checks before rerunning.",
+        )
+    return 0
 
 
 def _check_harness_file(
@@ -344,7 +479,7 @@ def _run_whoami(args: argparse.Namespace) -> int:
     from remember.login import whoami
 
     with _issuer_http() as http:
-        return whoami(http=http)
+        return whoami(http=http, machine=args.json)
 
 
 def _run_switch(args: argparse.Namespace) -> int:
@@ -352,7 +487,7 @@ def _run_switch(args: argparse.Namespace) -> int:
     from remember.login import switch
 
     with _issuer_http() as http:
-        switch(project=args.project, http=http)
+        switch(project=args.project, http=http, machine=args.json)
     return 0
 
 
@@ -367,12 +502,8 @@ def _run_ops(args: argparse.Namespace) -> int:
         operations_type = import_module(
             "rememberstack.profiles.selfhost_operations"
         ).SelfHostOperations
-    except ModuleNotFoundError:
-        print(
-            "error: ops commands require server container environment dependencies",
-            file=sys.stderr,
-        )
-        return 1
+    except ModuleNotFoundError as error:
+        raise _missing_ops_dependencies() from error
 
     if args.ops_command == "cost-export":
         return _run_cost_export(deployment_id=args.deployment, args=args)
@@ -402,11 +533,23 @@ def _run_ops(args: argparse.Namespace) -> int:
             print(replayed.model_dump_json())
             return 0
         raise AssertionError(f"unhandled ops command {args.ops_command!r}")
-    except (WorkLedgerError, ValueError, OSError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
+    except WorkLedgerError as error:
+        raise failure(
+            code="work_ledger_error",
+            detail=str(error),
+            action="Check the deployment and processing row with `remember ops inspect`.",
+        ) from error
     finally:
         operations.close()
+
+
+def _missing_ops_dependencies() -> CommandFailure:
+    """Explain where to run an operator command whose server imports are missing."""
+    return failure(
+        code="command_unavailable",
+        detail="Ops commands require server container environment dependencies.",
+        action="Run the command inside the ghcr.io/writeitai/remember-stack engine container.",
+    )
 
 
 def _run_graph_catalog_ensure() -> int:
@@ -416,12 +559,8 @@ def _run_graph_catalog_ensure() -> int:
 
         from rememberstack.spine.graph_catalog import ensure_graph_catalog
         from rememberstack.spine.settings import load_database_settings
-    except ModuleNotFoundError:
-        print(
-            "error: ops commands require the engine container environment (ghcr.io/writeitai/remember-stack)",
-            file=sys.stderr,
-        )
-        return 1
+    except ModuleNotFoundError as error:
+        raise _missing_ops_dependencies() from error
 
     engine = create_engine(load_database_settings().sqlalchemy_url())
     try:
@@ -439,8 +578,11 @@ def _run_graph_catalog_ensure() -> int:
         )
         return 0
     except RuntimeError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
+        raise failure(
+            code="graph_catalog_error",
+            detail="The graph catalog could not be ensured.",
+            action="Check database access and migrations, then rerun graph catalog ensure.",
+        ) from error
     finally:
         engine.dispose()
 
@@ -455,36 +597,23 @@ def _run_cost_export(*, deployment_id: UUID, args: argparse.Namespace) -> int:
         from rememberstack.spine.cost_export import spine_deployment_id
         from rememberstack.spine.cost_export import SqlCostExportReader
         from rememberstack.spine.settings import load_database_settings
-    except ModuleNotFoundError:
-        print(
-            "error: ops commands require the engine container environment (ghcr.io/writeitai/remember-stack)",
-            file=sys.stderr,
-        )
-        return 1
+    except ModuleNotFoundError as error:
+        raise _missing_ops_dependencies() from error
 
     engine = create_engine(load_database_settings().sqlalchemy_url())
     try:
         try:
             spine_id = spine_deployment_id(engine=engine)
         except CostExportConfigError as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 2
+            raise usage_failure(str(error)) from error
         if spine_id != deployment_id:
-            print(
-                "error: --deployment does not match the spine deployment",
-                file=sys.stderr,
-            )
-            return 2
+            raise usage_failure("--deployment does not match the spine deployment.")
         reader = SqlCostExportReader(engine=engine)
         page = reader.read_page(
             deployment_id=deployment_id, cursor=args.cursor, limit=args.limit
         )
     except CostExportCursorError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
-    except (ValueError, OSError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
+        raise usage_failure(str(error)) from error
     finally:
         engine.dispose()
     print(page.model_dump_json())
@@ -501,14 +630,19 @@ def _run_operations(args: argparse.Namespace) -> int:
     """List or run the closed assured-operation catalog."""
     with _cli_memory_client(args) as client:
         if args.operation_command == "list":
-            for descriptor in client.list_operations():
-                print(descriptor.model_dump_json())
+            descriptors = client.list_operations()
+            if args.json:
+                print(
+                    json.dumps([item.model_dump(mode="json") for item in descriptors])
+                )
+            else:
+                for descriptor in descriptors:
+                    print(descriptor.model_dump_json())
             return 0
         try:
             arguments = dict(_split_operation_arg(pair) for pair in args.arg)
         except ValueError as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 2
+            raise usage_failure(str(error)) from error
         print(
             client.run_operation(
                 name=args.operation, arguments=arguments, layers=args.layers
@@ -538,8 +672,7 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
                 documents = _tag_documents(args)
             except ValidationError as error:
                 problems = "; ".join(item["msg"] for item in error.errors())
-                print(f"error: {problems}", file=sys.stderr)
-                return 2
+                raise usage_failure(problems) from error
             if getattr(args, "combined", False):
                 ans = client.combined_context(
                     query=query_text, layers=args.layers, documents=documents
@@ -642,10 +775,8 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
             print(res.model_dump_json(indent=2))
             return 0
     except (ValueError, json.JSONDecodeError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
-    print(f"error: unknown query command {command!r}", file=sys.stderr)
-    return 2
+        raise usage_failure(str(error)) from error
+    raise usage_failure("Unknown query command.")
 
 
 def _json_list(raw: str | None) -> list[object]:
@@ -679,11 +810,13 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 allow_forgotten=args.allow_forgotten,
             )
     except OSError as error:
-        print(f"error: could not read {args.file}: {error}", file=sys.stderr)
-        return 1
+        raise failure(
+            code="file_unreadable",
+            detail=f"Could not read {args.file}: {error}",
+            action="Check that the file exists and is readable, then rerun.",
+        ) from error
     except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
+        raise usage_failure(str(error)) from error
     print(result.model_dump_json())
     if result.parked == "no_route":
         print(
@@ -698,23 +831,19 @@ def _run_ingest(args: argparse.Namespace) -> int:
 def _run_documents(args: argparse.Namespace) -> int:
     """List, search, tag, archive, unarchive or forget the deployment's documents."""
     if args.documents_command == "forget" and not (
-        args.yes or _confirmed_forget(doc_id=args.doc_id)
+        args.yes or (not args.json and _confirmed_forget(doc_id=args.doc_id))
     ):
-        print(
-            "error: not confirmed; nothing was forgotten (--yes skips the question)",
-            file=sys.stderr,
+        raise failure(
+            code="confirmation_required",
+            detail="Not confirmed; nothing was forgotten.",
+            action="Get the user's confirmation, then rerun with --yes.",
         )
-        return 1
     if (
         args.documents_command == "search"
         and args.query is not None
         and args.cursor is not None
     ):
-        print(
-            "error: cursor pages filter-only searches; drop query or cursor",
-            file=sys.stderr,
-        )
-        return 2
+        raise usage_failure("Cursor pages filter-only searches; drop query or cursor.")
     tag_filter = None
     if args.documents_command == "search" and (
         args.tag or args.any_tag or args.not_tag
@@ -725,8 +854,7 @@ def _run_documents(args: argparse.Namespace) -> int:
             )
         except ValidationError as error:
             problems = "; ".join(item["msg"] for item in error.errors())
-            print(f"error: {problems}", file=sys.stderr)
-            return 2
+            raise usage_failure(problems) from error
     with _cli_memory_client(args) as client:
         if args.documents_command == "search":
             # Ranked searches take k; browse lists take limit + cursor (D154).
@@ -770,8 +898,7 @@ def _run_documents(args: argparse.Namespace) -> int:
             return 0
         if args.documents_command == "tag":
             if args.set is not None and (args.add or args.remove):
-                print("error: --set excludes --add and --remove", file=sys.stderr)
-                return 2
+                raise usage_failure("--set excludes --add and --remove.")
             tags = client.update_document_tags(
                 doc_id=args.doc_id,
                 add=args.add,
@@ -821,8 +948,7 @@ def _run_tags(args: argparse.Namespace) -> int:
             tag = client.create_tag(name=args.name, description=args.description)
         elif args.tags_command == "update":
             if args.name is None and args.description is None:
-                print("error: give --name, --description or both", file=sys.stderr)
-                return 2
+                raise usage_failure("Give --name, --description or both.")
             tag = client.update_tag(
                 tag=args.tag, name=args.name, description=args.description
             )
@@ -836,8 +962,12 @@ def _run_connectors(args: argparse.Namespace) -> int:
     """Manage connector configuration on the deployment API."""
     with _cli_memory_client(args) as client:
         if args.connector_command == "list":
-            for connector in client.connectors():
-                print(connector.model_dump_json())
+            connectors = client.connectors()
+            if args.json:
+                print(json.dumps([item.model_dump(mode="json") for item in connectors]))
+            else:
+                for connector in connectors:
+                    print(connector.model_dump_json())
             return 0
         if args.connector_command == "add":
             try:
@@ -851,8 +981,7 @@ def _run_connectors(args: argparse.Namespace) -> int:
                     credential_ref=args.credential_ref,
                 )
             except ValueError as error:
-                print(f"error: {error}", file=sys.stderr)
-                return 2
+                raise usage_failure(str(error)) from error
             result = client.add_connector(connector=connector)
         elif args.connector_command == "pause":
             result = client.pause_connector(connector_id=args.connector_id)
@@ -899,23 +1028,23 @@ def _run_mcp(args: argparse.Namespace) -> int:
     )
     explicit_engine = connection.api_url_source in ("explicit", "environment")
     if connection.mcp_url and explicit_engine:
-        return _usage_error(
+        raise usage_failure(
             "give either an engine URL (--api-url / REMEMBER_API_URL) or a remote"
             " MCP URL (--remote-url / REMEMBER_MCP_URL), not both"
         )
     if args.transport == "http":
         if connection.mcp_url:
-            return _usage_error(
+            raise usage_failure(
                 "--transport http serves an engine; an HTTP client should connect"
                 f" to the remote MCP URL {connection.mcp_url} directly"
             )
         if args.api_key or args.project:
-            return _usage_error(
+            raise usage_failure(
                 "--transport http holds no key: each caller's Authorization"
                 " header is forwarded to the engine. Drop --api-key/--project"
             )
         if connection.api_url is None and connection.claims is not None:
-            return _usage_error(
+            raise usage_failure(
                 "--transport http needs the engine URL: pass --api-url or set"
                 " REMEMBER_API_URL"
             )
@@ -935,7 +1064,7 @@ def _run_mcp(args: argparse.Namespace) -> int:
             ).remember_mcp_endpoint
     if remote_url is not None:
         if args.layers is not None:
-            return _usage_error(
+            raise usage_failure(
                 "--layers narrows an engine-mode session; a remote MCP server"
                 " applies its own deployment's layers"
             )
@@ -961,13 +1090,16 @@ def _run_mcp_bridge(
     from remember.mcp_bridge import McpBridge
 
     if args.project:
-        return _usage_error(
+        raise usage_failure(
             "--project applies to engine mode; through a remote MCP endpoint the"
             " agent names the project per call (the `project` tool argument)"
         )
     if connection.key is None:
-        return _usage_error(
-            "bridge mode needs a key: run `remember login`, or set REMEMBER_API_KEY"
+        raise failure(
+            code="missing_credentials",
+            detail="Bridge mode needs an API key.",
+            action="Run `remember login`, or set REMEMBER_API_KEY.",
+            exit_code=2,
         )
     if connection.key_source == "file":
         issuer = (
@@ -1009,18 +1141,13 @@ def _layer_list(value: str) -> tuple[str, ...]:
     return layers
 
 
-def _usage_error(message: str) -> int:
-    print(f"error: {message}", file=sys.stderr)
-    return 2
-
-
 def operations_list(*, client: httpx.Client) -> int:
     """Print operations from an injected client (the parity-testable seam)."""
     try:
         for descriptor in MemoryClient(client=client).list_operations():
             print(descriptor.model_dump_json())
     except MemoryApiError as error:
-        print(f"error: {error}", file=sys.stderr)
+        report_error(error=map_error(error), machine=False)
         return 1
     return 0
 
@@ -1030,14 +1157,14 @@ def operations_run(*, client: httpx.Client, name: str, arg_pairs: list[str]) -> 
     try:
         arguments = dict(_split_operation_arg(pair) for pair in arg_pairs)
     except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
+        report_error(error=usage_failure(str(error)).error, machine=False)
         return 2
     try:
         result = MemoryClient(client=client).run_operation(
             name=name, arguments=arguments
         )
     except MemoryApiError as error:
-        print(f"error: {error}", file=sys.stderr)
+        report_error(error=map_error(error), machine=False)
         return 1
     print(result.model_dump_json())
     return 0
@@ -1088,7 +1215,6 @@ def _warn_if_expiring() -> None:
 def _run_login(args: argparse.Namespace) -> int:
     """RFC 8628 device login against the issuer; stores one key."""
     from remember.connection import resolve_connection
-    from remember.issuer import IssuerError
     from remember.login import login
 
     try:
@@ -1099,14 +1225,25 @@ def _run_login(args: argparse.Namespace) -> int:
 
         issuer = args.issuer or environment_issuer()
     issuer = issuer or DEFAULT_ISSUER
-    try:
-        with _issuer_http() as http:
-            stored = login(issuer=issuer, http=http)
-    except IssuerError as error:
-        print(f"error: {error.detail}", file=sys.stderr)
-        return 1
-    expires = stored.expires_at.isoformat() if stored.expires_at else "unknown"
-    print(f"Signed in to {stored.issuer}. Key {stored.key_id or ''} expires {expires}.")
+    with _issuer_http() as http:
+        stored = login(
+            issuer=issuer, http=http, progress=sys.stderr if args.json else None
+        )
+    expires = stored.expires_at.isoformat() if stored.expires_at else None
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "issuer": stored.issuer,
+                    "key_id": stored.key_id,
+                    "expires_at": expires,
+                }
+            )
+        )
+    else:
+        print(
+            f"Signed in to {stored.issuer}. Key {stored.key_id or ''} expires {expires or 'unknown'}."
+        )
     return 0
 
 
@@ -1115,7 +1252,10 @@ def _run_logout(args: argparse.Namespace) -> int:
     from remember.login import logout
 
     with _issuer_http() as http:
-        return logout(http=http)
+        removed = logout(http=http)
+    if args.json:
+        print(json.dumps({"removed": removed}))
+    return 0
 
 
 def _run_mount(args: argparse.Namespace) -> int:
@@ -1126,21 +1266,39 @@ def _run_mount(args: argparse.Namespace) -> int:
     _warn_if_expiring()
     connection = resolve_connection(api_key=args.api_key, project=args.project)
     with _issuer_http() as http:
-        return mount(args.directory, connection=connection, http=http)
+        code = mount(args.directory, connection=connection, http=http)
+    if code:
+        raise failure(
+            code="mount_failed",
+            detail=f"mountable exited with status {code}.",
+            action="Check the mount diagnostics and local mountpoint before retrying.",
+            exit_code=code,
+        )
+    return 0
 
 
 def _run_unmount(args: argparse.Namespace) -> int:
     """Unmount locally without obtaining another ticket."""
     from remember.mount import unmount
 
-    return unmount(args.directory)
+    code = unmount(args.directory, machine=args.json)
+    if code:
+        raise failure(
+            code="unmount_failed",
+            detail=f"mountable exited with status {code}.",
+            action="Check that the directory is a mountpoint and rerun unmount.",
+            exit_code=code,
+        )
+    if args.json:
+        print(json.dumps({"unmounted": True}))
+    return 0
 
 
 def _split_arg(pair: str) -> tuple[str, str]:
     """Split one ``key=value`` argument, or raise a clear error."""
     key, separator, value = pair.partition("=")
     if not separator or not key:
-        raise ValueError(f"argument {pair!r} is not key=value")
+        raise ValueError("Expected an argument in key=value form.")
     return key, value
 
 
@@ -1163,16 +1321,53 @@ def _add_tag_flags(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(flag, action="append", default=[], help=help_text)
 
 
-def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentParser:
+class _ParseFailure(ValueError):
+    """A credential-safe command grammar diagnostic."""
+
+
+class _CliParser(argparse.ArgumentParser):
+    """Expose the output option at each command level and report parse failures safely."""
+
+    def __init__(self, *, add_output_flag: bool = True, **kwargs: object) -> None:
+        """Set up one level of the command grammar."""
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        if add_output_flag:
+            self.add_argument(
+                "--json",
+                action="store_true",
+                default=argparse.SUPPRESS,
+                help="emit machine-readable results and errors",
+            )
+
+    def error(self, message: str) -> NoReturn:
+        """Identify the affected argument without echoing the supplied value."""
+        if message.startswith("the following arguments are required:"):
+            raise _ParseFailure(f"{message}. See {self.prog} --help.")
+        label, _, _ = message.partition(":")
+        cause = (
+            label + " is invalid"
+            if label.startswith("argument ")
+            else "Invalid arguments"
+        )
+        raise _ParseFailure(f"{cause} for {self.prog}. See {self.prog} --help.")
+
+
+def _build_parser(
+    *, include_internal_ops: bool = False, machine: bool = False
+) -> argparse.ArgumentParser:
     """Build the client-first command grammar."""
-    parser = argparse.ArgumentParser(
+    parser = _CliParser(
         prog="remember", description="Remember platform command-line interface"
     )
     parser.add_argument(
-        "--version", action="version", version=f"remember {__version__}"
+        "--version",
+        action="version",
+        version=json.dumps({"version": __version__})
+        if machine
+        else f"remember {__version__}",
     )
     commands = parser.add_subparsers(dest="command")
-    client_flags = argparse.ArgumentParser(add_help=False)
+    client_flags = _CliParser(add_help=False, add_output_flag=False)
     client_flags.add_argument(
         "--api-url",
         default=None,
