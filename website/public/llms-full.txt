@@ -417,8 +417,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.21.2](https://github.com/writeitai/remember-stack/releases/tag/v0.21.2)
-([on PyPI](https://pypi.org/project/remember/0.21.2/)).
+[v0.21.3](https://github.com/writeitai/remember-stack/releases/tag/v0.21.3)
+([on PyPI](https://pypi.org/project/remember/0.21.3/)).
 
 ## 3. Point the client at your endpoint
 
@@ -7178,8 +7178,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.21.2` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.2` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.21.3` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.21.3` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -7370,7 +7370,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.21.2
+git checkout v0.21.3
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -7382,7 +7382,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.21.2`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.21.3`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -10486,7 +10486,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.2/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.21.3/openapi.json).
 
 ## Base URL
 
@@ -19461,7 +19461,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
-This page describes the `remember` CLI (v0.21.2), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.21.3), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -21983,6 +21983,44 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## 0.21.3 (November 2026)
+
+**More image formats.** The `image_ocr_description` route now reads static
+WebP as uploaded, and converts GIF, TIFF, BMP, HEIC, AVIF and PSD to one PNG
+before OCR and the description. One image per file is read (the first frame
+or page, or a HEIC's primary image), and the result says when more were left
+out. The conversion runs in a separate process limited to 1.5 GiB
+of memory and 60 seconds; a file that exceeds either limit fails as
+unreadable. Route each type you want read in
+`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`.
+[File formats and converters](https://remember.dev/docs/self-hosting/converters) lists what each
+format keeps and its limits.
+
+**Zero-data-retention routing for embeddings and Jev.**
+`REMEMBERSTACK_OPENROUTER_ZDR` now also adds `zdr: true` to embedding
+requests, and the new `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`
+restricts embeddings to the hosts you list. Jev fact adjudication can run
+through OpenRouter with each deployment's own key
+(`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`), under the same setting. To also
+exclude endpoints with safety retention, enable ZDR only in your OpenRouter
+account or key settings. **Action needed:** a deployment that sets
+`REMEMBERSTACK_OPENROUTER_ZDR=true` and uses Jev now refuses to start unless
+Jev runs on the `openrouter` route, against `https://openrouter.ai`, with
+`REMEMBERSTACK_TYPESAFE_BACKUP=none`. Otherwise turn ZDR off.
+
+**Upload detection.** UTF-16 CSV and TSV files that start with a byte-order
+mark, `.eml` messages with an 8-bit body, legacy `.xls`, `.doc` and `.ppt`
+files uploaded without a type, and SPSS Portable (`.por`) files are now
+recognized and read instead of refused or carded. **Action needed:** a legacy
+Office file whose internal streams do not identify Word, Excel or PowerPoint
+is now refused with `ambiguous_office_format` even when its type is declared.
+Re-save it in Office, or export it to a current format.
+
+**Error codes.** More failures log one record with a stable `error_code`: the
+worker, the lease reaper, provider errors, the live graph and managed metering.
+[Observability](https://remember.dev/docs/self-hosting/observability) shows how to send them to
+Sentry, PostHog or OpenTelemetry.
 
 ## 0.21.2 (November 2026)
 
