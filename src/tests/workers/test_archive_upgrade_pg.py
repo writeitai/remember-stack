@@ -404,26 +404,37 @@ def test_the_upgrade_marks_source_archives_an_earlier_release_settled(
     _bootstrap(engine)
     rig = _LifecycleRig(engine=engine, root=tmp_path)
     settled = rig.observe(source_ref="settled.md", content=f"{_FACT_SENTENCE}\n")
+    reopened = rig.observe(source_ref="reopened.md", content="Bob runs the depot.\n")
     waiting = rig.observe(source_ref="waiting.md", content="Acme opened an office.\n")
     rig.drain()
     command.downgrade(config=config, revision="p9_55_0076")
-    finalized, open_cycle = uuid4(), uuid4()
+    finalized, backfilled, open_cycle = uuid4(), uuid4(), uuid4()
     with engine.begin() as connection:
-        for cycle, finalized_at in ((finalized, "now()"), (open_cycle, "NULL")):
+        for cycle, finalized_at, reopened_at in (
+            (finalized, "now()", "NULL"),
+            # finalized once, then reopened by a D143 layer backfill
+            (backfilled, "NULL", "now()"),
+            (open_cycle, "NULL", "NULL"),
+        ):
             connection.execute(
                 text(
                     "INSERT INTO connector_sync_cycles (cycle_id, deployment_id,"
-                    f" source_kind, completed_at, finalized_at) VALUES (:c, :d,"
-                    f" 'watched_directory', now(), {finalized_at})"
+                    " source_kind, completed_at, finalized_at, layers_reopened_at)"
+                    f" VALUES (:c, :d, 'watched_directory', now(), {finalized_at},"
+                    f" {reopened_at})"
                 ),
                 {"c": cycle, "d": _DEPLOYMENT_ID},
             )
-        connection.execute(
-            text("UPDATE claims SET is_current_testimony = false WHERE doc_id = :d"),
-            {"d": settled.doc_id},
-        )
+        for doc_id in (settled.doc_id, reopened.doc_id):
+            connection.execute(
+                text(
+                    "UPDATE claims SET is_current_testimony = false WHERE doc_id = :d"
+                ),
+                {"d": doc_id},
+            )
         for doc_id, cycle in (
             (settled.doc_id, finalized),
+            (reopened.doc_id, backfilled),
             (waiting.doc_id, open_cycle),
         ):
             connection.execute(
@@ -438,4 +449,5 @@ def test_the_upgrade_marks_source_archives_an_earlier_release_settled(
 
     marker = "SELECT archived_cycle_id FROM documents WHERE doc_id = :d"
     assert _scalar(engine, marker, d=settled.doc_id) is None
+    assert _scalar(engine, marker, d=reopened.doc_id) is None
     assert _scalar(engine, marker, d=waiting.doc_id) == open_cycle

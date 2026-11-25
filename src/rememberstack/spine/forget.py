@@ -892,16 +892,10 @@ class _Sweep:
             key=str,
         )
         p["exclusive_entity_ids"] = self._ids(_EXCLUSIVE_ENTITIES, p)
-        # A surviving decision may cite an entity of the merge tree this
-        # document touched (an absorbed one, or only the survivor); the
-        # redirects are read before any entity is retired and kept on the
-        # record for later sweeps.
-        p["rationale_entity_ids"] = sorted(
-            set(self._ids(_REDIRECT_ANCESTORS, p))
-            | {UUID(value) for value in collected["redirect_entity_ids"]},
-            key=str,
-        )
-        collected["redirect_entity_ids"] = sorted(map(str, p["rationale_entity_ids"]))
+        # Deliberately broad: a surviving T4 decision about any entity that
+        # ever shared merge history with one this document touched loses its
+        # rationale prose (never its verdict).
+        p["rationale_entity_ids"] = self._ids(_MERGE_COMPONENT, p)
         compiled = self._ids(
             _CITING_ARTIFACTS.format(facts="linked_fact_ids")
             + " AND a.page_kind = 'compiled'",
@@ -1188,7 +1182,6 @@ def _collected(
     for key in (
         "fact_ids",
         "entity_ids",
-        "redirect_entity_ids",
         "chunk_ids",
         "k_artifact_ids",
         "k_pending",
@@ -1433,23 +1426,20 @@ _FACT_ENDPOINTS = """
 # An entity is exclusive when it was resolved from this document's mentions
 # and from no mention of another, not forgotten document, and no surviving
 # fact uses it.
-_REDIRECT_ANCESTORS = """
-    WITH RECURSIVE survivors(entity_id) AS (
+_MERGE_COMPONENT = """
+    WITH RECURSIVE component(entity_id) AS (
       SELECT CAST(value AS uuid) FROM unnest(CAST(:entity_ids AS uuid[])) value
       UNION
-      SELECT x.merged_into FROM entities x JOIN survivors s ON x.entity_id=s.entity_id
-      WHERE x.deployment_id=:deployment_id AND x.merged_into IS NOT NULL
-    ), closure(entity_id) AS (
-      SELECT entity_id FROM survivors
-      UNION
-      SELECT x.entity_id FROM entities x JOIN closure c ON x.merged_into=c.entity_id
-      WHERE x.deployment_id=:deployment_id
+      SELECT CASE WHEN m.survivor_id = c.entity_id THEN m.absorbed_id
+                  ELSE m.survivor_id END
+      FROM merge_events m JOIN component c
+        ON c.entity_id IN (m.survivor_id, m.absorbed_id)
+      WHERE m.deployment_id=:deployment_id
     )
-    SELECT entity_id FROM closure
+    SELECT entity_id FROM component
 """
-"""Every entity in the merge trees the document touched: each touched
-entity, the survivors it redirects to, and every entity redirected into
-those."""
+"""The touched entities and every entity any merge event ever linked to them,
+in either direction, transitively (merges and unmerges alike)."""
 
 _EXCLUSIVE_ENTITIES = """
     SELECT e.entity_id FROM entities e
@@ -1791,16 +1781,18 @@ _ENTITY_STATEMENTS = (
         """
     ),
     # A surviving decision's T4 rationale may quote a candidate this
-    # document named; the verdict stays, the prose goes.
+    # document named, or one merged with it at the time; the verdict stays,
+    # the prose goes.
     text(
         """
         UPDATE resolution_decisions d
         SET features = (d.features - 'rationale') #- '{t4_selection,rationale}'
         WHERE d.deployment_id=:deployment_id
           AND (d.features ? 'rationale' OR d.features->'t4_selection' ? 'rationale')
-          AND EXISTS (
-            SELECT 1 FROM unnest(CAST(:rationale_entity_ids AS uuid[])) ids(value)
-            WHERE d.features::text LIKE '%' || CAST(ids.value AS text) || '%')
+          AND (d.entity_id=ANY(CAST(:rationale_entity_ids AS uuid[]))
+               OR EXISTS (
+                 SELECT 1 FROM unnest(CAST(:rationale_entity_ids AS uuid[])) ids(value)
+                 WHERE d.features::text LIKE '%' || CAST(ids.value AS text) || '%'))
         """
     ),
     text(

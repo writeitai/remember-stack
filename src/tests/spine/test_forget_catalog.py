@@ -2399,6 +2399,9 @@ def test_a_rationale_citing_an_entity_merged_into_a_touched_one_is_cleared(
             ),
             {"e": absorbed, "d": _DEPLOYMENT_ID, "survivor": _SHARED_ENTITY_ID},
         )
+        _record_merge(
+            connection=connection, survivor=_SHARED_ENTITY_ID, absorbed=absorbed
+        )
         _seed_mention(
             connection=connection,
             mention_id=mention,
@@ -2441,12 +2444,13 @@ def test_a_rationale_citing_an_entity_merged_into_a_touched_one_is_cleared(
     assert phrase not in str(row["features"])
 
 
-def test_a_rationale_recording_only_the_merge_survivor_is_cleared(
+def test_a_rationale_recording_only_the_survivor_of_an_undone_merge_is_cleared(
     seeded_engine: Engine,
 ) -> None:
-    """The document touched an entity since merged away; a surviving decision
-    records only the survivor but its T4 prose may quote the absorbed
-    entity's evidence: the prose goes, the verdict stays."""
+    """The entity the document touched was merged into a survivor, a decision
+    on another document recorded only the survivor while its T4 prose quoted
+    the merged entity's evidence, and the merge was then undone. The merge
+    history still links them: the prose goes, the verdict stays."""
     survivor = UUID("75000000-0000-0000-0000-0000000000d3")
     mention = UUID("75000000-0000-0000-0000-0000000000d4")
     decision = UUID(int=mention.int + 100)
@@ -2459,12 +2463,16 @@ def test_a_rationale_recording_only_the_merge_survivor_is_cleared(
             ),
             {"e": survivor, "d": _DEPLOYMENT_ID},
         )
+        merge = _record_merge(
+            connection=connection, survivor=survivor, absorbed=_SHARED_ENTITY_ID
+        )
+        # the unmerge: the redirect is gone, the history stays
+        unmerge = _record_merge(
+            connection=connection, survivor=_SHARED_ENTITY_ID, absorbed=survivor
+        )
         connection.execute(
-            text(
-                "UPDATE entities SET status = 'merged', merged_into = :survivor"
-                " WHERE entity_id = :shared"
-            ),
-            {"survivor": survivor, "shared": _SHARED_ENTITY_ID},
+            text("UPDATE merge_events SET reversed_by = :u WHERE merge_id = :m"),
+            {"u": unmerge, "m": merge},
         )
         _seed_mention(
             connection=connection,
@@ -2503,3 +2511,22 @@ def test_a_rationale_recording_only_the_merge_survivor_is_cleared(
     assert row["entity_id"] == _CONTROL_ENTITY_ID
     assert phrase not in str(row["features"])
     assert row["features"]["candidates"] == [str(survivor)]
+
+
+def _record_merge(*, connection: Connection, survivor: UUID, absorbed: UUID) -> UUID:
+    """One merge_events row linking two entities (the merge history)."""
+    merge_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO merge_events (merge_id, deployment_id, survivor_id,"
+            " absorbed_id, pre_merge_membership_snapshot) VALUES"
+            " (:m, :d, :survivor, :absorbed, '{}'::jsonb)"
+        ),
+        {
+            "m": merge_id,
+            "d": _DEPLOYMENT_ID,
+            "survivor": survivor,
+            "absorbed": absorbed,
+        },
+    )
+    return merge_id
