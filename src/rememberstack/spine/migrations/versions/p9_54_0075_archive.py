@@ -250,6 +250,9 @@ LANGUAGE sql
 STABLE
 PARALLEL SAFE
 SECURITY DEFINER
+-- two indexed probes of one fact's adjudications; costed as such so the
+-- traversal plans (and JIT thresholds) stay what the evidence gate made them
+COST 10
 SET search_path = pg_catalog, public, pg_temp
 AS $$
   -- not believed only when the fact was reopened at some point and its

@@ -1184,3 +1184,7 @@ def test_a_pending_source_archive_is_hidden_unless_asked_for_on_every_path(
             assert claim_marks[archived_claim] is True
             assert chunk_marks[corpus.a.doc_id] is True
             assert claim_marks[corpus.claims["b"]] is not True
+    adjacent = rig.query.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=corpus.a.chunk()
+    )
+    assert [item.archived for item in adjacent.chunks] == [True]

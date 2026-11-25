@@ -2888,20 +2888,27 @@ class QueryEngine:
                 .all()
             )
         adjacent_ids = tuple(UUID(str(row["chunk_id"])) for row in rows)
+        # An exact handle reads its neighbours even in an archived document
+        # (D140 §3.3); the passages are marked archived (D159).
         chunks, dropped, _ = self._confirm_chunks(
-            deployment_id=deployment_id, chunk_ids=adjacent_ids
+            deployment_id=deployment_id,
+            chunk_ids=adjacent_ids,
+            documents=DocumentSearchFilters(include_archived=True),
         )
-        return _envelope(
-            grain=Grain.EVIDENCE,
-            chunks=chunks,
-            freshness=_freshness(),
-            dropped_by_hydration=dropped,
-            negative=None
-            if chunks
-            else Negative(
-                kind=NegativeKind.KNOWN_EMPTY,
-                explanation=f"adjacent chunks for {chunk_id} are not currently visible in storage",
-                workaround="verify that neighboring chunks are indexed in storage",
+        return self.mark_archived(
+            deployment_id=deployment_id,
+            envelope=_envelope(
+                grain=Grain.EVIDENCE,
+                chunks=chunks,
+                freshness=_freshness(),
+                dropped_by_hydration=dropped,
+                negative=None
+                if chunks
+                else Negative(
+                    kind=NegativeKind.KNOWN_EMPTY,
+                    explanation=f"adjacent chunks for {chunk_id} are not currently visible in storage",
+                    workaround="verify that neighboring chunks are indexed in storage",
+                ),
             ),
         )
 
@@ -6635,6 +6642,10 @@ _SCOPE_PENDING = text(
       AND s.doc_id = ANY(CAST(:doc_ids AS uuid[]))
       AND NOT s.selectable
       AND s.in_force && {WINDOW_SQL}
+      -- D159: an archived lineage is never pending for a read
+      AND NOT EXISTS (SELECT 1 FROM documents archived
+                      WHERE archived.doc_id = s.doc_id
+                        AND archived.archived_at IS NOT NULL)
     ORDER BY s.doc_id
     """  # noqa: S608 -- interpolated fragment is a module constant
 )
@@ -6756,6 +6767,10 @@ _PENDING_IN_FORCE = text(
       AND s.in_force && {WINDOW_SQL}
       AND (CAST(:pending_doc_ids AS uuid[]) IS NULL
            OR s.doc_id = ANY(CAST(:pending_doc_ids AS uuid[])))
+      -- D159: an archived lineage is never pending for a read
+      AND NOT EXISTS (SELECT 1 FROM documents archived
+                      WHERE archived.doc_id = s.doc_id
+                        AND archived.archived_at IS NOT NULL)
     ORDER BY s.doc_id
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant

@@ -2228,3 +2228,49 @@ def test_a_later_finalized_poll_settles_an_archive_an_abandoned_poll_left(
     assert _current_claims(rig, added.doc_id) == 0
     assert _open_works_for(rig) == 0
     assert all(archive for _outcome, archive in _outcomes(rig))
+
+
+def test_removing_one_archived_carrier_leaves_the_review_to_the_other(
+    rig: _LifecycleRig,
+) -> None:
+    """Two versions carry a reviewed claim; removing one while the document is
+    archived leaves the review open, since the other still carries it."""
+    first = rig.observe(
+        source_ref="carried.md",
+        content=_two_sections(_FILLER_SENTENCE),
+        versioning_mode="snapshot",
+    )
+    rig.drain()
+    second = rig.observe(
+        source_ref="carried.md",
+        content=_two_sections("The kitchen was repainted."),
+        versioning_mode="snapshot",
+    )
+    _drain_except_reconcile(rig)  # its reconcile is still queued
+    claim_id = rig.scalar(
+        "SELECT cl.claim_id FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v AND cl.claim_text = :t",
+        v=first.version_id,
+        t=f"# {_FACT_SENTENCE}",
+    )
+    fact_id = rig.relation()["relation_id"]
+    assert isinstance(claim_id, UUID) and isinstance(fact_id, UUID)
+    review_id = rig.review.flag_support_withdrawn(
+        deployment_id=_DEPLOYMENT_ID,
+        fact_kind="relation",
+        fact_id=fact_id,
+        claim_id=claim_id,
+        diff={"reason": "reextracted"},
+    )
+    _archive(rig, first.doc_id)
+
+    rig.deletion.delete_version(version_id=second.version_id)
+    rig.worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.RECONCILE,
+        lane=ProcessingLane.STEADY,
+    )
+    _unarchive(rig, first.doc_id)
+
+    status = "SELECT status::text FROM review_queue WHERE review_id = :r"
+    assert rig.scalar(status, r=review_id) == "pending"

@@ -762,6 +762,10 @@ _PENDING_IN_FORCE: Final = text(
       AND s.in_force && {WINDOW_SQL}
       AND (CAST(:pending_doc_ids AS uuid[]) IS NULL
            OR s.doc_id = ANY(CAST(:pending_doc_ids AS uuid[])))
+      -- D159: an archived lineage is never pending for a read
+      AND NOT EXISTS (SELECT 1 FROM documents archived
+                      WHERE archived.doc_id = s.doc_id
+                        AND archived.archived_at IS NOT NULL)
     ORDER BY s.doc_id
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant

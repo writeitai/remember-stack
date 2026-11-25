@@ -1280,12 +1280,14 @@ def _record_adjudication(
     )
 
 
-def _live_carriage(*, claim: str) -> str:
+def _live_carriage(*, claim: str, archived_carries: bool = False) -> str:
     """SQL predicate: claim ``claim`` is carried by a live version of a live lineage.
 
     A lineage is live while it is neither archived nor hidden by forget, and a
-    version while it is not removed.
+    version while it is not removed. ``archived_carries`` also counts a
+    version of an archived lineage (retained, not removed).
     """
+    archived = "" if archived_carries else " AND ld.archived_at IS NULL"
     return f"""
     EXISTS (
         SELECT 1
@@ -1294,7 +1296,7 @@ def _live_carriage(*, claim: str) -> str:
           ON lv.version_id = lc.version_id AND lv.deleted_at IS NULL
         JOIN documents ld
           ON ld.doc_id = lv.doc_id
-         AND ld.deleted_at IS NULL AND ld.archived_at IS NULL
+         AND ld.deleted_at IS NULL{archived}
         WHERE lc.chunk_id = {claim}.chunk_id
            OR lc.chunk_id IN (SELECT lcc.chunk_id FROM chunk_claims lcc
                               WHERE lcc.claim_id = {claim}.claim_id)
@@ -1304,6 +1306,9 @@ def _live_carriage(*, claim: str) -> str:
 
 LIVE_CARRIAGE_SQL = _live_carriage(claim="cl")
 """SQL predicate: claim ``cl`` is carried by a live version of a live lineage."""
+
+RETAINED_CARRIAGE_SQL = _live_carriage(claim="cl", archived_carries=True)
+"""SQL predicate: claim ``cl`` is carried by a version no removal tombstoned."""
 
 
 REVIEW_MOOT_SQL = """EXISTS (
@@ -1800,7 +1805,9 @@ _AUTO_RESOLVE_DELETED_REVIEWS = text(
       AND q.candidate ->> 'claim_id' = ANY(CAST(:claim_ids AS text[]))
       AND cl.deployment_id = q.deployment_id
       AND cl.claim_id = CAST(q.candidate ->> 'claim_id' AS uuid)
-      AND NOT {LIVE_CARRIAGE_SQL}
+      -- an archived carrier still carries it: archive leaves the review
+      -- moot, never answered (D159)
+      AND NOT {RETAINED_CARRIAGE_SQL}
     RETURNING q.review_id
     """
 )
