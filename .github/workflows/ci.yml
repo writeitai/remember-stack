@@ -28,6 +28,7 @@ jobs:
       surfaces: ${{ steps.filter.outputs.surfaces }}
       adapters: ${{ steps.filter.outputs.adapters }}
       compose: ${{ steps.filter.outputs.compose }}
+      docs_client: ${{ steps.filter.outputs.docs_client }}
       shared_core: ${{ steps.filter.outputs.shared_core }}
       ci_control: ${{ steps.filter.outputs.ci_control }}
     steps:
@@ -219,6 +220,7 @@ jobs:
     if: >-
       github.event_name == 'push'
       || needs.changes.outputs.compose == 'true'
+      || needs.changes.outputs.docs_client == 'true'
       || needs.changes.outputs.ci_control == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -395,6 +397,7 @@ jobs:
           python-version: "3.13"
 
       - name: Verify the documented CLI, Python SDK and MCP workflows
+        shell: bash
         env:
           REMEMBER_API_URL: http://localhost:8000
         run: |

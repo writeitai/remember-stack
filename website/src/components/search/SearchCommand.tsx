@@ -135,7 +135,7 @@ export function SearchCommand() {
           )}
           {!loading && status === "unavailable" && (
             <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-              Search isn&apos;t available yet. It works on the deployed site.
+              Search couldn&apos;t load. Reload the page to try again.
             </div>
           )}
           {!loading && status === "error" && (
