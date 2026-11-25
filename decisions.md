@@ -6088,6 +6088,13 @@ the benchmark owner's call and not a side effect of a media design. The catalog 
 `source_open` is implemented and exposed; that exposure carries the protocol bump. Sequencing
 lives in `plan/plans/`.
 
+*Amended 2026-11-24 (owner, image formats).* The image route reads WebP natively
+beside PNG and JPEG, and converts GIF, TIFF, BMP, HEIC (pillow-heif), AVIF and PSD
+to one PNG for both lanes: the first frame or page for now, EXIF orientation
+applied (not to PSD), sRGB. Multi-frame and multi-page reading is a later decision.
+[media design](plan/designs/media_design.md).
+
+
 ## D116. Originals sit on the navigation path, alongside their representation
 
 **Status:** navigation intent retained; original placement and mount mechanism

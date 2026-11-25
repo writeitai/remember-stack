@@ -36,6 +36,7 @@ from rememberstack.ports import ProjectionPurgePort
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.forget import ForgetCatalog
+from rememberstack.spine.forget import locator_hash
 from rememberstack.spine.forget import retry_delay
 from rememberstack.spine.forget import sweep_work
 from rememberstack.spine.forget import utc_now
@@ -387,9 +388,20 @@ class ForgetHandler:
             for key in sorted(self._catalog.live_originals(forget=forget))
         )
         keys = tuple(key for key in findings.object_keys if not key.root.endswith("/"))
+        foreign = tuple(key for key in findings.object_keys if key.root.endswith("/"))
+        # Another lineage's <owner>/<hash>/ prefix is purged only while no
+        # surviving version (an archived one included) uses that content.
+        in_use = self._catalog.hashes_in_use(
+            forget=forget,
+            hashes=tuple(
+                value
+                for key in foreign
+                if (value := locator_hash(locator=key.root)) is not None
+            ),
+        )
         prefixes = (
             ObjectKey(f"{forget.doc_id}/"),
-            *(key for key in findings.object_keys if key.root.endswith("/")),
+            *(key for key in foreign if locator_hash(locator=key.root) not in in_use),
         )
         for purger in self._object_purgers:
             removed = purger.purge_objects(keys=keys, prefixes=prefixes, keep=live)

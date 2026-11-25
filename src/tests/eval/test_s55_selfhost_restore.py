@@ -85,6 +85,9 @@ class _Catalog:
     def live_originals(self, **_: object) -> frozenset[str]:
         return frozenset()
 
+    def hashes_in_use(self, **_: object) -> frozenset[str]:
+        return frozenset()
+
     def current_series(self, **_: object) -> str:
         return ""
 
