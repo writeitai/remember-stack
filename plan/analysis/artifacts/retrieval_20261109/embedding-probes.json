@@ -1,0 +1,60 @@
+{
+  "model": "qwen/qwen3-embedding-8b",
+  "provider_pin": "nebius",
+  "mode": "separate live transport probes; not part of saved-vector replay",
+  "calls": 3,
+  "recorded_cost_usd": "4.8E-7",
+  "probes": [
+    {
+      "probe": 0,
+      "seconds": 0.8362280912697315,
+      "status": 200,
+      "dimensions": 1536,
+      "usage": {
+        "prompt_tokens": 13,
+        "total_tokens": 13,
+        "cost": 1.3e-07,
+        "is_byok": false,
+        "cost_details": {
+          "upstream_inference_cost": 1.3e-07,
+          "upstream_inference_prompt_cost": 1.3e-07,
+          "upstream_inference_completions_cost": 0
+        }
+      }
+    },
+    {
+      "probe": 1,
+      "seconds": 1.7006969023495913,
+      "status": 200,
+      "dimensions": 1536,
+      "usage": {
+        "prompt_tokens": 14,
+        "total_tokens": 14,
+        "cost": 1.4e-07,
+        "is_byok": false,
+        "cost_details": {
+          "upstream_inference_cost": 1.4e-07,
+          "upstream_inference_prompt_cost": 1.4e-07,
+          "upstream_inference_completions_cost": 0
+        }
+      }
+    },
+    {
+      "probe": 2,
+      "seconds": 0.6104258485138416,
+      "status": 200,
+      "dimensions": 1536,
+      "usage": {
+        "prompt_tokens": 21,
+        "total_tokens": 21,
+        "cost": 2.1e-07,
+        "is_byok": false,
+        "cost_details": {
+          "upstream_inference_cost": 2.1e-07,
+          "upstream_inference_prompt_cost": 2.1e-07,
+          "upstream_inference_completions_cost": 0
+        }
+      }
+    }
+  ]
+}

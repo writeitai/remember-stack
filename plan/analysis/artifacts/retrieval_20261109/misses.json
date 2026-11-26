@@ -1,0 +1,128 @@
+{
+  "source_run_revision": "8cd181fe0905dc4f3e764fb4958a5551c4b836ee",
+  "source_state_sha256": "2e6c04cfdb77bddee0293a474d21cc80954551fbbfc36fbddd647cbd64d2c2dd",
+  "inspection_only": true,
+  "answers_or_judgments_rerun": false,
+  "score": {
+    "correct": 17,
+    "questions": 20
+  },
+  "reader_projection_preserves_chunk_text": "benchmarks/locomo/protocol.py::_reader_trace_record removes ranking/empty fields; chunk_text retained",
+  "qualification": "Reference availability is observed; the model internal cause is not observed. tokens_in is aggregate across agent calls, not a single context-window size.",
+  "cases": [
+    {
+      "item_id": "conv-47/qa/0000",
+      "question": "What are John's suspected health problems?",
+      "gold_answer": "Obesity",
+      "generated_answer": "Unknown",
+      "canonical_label": "WRONG",
+      "category": 3,
+      "raw_reference": "D1:27",
+      "raw_session_date": "3:47 pm on 17 March, 2022",
+      "raw_speaker": "John",
+      "raw_reference_text": "I'm sure you're very good at this. Unfortunately, I can’t share my love for him with you, my fingers are too big. Perhaps I should take up exercise, at least start going for a run in the morning. And I also don’t like bowling itself, to be honest.",
+      "reference_in_returned_chunks": [
+        {
+          "tool_index_zero_based": 2,
+          "tool": "claims_and_sources_context",
+          "returned_chunk_position_one_based": 26,
+          "returned_chunk_count": 50
+        },
+        {
+          "tool_index_zero_based": 3,
+          "tool": "claims_and_sources_context",
+          "returned_chunk_position_one_based": 34,
+          "returned_chunk_count": 50
+        },
+        {
+          "tool_index_zero_based": 4,
+          "tool": "claims_and_sources_context",
+          "returned_chunk_position_one_based": 19,
+          "returned_chunk_count": 50
+        }
+      ],
+      "answer_failure": null,
+      "judge_failure": null,
+      "tool_calls": 5,
+      "agent_calls": 6,
+      "aggregate_reader_usage_across_calls": {
+        "cost_usd": "0.0341000250",
+        "latency_ms": 36525,
+        "model_name": "openai/gpt-6-luna",
+        "tokens_in": 541216,
+        "tokens_out": 1097
+      },
+      "no_negative_results": true
+    },
+    {
+      "item_id": "conv-47/qa/0006",
+      "question": "Does James live in Connecticut?",
+      "gold_answer": "Likely yes",
+      "generated_answer": "Unknown",
+      "canonical_label": "WRONG",
+      "category": 3,
+      "raw_reference": "D5:1",
+      "raw_session_date": "9:52 am on 12 April, 2022",
+      "raw_speaker": "James",
+      "raw_reference_text": "Hey John! Long time no chat - I adopted a pup from a shelter in Stamford last week and my days have been so much happier with him in the fam. I named it Ned. Any progress on your gaming goals?",
+      "reference_in_returned_chunks": [
+        {
+          "tool_index_zero_based": 2,
+          "tool": "claims_and_sources_context",
+          "returned_chunk_position_one_based": 15,
+          "returned_chunk_count": 50
+        }
+      ],
+      "answer_failure": null,
+      "judge_failure": null,
+      "tool_calls": 3,
+      "agent_calls": 4,
+      "aggregate_reader_usage_across_calls": {
+        "cost_usd": "0.0150156000",
+        "latency_ms": 16277,
+        "model_name": "openai/gpt-6-luna",
+        "tokens_in": 238404,
+        "tokens_out": 462
+      },
+      "no_negative_results": true
+    },
+    {
+      "item_id": "conv-47/qa/0011",
+      "question": "How was John feeling on April 10, 2022?",
+      "gold_answer": "seeking solitude",
+      "generated_answer": "Unknown",
+      "canonical_label": "WRONG",
+      "category": 2,
+      "raw_reference": "D6:7",
+      "raw_session_date": "9:32 pm on 20 April, 2022",
+      "raw_speaker": "John",
+      "raw_reference_text": "That's awesome. Real-life experiences can be so inspiring. It's like the virtual world is connected to the real world. By the way, two days ago I wanted to be alone with nature. This is the canyon I found in the surrounding area. Very calming view.",
+      "reference_in_returned_chunks": [
+        {
+          "tool_index_zero_based": 2,
+          "tool": "claims_and_sources_context",
+          "returned_chunk_position_one_based": 24,
+          "returned_chunk_count": 50
+        },
+        {
+          "tool_index_zero_based": 3,
+          "tool": "claims_and_sources_context",
+          "returned_chunk_position_one_based": 33,
+          "returned_chunk_count": 50
+        }
+      ],
+      "answer_failure": null,
+      "judge_failure": null,
+      "tool_calls": 5,
+      "agent_calls": 6,
+      "aggregate_reader_usage_across_calls": {
+        "cost_usd": "0.0327521500",
+        "latency_ms": 39033,
+        "model_name": "openai/gpt-6-luna",
+        "tokens_in": 518742,
+        "tokens_out": 1324
+      },
+      "no_negative_results": true
+    }
+  ]
+}

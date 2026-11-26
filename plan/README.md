@@ -5,6 +5,12 @@ architecture lives in `designs/`; research in `analysis/` is non-binding.
 `plans/` owns build order. The canonical numbered authority log is
 [decisions.md](../decisions.md). Design acceptance does not establish shipped behavior.
 
+For measured retrieval cost, proposed query simplification, entity coverage
+versus relevance, source/history eligibility, and the retained conv-47 misses,
+see the [2026-11-09 analysis](analysis/retrieval_cost_and_conv47_20261109.md).
+Its instrumented replay preserves existing behavior and does not amend the
+binding ranking, history or claim/fact supersession contracts.
+
 For package and release identity, start with [D108's unified distribution
 design](designs/unified_remember_distribution_design.md). The
 [release-identity analysis](analysis/remember_release_identity_and_pypi_retirement.md)

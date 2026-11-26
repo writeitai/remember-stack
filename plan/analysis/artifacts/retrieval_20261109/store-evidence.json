@@ -1,0 +1,67 @@
+{
+  "schema_revision": "p9_45_0066",
+  "unchanged_product_fingerprints": true,
+  "differences": [],
+  "fingerprints": {
+    "memory_v1.facts_visible_history": {
+      "rows": 889,
+      "sha256": "cb61712bb00e9a809760bb41369e0e0e0d7bb44cbbaf00c0f7896bd20f21cdfa"
+    },
+    "memory_v1.entities_current": {
+      "rows": 118,
+      "sha256": "b90c1225204f3531c52a3f9de4fd70d1a9c25763dcdaf8cf05bbd45f53439253"
+    },
+    "documents": {
+      "rows": 31,
+      "row_multiset_md5": "7dc3fba302e8909069f6195eedbd6569"
+    },
+    "document_versions": {
+      "rows": 31,
+      "row_multiset_md5": "54629691dfa0aeab1d3ce79fd56686e9"
+    },
+    "claims": {
+      "rows": 822,
+      "row_multiset_md5": "2604922177a986c7a83d313364fa06f7"
+    },
+    "entities": {
+      "rows": 118,
+      "row_multiset_md5": "13b89d63aa9b0e0a891dbd247532f5a3"
+    },
+    "relations": {
+      "rows": 72,
+      "row_multiset_md5": "c5e70b9c42c907e1d9ec27bbfac260c7"
+    },
+    "observations": {
+      "rows": 817,
+      "row_multiset_md5": "6f331278bfb99a9c16592ea1e5e31372"
+    },
+    "chunk_search": {
+      "rows": 138,
+      "row_multiset_md5": "ad6eee9898d1c2f4b1a1f32b05b4e0a2"
+    },
+    "document_names": {
+      "rows": 31,
+      "row_multiset_md5": "f2be3bb193697d15a8ba45ab9c855d23"
+    },
+    "cost_ledger": {
+      "rows": 4874,
+      "row_multiset_md5": "7a36a3161497d4d14bc865b0041feb9b"
+    },
+    "aliases": {
+      "rows": 379,
+      "row_multiset_md5": "cb3bec951de70941783800c814a70b11"
+    },
+    "mentions": {
+      "rows": 1537,
+      "row_multiset_md5": "a883c468cec1df3f9ed4dac188b10d69"
+    },
+    "resolution_decisions": {
+      "rows": 1537,
+      "row_multiset_md5": "925f58a4534d32df6f9d1e01a52b036c"
+    },
+    "chunk_claims": {
+      "rows": 822,
+      "row_multiset_md5": "3dc6106c979ecfa8d754637c4aad13a1"
+    }
+  }
+}

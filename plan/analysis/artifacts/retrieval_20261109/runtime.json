@@ -1,0 +1,20 @@
+{
+  "source_revision": "fb4a5f5a4cc2eb415df3a8f5b7908bb506bf58d0",
+  "runtime_image": "rememberstack-retrieval:8cd181fe0",
+  "source_mount": "read_only_src_only",
+  "postgres_image": "rememberstack-postgres-retrieval:19rc1-20261106",
+  "source_files_sha256": {
+    "src/rememberstack/surfaces/query_engine.py": "6a9d9552e78ab6f6d0cd0782d12213361763859f8187aba3b1bfe60ebf0bfea9",
+    "src/rememberstack/adapters/postgres_p1.py": "fb28261bbbd97f868f26d06f3731f5cc1b5fa0cee9b433d13f28232b5a5f941b",
+    "src/rememberstack/core/text_scope.py": "26aa509f00b77ea2b0d3c56ed3bf51a89b9664381829ebe50bf5ed5bda49007b"
+  },
+  "executed_harness_sha256": "3df80e9946b0d1dc156959dee35dcc9dfe8d7a066c5ed6d18aa2fd055df36cfd",
+  "original_r4_state_sha256": "2e6c04cfdb77bddee0293a474d21cc80954551fbbfc36fbddd647cbd64d2c2dd",
+  "original_stores_untouched": true,
+  "new_ingestion": false,
+  "new_answers_or_grades": false,
+  "profile_container": "locomo-c47-profile-20261109",
+  "network": "none",
+  "published_ports": [],
+  "scope": "five passes of 24 saved cases on a physical copy; separate three live embedding probes"
+}
