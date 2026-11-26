@@ -233,7 +233,6 @@ class ManagedMeterCatalog:
                             "completed_at": datetime.now(timezone.utc),
                             "reason_code": "source_forgotten",
                             "profile_complete": False,
-                            "version_commit_sequence": None,
                         },
                     )
                     accepted += 1
@@ -304,7 +303,6 @@ class ManagedMeterCatalog:
                     else "pipeline_terminal_failure"
                 )
                 profile_complete = False
-                sequence = None
             else:
                 # D143 §4.5: certify the profile the version was measured
                 # under, whatever the deployment is configured for now.
@@ -334,7 +332,6 @@ class ManagedMeterCatalog:
                     completed_at = datetime.now(timezone.utc)
                     reason_code = "processing_profile_changed"
                     profile_complete = False
-                    sequence = None
                 elif failed:
                     outcome = "failed"
                     completed_at = max(
@@ -347,7 +344,6 @@ class ManagedMeterCatalog:
                     )
                     reason_code = "pipeline_terminal_failure"
                     profile_complete = False
-                    sequence = None
                 elif version.ready:
                     outcome = "succeeded"
                     completed_at = max(
@@ -357,10 +353,6 @@ class ManagedMeterCatalog:
                     )
                     reason_code = None
                     profile_complete = True
-                    with self._engine.connect() as connection:
-                        sequence = int(
-                            connection.execute(_NEXT_COMMIT_SEQUENCE).scalar_one()
-                        )
                 else:
                     self._record_outcome_check_retry(
                         measurement_id=UUID(str(row["measurement_id"]))
@@ -376,7 +368,6 @@ class ManagedMeterCatalog:
                         "completed_at": completed_at,
                         "reason_code": reason_code,
                         "profile_complete": profile_complete,
-                        "version_commit_sequence": sequence,
                     },
                 )
                 if int(result.rowcount or 0) > 0:
@@ -579,6 +570,9 @@ _MEASUREMENT_STATE = text(
     "WHERE version_id = :version_id"
 )
 
+# Allocate the sequence inside the INSERT: PostgreSQL takes the outcome table's
+# ROW EXCLUSIVE lock before evaluating nextval. A storage capture holding a
+# SHARE lock therefore cannot miss a previously allocated success outcome.
 _INSERT_OUTCOME = text(
     """
     INSERT INTO managed_ingest_outcomes (
@@ -586,7 +580,9 @@ _INSERT_OUTCOME = text(
       profile_complete, version_commit_sequence
     ) VALUES (
       :measurement_id, :document_version_id, :outcome, :completed_at, :reason_code,
-      :profile_complete, :version_commit_sequence
+      :profile_complete,
+      CASE WHEN :outcome = 'succeeded'
+           THEN nextval('managed_version_commit_sequence_seq') ELSE NULL END
     )
     ON CONFLICT (measurement_id) DO NOTHING
     """
@@ -700,8 +696,6 @@ _RETRY_OUTCOME_CHECK = text(
     WHERE measurement_id = :measurement_id
     """
 )
-
-_NEXT_COMMIT_SEQUENCE = text("SELECT nextval('managed_version_commit_sequence_seq')")
 
 _DUE_OUTCOMES = text(
     """
