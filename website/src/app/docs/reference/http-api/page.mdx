@@ -289,7 +289,8 @@ gated routes are:
 `GET /healthz`, `GET /deployment`, `POST /readiness`, `GET /operations`,
 connector management, archive, unarchive and the tag routes take no hold.
 
-When the hold is refused, the route returns before doing any work:
+When the hold is refused, the route returns before doing any work. A hold has
+five seconds to be granted, and unrelated requests can proceed during that wait.
 
 | Status | `detail` | Meaning |
 |---|---|---|
@@ -297,7 +298,7 @@ When the hold is refused, the route returns before doing any work:
 | `403` | `token_revoked`, `token_retired`, `project_membership_revoked` | The token or its owner's membership is no longer valid. |
 | `403` | `dispatch_refused:<reason>` | Spending is refused. `<reason>` is one of `fleet_dispatch_halted`, `missing_spend_policy`, `missing_org_provider_key`, `missing_provider_limit_backstop`, `org_usd_ceiling_exhausted`, `org_token_ceiling_exhausted`, `org_call_ceiling_exhausted`, `measurement_failed`. |
 | `423` | `dispatch_parked:<reason>` | The project's work is parked. `<reason>` is the park reason recorded on the project. Work resumes after the cause is fixed, for example after buying credits. |
-| `503` | `spend_lease_unavailable` | The control plane could not be reached or answered with another error. Retry later. |
+| `503` | `spend_lease_unavailable` | The hold timed out, the control plane could not be reached, or it answered with another error. Retry later. |
 
 A self-hosted deployment has no spend hold unless you configure one
 (`REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL`). See

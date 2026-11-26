@@ -17,12 +17,15 @@ overrides that dependency and returns the request's deployment (D147); each
 request is still served by exactly one deployment.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from collections.abc import Callable
 from collections.abc import Collection
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
+from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import datetime
 import functools
@@ -229,7 +232,7 @@ class IngestPort(Protocol):
 
 
 class SpendLeasePort(Protocol):
-    """Metadata-only spend hold used by managed self-host (D46)."""
+    """Synchronous metadata-only spend hold (D46), called on worker threads."""
 
     def reserve(
         self,
@@ -3299,6 +3302,26 @@ def _content_length(*, request: Request) -> int | None:
         return None
 
 
+_SPEND_CALL_TIMEOUT_S: Final = 5.0
+# A control-plane outage can occupy these workers without using FastAPI's
+# workers for authentication and routes. A timed-out call retains its worker
+# until the synchronous adapter returns.
+_SPEND_WORKERS = ThreadPoolExecutor(max_workers=16, thread_name_prefix="spend-lease")
+
+
+async def _call_spend_lease[**P, T](
+    call: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+) -> T:
+    """Bound the wait for one spend call, including time queued for a worker."""
+    pending = asyncio.get_running_loop().run_in_executor(
+        _SPEND_WORKERS, copy_context().run, functools.partial(call, *args, **kwargs)
+    )
+    try:
+        return await asyncio.wait_for(pending, timeout=_SPEND_CALL_TIMEOUT_S)
+    except TimeoutError as error:
+        raise SpendLeaseUnavailable("spend lease timed out") from error
+
+
 def _install_spend_lease(*, app: FastAPI) -> None:
     """Reserve metadata on spend-gated routes; commit 2xx, release otherwise.
 
@@ -3324,7 +3347,8 @@ def _install_spend_lease(*, app: FastAPI) -> None:
             return await call_next(request)
         path_id, operation_name = gated
         try:
-            reservation_id = spend_lease.reserve(
+            reservation_id = await _call_spend_lease(
+                spend_lease.reserve,
                 authorization=authorization,
                 path_id=path_id,
                 content_length=_content_length(request=request),
@@ -3347,17 +3371,27 @@ def _install_spend_lease(*, app: FastAPI) -> None:
             return JSONResponse(
                 status_code=503, content={"detail": "spend_lease_unavailable"}
             )
+        response = None
         try:
             with track_read_embedding_cost() as read_cost:
                 response = await call_next(request)
-        except Exception:
-            spend_lease.release(
-                authorization=authorization, reservation_id=reservation_id
-            )
-            raise
+        finally:
+            if response is None or not 200 <= response.status_code < 300:
+                try:
+                    await _call_spend_lease(
+                        spend_lease.release,
+                        authorization=authorization,
+                        reservation_id=reservation_id,
+                    )
+                except (
+                    SpendLeaseRefused,
+                    SpendLeaseUnavailable,
+                ):  # error-contract: exempt failed-response lease releases expire on TTL
+                    pass
         if 200 <= response.status_code < 300:
             try:
-                spend_lease.commit(
+                await _call_spend_lease(
+                    spend_lease.commit,
                     authorization=authorization,
                     reservation_id=reservation_id,
                     read_cost=None if path_id == "ingest" else read_cost,
@@ -3371,14 +3405,4 @@ def _install_spend_lease(*, app: FastAPI) -> None:
                         "exception_type": type(error).__name__,
                     },
                 )
-        else:
-            try:
-                spend_lease.release(
-                    authorization=authorization, reservation_id=reservation_id
-                )
-            except (
-                SpendLeaseRefused,
-                SpendLeaseUnavailable,
-            ):  # error-contract: exempt failed-response lease releases expire on TTL
-                pass
         return response
