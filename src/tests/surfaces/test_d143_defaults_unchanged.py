@@ -14,8 +14,9 @@ tools, ``ingest`` ``tags`` at ``tool_version`` 3, two tag views; then the
 operations' ``documents`` filter at versions 5, 5 and 6), D157's PostgreSQL 18
 manifest declaration, D159's archive tools and ``include_archived``, and
 D159's ``forget_document`` tool with ``ingest``'s ``allow_forgotten`` at
-``tool_version`` 4, and the default Jev fact engine's observation-flush
-version. The current branch, composed the way the
+``tool_version`` 4, the default Jev fact engine's observation-flush
+version, and the eighteen route tools that give every public HTTP route an
+MCP tool (``remember mcp`` serves them; the in-process server does not). The current branch, composed the way the
 self-host profile composes it (layers port included, reporting no
 configuration), must reproduce every byte.
 """
@@ -58,9 +59,10 @@ def test_fixture_pins_the_full_default_catalogue() -> None:
         "facts_context",
         "combined_context",
     ]
-    assert len(baseline["deployment"]["tools"]) == 25
+    # The in-process server does not serve the eighteen route tools.
+    assert len(baseline["deployment"]["tools"]) == 43
     assert len(baseline["mcp_in_process_tools"]) == 25
-    assert len(baseline["mcp_engine_tools"]["stdio"]) == 25
+    assert len(baseline["mcp_engine_tools"]["stdio"]) == 43
     assert len(baseline["readiness_expected_components"]) == 12
     assert len(baseline["query_surface_manifest"]["surface_manifest_hash"]) == 64
 

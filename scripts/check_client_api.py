@@ -70,7 +70,6 @@ _ADJACENT_POST = (
     " calls; the POST form serves HTTP callers that prefer a body."
 )
 _CLI_PENDING = "TODO(cli-mcp-parity): CLI command follows in the next PR."
-_MCP_PENDING = "TODO(cli-mcp-parity): MCP tool follows in the next PR."
 CLI_EXCLUSIONS = {
     "POST /chunks/adjacent": _ADJACENT_POST,
     **dict.fromkeys(
@@ -105,30 +104,14 @@ MCP_EXCLUSIONS = {
         " own tool."
     ),
     **dict.fromkeys(
-        (
-            "GET /hydrate/relation/{relation_id}",
-            "GET /lookup/observations",
-            "GET /lookup/relations",
-            "GET /resolve",
-            "GET /search/chunks",
-            "GET /search/claims",
-            "GET /transcript/relation/{relation_id}",
-            "POST /search/chunks",
-            "POST /search/claims",
-            "POST /graph/citation-path",
-            "POST /graph/neighborhood",
-            "POST /graph/path",
-            "DELETE /documents/{doc_id}/effective-periods",
-            "GET /documents/{doc_id}/versions/{version_id}/references",
-            "PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
-            "PUT /documents/{doc_id}/versions/{version_id}/references",
-            "GET /deployment",
-            "GET /documents",
-            "GET /forgets",
-            "GET /forgets/{forget_id}",
-            "GET /processing-layers",
-        ),
-        _MCP_PENDING,
+        ("GET /search/claims", "GET /search/chunks"),
+        "Same search as the POST form the tool declares; the tool sends GET only"
+        " when no documents or time filter is given.",
+    ),
+    "GET /deployment": (
+        "Host diagnostic: `remember mcp` reads it to choose which tools to list,"
+        " and pipeline_readiness already returns build_revision and"
+        " model_bindings."
     ),
 }
 

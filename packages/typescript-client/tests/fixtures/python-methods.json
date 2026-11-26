@@ -16449,6 +16449,722 @@
     },
     {
       "arguments": {
+        "include_archived": true,
+        "limit": 7,
+        "status": "failed"
+      },
+      "name": "list_documents",
+      "result": {
+        "include_archived": true,
+        "limit": 7,
+        "status": "failed"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "include_archived": true,
+        "limit": 7,
+        "status": "failed",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "list_documents",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {},
+      "name": "list_forgets",
+      "result": {},
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "list_forgets",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "forget_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "get_forget",
+      "result": {
+        "forget_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "forget_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "get_forget",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {},
+      "name": "processing_layers",
+      "result": {},
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "processing_layers",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "query": "fixture",
+        "time": {
+          "mode": "history"
+        }
+      },
+      "name": "search_claims",
+      "result": {
+        "query": "fixture",
+        "time": {
+          "mode": "history"
+        }
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "query": "fixture",
+        "time": {
+          "mode": "history"
+        },
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "search_claims",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "documents": {
+          "language": "en"
+        },
+        "query": "fixture"
+      },
+      "name": "search_chunks",
+      "result": {
+        "documents": {
+          "language": "en"
+        },
+        "query": "fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "documents": {
+          "language": "en"
+        },
+        "query": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "search_chunks",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "context_entity_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "name": "fixture"
+      },
+      "name": "resolve_entity_in_context",
+      "result": {
+        "context_entity_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "name": "fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "context_entity_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "name": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "resolve_entity_in_context",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "limit": 7,
+        "predicate": "p",
+        "subject_entity_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "lookup_relations",
+      "result": {
+        "limit": 7,
+        "predicate": "p",
+        "subject_entity_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "limit": 7,
+        "predicate": "p",
+        "subject_entity_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "lookup_relations",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "entity_id": "10000000-0000-0000-0000-000000000001",
+        "k": 3,
+        "property_query": "role"
+      },
+      "name": "lookup_observations",
+      "result": {
+        "entity_id": "10000000-0000-0000-0000-000000000001",
+        "k": 3,
+        "property_query": "role"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "entity_id": "10000000-0000-0000-0000-000000000001",
+        "k": 3,
+        "property_query": "role",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "lookup_observations",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "relation_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "hydrate_relation",
+      "result": {
+        "relation_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "relation_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "hydrate_relation",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "relation_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "transcript_relation",
+      "result": {
+        "relation_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "relation_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "transcript_relation",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "believed_at": "2026-10-02T12:00:00+00:00",
+        "entity_id": "10000000-0000-0000-0000-000000000001",
+        "hops": 1,
+        "valid_at": "2026-10-02T12:00:00+00:00"
+      },
+      "name": "graph_neighborhood",
+      "result": {
+        "believed_at": "2026-10-02T12:00:00+00:00",
+        "entity_id": "10000000-0000-0000-0000-000000000001",
+        "hops": 1,
+        "valid_at": "2026-10-02T12:00:00+00:00"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "believed_at": "2026-10-02T12:00:00+00:00",
+        "entity_id": "10000000-0000-0000-0000-000000000001",
+        "hops": 1,
+        "unknown": true,
+        "valid_at": "2026-10-02T12:00:00+00:00"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "graph_neighborhood",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "from_entity_id": "10000000-0000-0000-0000-000000000001",
+        "predicates": [
+          "p"
+        ],
+        "to_entity_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "graph_path",
+      "result": {
+        "from_entity_id": "10000000-0000-0000-0000-000000000001",
+        "predicates": [
+          "p"
+        ],
+        "to_entity_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "from_entity_id": "10000000-0000-0000-0000-000000000001",
+        "predicates": [
+          "p"
+        ],
+        "to_entity_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "graph_path",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "from_doc_id": "10000000-0000-0000-0000-000000000001",
+        "max_hops": 2,
+        "to_doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "graph_citation_path",
+      "result": {
+        "from_doc_id": "10000000-0000-0000-0000-000000000001",
+        "max_hops": 2,
+        "to_doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "from_doc_id": "10000000-0000-0000-0000-000000000001",
+        "max_hops": 2,
+        "to_doc_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "graph_citation_path",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "reference_generations",
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true,
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "reference_generations",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": true,
+            "change_effective_from": "2026-10-02T12:00:00+00:00",
+            "from_section_key": "part/4",
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "set_references",
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": true,
+            "change_effective_from": "2026-10-02T12:00:00+00:00",
+            "from_section_key": "part/4",
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": true,
+            "change_effective_from": "2026-10-02T12:00:00+00:00",
+            "from_section_key": "part/4",
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "unknown": true,
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "set_references",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-10-02T12:00:00+00:00"
+          }
+        ],
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "set_effective_periods",
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-10-02T12:00:00+00:00"
+          }
+        ],
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-10-02T12:00:00+00:00"
+          }
+        ],
+        "unknown": true,
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "set_effective_periods",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "clear_effective_time",
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "clear_effective_time",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
         "filename": "fixture.md",
         "path": "/host/file",
         "text": "fixture"

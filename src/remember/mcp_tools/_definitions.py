@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Final
 from typing import Literal
 
+from remember.models import EFFECTIVE_PERIODS_MAX
 from remember.retrieval import DEFAULT_CONTEXT_K
 from remember.retrieval import MAX_CONTEXT_CANDIDATES
 from remember.retrieval import MAX_CONTEXT_K
@@ -70,6 +71,28 @@ OPEN_QUERY_TOOL_NAMES: Final[tuple[str, ...]] = (
     "describe_saved_query",
     "run_saved_query",
 )
+#: Tools that each call one public HTTP route and return its JSON answer, so
+#: the catalogue covers every route an agent can use (CLI and MCP parity).
+ROUTE_TOOL_NAMES: Final[tuple[str, ...]] = (
+    "list_documents",
+    "list_forgets",
+    "get_forget",
+    "processing_layers",
+    "search_claims",
+    "search_chunks",
+    "resolve_entity_in_context",
+    "lookup_relations",
+    "lookup_observations",
+    "hydrate_relation",
+    "transcript_relation",
+    "graph_neighborhood",
+    "graph_path",
+    "graph_citation_path",
+    "reference_generations",
+    "set_references",
+    "set_effective_periods",
+    "clear_effective_time",
+)
 
 FILENAME_MAX_LEN: Final = 512
 MIME_MAX_LEN: Final = 255
@@ -85,6 +108,12 @@ limit applies after NFC and is checked when the arguments are parsed."""
 TAG_LIST_MAX: Final = 64
 TAG_FILTER_LIST_MAX: Final = 32
 TAG_DESCRIPTION_MAX_LEN: Final = 2000
+RESOLVE_CONTEXT_MAX: Final = 8
+"""Most context entities ``GET /resolve`` ranks by (the engine's limit)."""
+SET_REFERENCES_MAX: Final = 1000
+"""Most references one ``set_references`` call sends. The HTTP route takes
+up to 64 MiB of NDJSON; a set larger than a tool call should carry goes
+through the HTTP API or the SDK."""
 
 Permission = Literal["memory:read", "memory:write"]
 
@@ -1085,6 +1114,708 @@ _MAX_ROWS: Final[dict[str, object]] = {
     "description": "Safety row cap; values above 1000 are rejected (D154).",
 }
 
+
+def _uuid(description: str) -> dict[str, object]:
+    """A UUID argument with its meaning for the agent."""
+    return {"type": "string", "format": "uuid", "description": description}
+
+
+def _instant(description: str) -> dict[str, object]:
+    """A UTC instant argument (a zero offset such as Z is required)."""
+    return {"type": "string", "format": "date-time", "description": description}
+
+
+def _page_limit(*, maximum: int, default: int) -> dict[str, object]:
+    """A browse page size."""
+    return {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": maximum,
+        "default": default,
+        "description": "Page size.",
+    }
+
+
+_CURSOR: Final[dict[str, object]] = {
+    "type": "string",
+    "minLength": 1,
+    "description": "Pass the previous page's next_cursor; omit for the first page.",
+}
+
+_DOC_ID: Final = _uuid("The document's UUID (doc_id).")
+_VERSION_ID: Final = _uuid(
+    "The document version's UUID (version_id), as ingest returned it."
+)
+_RELATION_ID: Final = _uuid(
+    "The relation's UUID, from facts_context, lookup_relations or a graph tool."
+)
+
+_GRAPH_PREDICATES: Final[dict[str, object]] = {
+    "type": "array",
+    "items": _PREDICATE,
+    "maxItems": 100,
+    "description": "Follow only relations with these predicates.",
+}
+_VALID_AT: Final = _instant(
+    "Read the graph as true at this UTC instant; requires believed_at."
+)
+_BELIEVED_AT: Final = _instant(
+    "Read the graph as the memory believed it at this UTC instant; requires valid_at."
+)
+
+_SEARCH_TIME: Final[dict[str, object]] = {
+    **_TIME_SCHEMA,
+    "description": (
+        "For documents with declared effective periods, which text counts:"
+        " current (default, in force now), at an instant, overlap a window, or"
+        " history. Other documents are read as they are."
+    ),
+}
+
+
+def _search_input_schema(*, what: str) -> dict[str, object]:
+    """The ``search_claims`` and ``search_chunks`` arguments (``SearchRequest``)."""
+    return _object_schema(
+        properties={
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "description": f"What to look for in {what}.",
+            },
+            "k": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 400,
+                "default": 10,
+                "description": "Maximum results.",
+            },
+            "channel": {
+                "type": "string",
+                "enum": ["semantic", "bm25"],
+                "default": "semantic",
+                "description": "semantic matches meaning; bm25 matches exact words.",
+            },
+            "documents": _DOCUMENTS_FILTER,
+            "time": _SEARCH_TIME,
+        },
+        required=("query",),
+    )
+
+
+_LIST_DOCUMENTS_DESCRIPTION: Final = (
+    "List this deployment's documents a page at a time, newest first by when"
+    " each was first stored (re-ingesting a document does not move it). Use it"
+    " to browse what memory holds or to find documents whose processing"
+    " failed (status=failed); to find a particular file by name or content use"
+    " search_documents. status keeps documents whose newest version is in that"
+    " state (ingesting, converting, structuring, ready, failed). Archived"
+    " documents are left out unless include_archived is true; each one listed"
+    " has archived_at. Each document carries doc_id, title, source_kind,"
+    " source_uri, first_seen_at, tags, serving and its latest version"
+    " (version_id, version_no, status, error). Pass next_cursor back as cursor"
+    " for the next page; null means this is the last page. A cursor the"
+    " deployment cannot read is refused with status 400: list again without"
+    " cursor."
+)
+_LIST_FORGETS_DESCRIPTION: Final = (
+    "List this deployment's forget records, oldest first: forget_id, doc_id,"
+    " status (erasing, waiting_for_redaction, complete), requested_at,"
+    " completed_at, blocking_k_paths and last_error. A record holds IDs and"
+    " progress only, never content. Use it when the user asks what has been"
+    " forgotten or whether forgetting has finished; follow one forget with"
+    " get_forget. Like forget_document, it needs a key with write permission."
+)
+_GET_FORGET_DESCRIPTION: Final = (
+    "Read one forget record by the forget_id that forget_document returned, to"
+    " follow the erasing that continues after a forget. The forgotten document"
+    " is already gone from every read, whatever the status. status=erasing:"
+    " copies derived from it are still being erased in the background and"
+    " failed sweeps are retried by themselves (last_error names the last one);"
+    " waiting_for_redaction: authored knowledge pages still cite the document"
+    " and their owner must remove the citation (blocking_k_paths lists them),"
+    " so tell the user; complete: nothing derived from it remains"
+    " (completed_at). Poll no more than every minute or so. A forget_not_found"
+    " error means the id is unknown: do not retry it. Like forget_document, it"
+    " needs a key with write permission."
+)
+_PROCESSING_LAYERS_DESCRIPTION: Final = (
+    "Report which processing layers this deployment serves. Source passages"
+    " are always served; claims (statements extracted from the text) and facts"
+    " (entities, relations and observations adjudicated from claims) are each"
+    " enabled, backfilling or disabled. backfilling means the layer is on but"
+    " documents processed while it was off are still being processed by it,"
+    " so an empty answer from it does not prove absence. Use it when a tool"
+    " fails with layer_unavailable, or to decide which tools can answer: with"
+    " facts disabled use the claim and source tools; with claims disabled use"
+    " the source tools."
+)
+_SEARCH_CLAIMS_DESCRIPTION: Final = (
+    "Search claims: single statements extracted from the documents, as"
+    " evidence (who said what, where and when), including statements the"
+    " memory has not adopted as facts. Use it to find what sources assert"
+    " about a topic; for current adjudicated facts use facts_context, and for"
+    " one ranked context of claims and passages use claims_and_sources_context."
+    " channel: semantic (meaning, default) or bm25 (exact words). documents"
+    " keeps claims found in matching documents (the search_documents filters"
+    " and tags; call list_tags before filtering by tag). time chooses the"
+    " editions read for documents with declared effective periods (default:"
+    " in force now). Returns an evidence envelope: evidence lists each claim"
+    " with its source passage and document, truncation says whether k cut the"
+    " results, and freshness says how current the read is. A claim is"
+    " evidence, never current truth. layer_unavailable means this deployment"
+    " does not process claims; unknown_tag names a tag that is not registered."
+)
+_SEARCH_CHUNKS_DESCRIPTION: Final = (
+    "Search source passages (chunks of the documents' own text) by meaning"
+    " (channel semantic, default) or exact words (bm25). Use it when you need"
+    " the original wording, or when claims and facts do not cover the"
+    " question; for one ranked context of claims and passages use"
+    " claims_and_sources_context. documents keeps passages of matching"
+    " documents (the search_documents filters and tags; call list_tags before"
+    " filtering by tag). time chooses the editions read for documents with"
+    " declared effective periods (default: in force now). Returns an envelope"
+    " whose chunks carry chunk_id, the document and version, and the text;"
+    " read around a passage with adjacent_chunks. unknown_tag names a tag that"
+    " is not registered."
+)
+_RESOLVE_ENTITY_IN_CONTEXT_DESCRIPTION: Final = (
+    "Resolve a name to entity candidates, using entities you already know to"
+    " rank namesakes. It runs the same resolution as resolve_entity (exact"
+    " alias, then fuzzy and phonetic matches, then a profile search; never a"
+    " silent guess) and then orders the candidates by how many current"
+    " relations connect each to context_entity_ids. Call resolve_entity first;"
+    ' use this when a name is ambiguous ("Alex" names several people) and the'
+    " conversation already gave you entity_ids of related entities, such as"
+    " the person's employer or project. Returns an envelope whose entities"
+    " list every candidate with its tier and context_hits. More than one"
+    " candidate is still ambiguity: ask the user or narrow the question, never"
+    " pick one silently. layer_unavailable means this deployment does not"
+    " process facts."
+)
+_LOOKUP_RELATIONS_DESCRIPTION: Final = (
+    "List relations (adjudicated facts linking two entities, such as Alice"
+    " works_at Acme) matching a pattern: any of subject_entity_id, predicate"
+    " and object_entity_id (entity ids from resolve_entity). Without valid_at"
+    " it lists relations true now; with valid_at, those true at that UTC"
+    " instant. Use it to enumerate facts exactly (everything one entity is"
+    " the subject of, or every pair with one predicate); for answering a"
+    " question use facts_context. Returns an envelope whose facts are the"
+    " relations, with next_cursor: pass it back as cursor for the next page;"
+    " null means the last page. A cursor the deployment cannot read is"
+    " refused with status 400. layer_unavailable means this deployment does"
+    " not process facts."
+)
+_LOOKUP_OBSERVATIONS_DESCRIPTION: Final = (
+    "List one entity's current observations: facts about a single entity,"
+    " such as Acme's headcount or Alice's role. Takes the entity_id from"
+    " resolve_entity. Without property_query it lists them a page at a time"
+    " (limit and cursor; pass next_cursor back, null ends). With"
+    " property_query it returns the k observations whose property best"
+    " matches those words, with no cursor. layer_unavailable means this"
+    " deployment does not process facts."
+)
+_HYDRATE_RELATION_DESCRIPTION: Final = (
+    "Trace one relation back to its proof: the claims that support it and the"
+    " source documents and passages they came from. Use it to show the user"
+    " where a fact comes from, or to check a fact before relying on it; to"
+    " see why the memory adopted or changed it, use transcript_relation."
+    " Returns an envelope with the relation, its evidence and sources."
+    " layer_unavailable means this deployment does not process facts."
+)
+_TRANSCRIPT_RELATION_DESCRIPTION: Final = (
+    "Explain why the memory believes one relation: the bounded record of the"
+    " decisions that adopted, changed or closed it, each with its reason and"
+    " evidence. Use it when the user asks why a fact is held or why it"
+    " changed; to see the supporting sources, use hydrate_relation. Returns"
+    " an envelope whose transcript lists the decisions in order."
+    " layer_unavailable means this deployment does not process facts."
+)
+_GRAPH_NEIGHBORHOOD_DESCRIPTION: Final = (
+    "Map the entity graph around one entity: the entities and relations"
+    " within hops steps (1 to 4, default 2). Use it to see how an entity is"
+    " connected; for answering a question use facts_context. predicates"
+    " follows only those relation types. valid_at with believed_at (both or"
+    " neither) reads the graph as true at valid_at, as the memory believed it"
+    " at believed_at; without them it reads now. include_paths also returns"
+    " how each entity was reached. Returns an envelope with nodes, edges and"
+    " next_cursor: pass it back as cursor for the next page (the cursor keeps"
+    " the first page's clocks); null means the last page. A busy or slow"
+    " graph answers status 503: retry later. layer_unavailable means this"
+    " deployment does not process facts."
+)
+_GRAPH_PATH_DESCRIPTION: Final = (
+    "Find how two entities are connected: every shortest path between them,"
+    " up to max_hops relations long (1 to 6, default 4). Use it for questions"
+    ' such as "how is Alice connected to Acme". predicates follows only those'
+    " relation types; valid_at with believed_at (both or neither) reads the"
+    " graph at that time instead of now. Returns an envelope with the paths,"
+    " their nodes and edges; no path means none within max_hops. A busy or"
+    " slow graph answers status 503: retry later. layer_unavailable means"
+    " this deployment does not process facts."
+)
+_GRAPH_CITATION_PATH_DESCRIPTION: Final = (
+    "Find how one document leads to another through references (one document"
+    " citing, linking, amending or replying to another), following them in"
+    " their direction up to max_hops steps (1 to 6, default 6). Use it for"
+    ' questions such as "does this contract rely on that policy, and through'
+    ' what". Returns an envelope with the paths; no path means none within'
+    " max_hops. A busy or slow graph answers status 503: retry later."
+)
+_REFERENCE_GENERATIONS_DESCRIPTION: Final = (
+    "Check the reference sets recorded for one document version, newest"
+    " first. Each generation has origin (supplied by set_references, or"
+    " extracted by the pipeline), status, item_count and timestamps. status:"
+    " pending (the pipeline has not validated it yet), active (the version's"
+    " references), rejected (errors lists each failing item, field and"
+    " reason; the earlier active set stays) or superseded. Use it after"
+    " set_references to confirm the new set became active. To read the"
+    " references themselves use document_references. document_not_found or"
+    " version_not_found means the id is unknown: do not retry it."
+)
+_SET_REFERENCES_DESCRIPTION: Final = (
+    "Replace the references one document version makes to other documents"
+    " with a complete set: a reference left out is removed and an empty list"
+    " removes them all. References the pipeline extracts are kept separately"
+    " and are not affected. Use it only when the user asks to record or"
+    " correct which documents or sections a version cites, amends, implements"
+    " or refers to. Each reference has kind (cites, links_to, attaches,"
+    " replies_to, refers_to, amends, implements); target, the cited document"
+    " by its source identity (source_kind and source_ref as it was or will be"
+    " ingested; section_key for one section; version_key for one version,"
+    " required with binding pinned, whereas floating follows whichever"
+    " version is in force); optionally from_section_key (the citing section;"
+    " omitted: the whole version); and, for amends, change_date_known, with"
+    " change_effective_from when the date is known. At most"
+    f" {SET_REFERENCES_MAX} references per call; a larger set goes through"
+    " the HTTP API or the SDK. The latest call wins: the same set again is a"
+    " harmless retry, and a new set becomes a pending generation that the"
+    " pipeline validates as a whole (an unknown from_section_key rejects the"
+    " set and the earlier one stays). Returns outcome (created, unchanged or"
+    " pending_cancelled) and the generation; confirm it with"
+    " reference_generations. document_not_found or version_not_found means"
+    " the id is unknown: do not retry it."
+)
+_SET_EFFECTIVE_PERIODS_DESCRIPTION: Final = (
+    "Declare when one document version's text is in force, such as a policy"
+    " edition in force from 2026-01-01, by replacing the version's complete"
+    " set of periods. Use it only when the user asks to record or correct"
+    " when a version applies; at ingest, effective_from does this. Each"
+    " period has effective_from (included) and optionally effective_until"
+    " (excluded), both UTC; without effective_until the period lasts until"
+    " the next declared start in the document. Periods left out are"
+    " retracted; an empty list leaves the version in force at no time while"
+    " the document keeps effective time (clear_effective_time leaves it)."
+    " Nothing is reprocessed, and the change is recorded, so a read pinned to"
+    " an earlier time still sees the old periods; to undo, call again with"
+    " the previous periods (section_history and search_documents show them)."
+    " Returns the version's periods with declared and retracted counts."
+    " Refusals: status 409 effective_period_conflict (another version already"
+    " starts at that instant), 422 effective_time_requires_snapshot (a living"
+    " document has no editions), document_not_found or version_not_found (an"
+    " unknown id: do not retry it)."
+)
+_CLEAR_EFFECTIVE_TIME_DESCRIPTION: Final = (
+    "Take a document out of effective time: retract the declared periods of"
+    " all its versions, so its newest processed version is current again."
+    " Use it only when the user says the document's versions are not"
+    " editions in force at different times (for example, periods declared by"
+    " mistake). The change is recorded, so a read pinned to an earlier time"
+    " still sees the periods; to undo, declare them again with"
+    " set_effective_periods. Returns retracted and cleared_at (null when the"
+    " document had no effective time). document_not_found means the id is"
+    " unknown: do not retry it."
+)
+
+_REFERENCE_INPUT: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["kind", "target"],
+    "properties": {
+        "kind": {
+            "type": "string",
+            "enum": [
+                "cites",
+                "links_to",
+                "attaches",
+                "replies_to",
+                "refers_to",
+                "amends",
+                "implements",
+            ],
+        },
+        "from_section_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.:/-]+$",
+            "description": "The citing section's key; omit for the whole version.",
+        },
+        "target": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["source_kind", "source_ref"],
+            "properties": {
+                "source_kind": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": SOURCE_KIND_MAX_LEN,
+                },
+                "source_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": SOURCE_REF_MAX_LEN,
+                },
+                "version_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": VERSION_KEY_MAX_LEN,
+                    "description": "The cited version; required when pinned.",
+                },
+                "section_key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^[A-Za-z0-9_.:/-]+$",
+                    "description": "The cited section; omit for the whole document.",
+                },
+            },
+        },
+        "binding": {
+            "type": "string",
+            "enum": ["floating", "pinned"],
+            "default": "floating",
+        },
+        "change_effective_from": _instant(
+            "amends only: when the amendment takes effect (UTC)."
+        ),
+        "change_date_known": {
+            "type": "boolean",
+            "description": "amends only, and required there.",
+        },
+        "source_label": {"type": "string", "minLength": 1, "maxLength": 200},
+        "context": {"type": "string", "minLength": 1, "maxLength": 2000},
+    },
+}
+
+_EFFECTIVE_PERIOD: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["effective_from"],
+    "properties": {
+        "effective_from": _instant("Start, included (UTC)."),
+        "effective_until": _instant(
+            "End, excluded (UTC); omit to run to the next start."
+        ),
+    },
+}
+
+_ROUTE_TOOLS: Final[tuple[ToolDefinition, ...]] = (
+    ToolDefinition(
+        name="list_documents",
+        description=_LIST_DOCUMENTS_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "limit": _page_limit(maximum=200, default=50),
+                "cursor": _CURSOR,
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "ingesting",
+                        "converting",
+                        "structuring",
+                        "ready",
+                        "failed",
+                    ],
+                    "description": "Keep documents whose newest version is in this state.",
+                },
+                "include_archived": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Also list archived documents.",
+                },
+            }
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /documents",
+    ),
+    ToolDefinition(
+        name="list_forgets",
+        description=_LIST_FORGETS_DESCRIPTION,
+        input_schema=_object_schema(properties={}),
+        permission="memory:write",
+        tool_version=1,
+        http_route="GET /forgets",
+    ),
+    ToolDefinition(
+        name="get_forget",
+        description=_GET_FORGET_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={"forget_id": _uuid("The forget_id forget_document returned.")},
+            required=("forget_id",),
+        ),
+        permission="memory:write",
+        tool_version=1,
+        http_route="GET /forgets/{forget_id}",
+    ),
+    ToolDefinition(
+        name="processing_layers",
+        description=_PROCESSING_LAYERS_DESCRIPTION,
+        input_schema=_object_schema(properties={}),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /processing-layers",
+    ),
+    ToolDefinition(
+        name="search_claims",
+        description=_SEARCH_CLAIMS_DESCRIPTION,
+        input_schema=_search_input_schema(what="the claims"),
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /search/claims",
+    ),
+    ToolDefinition(
+        name="search_chunks",
+        description=_SEARCH_CHUNKS_DESCRIPTION,
+        input_schema=_search_input_schema(what="the passages"),
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /search/chunks",
+    ),
+    ToolDefinition(
+        name="resolve_entity_in_context",
+        description=_RESOLVE_ENTITY_IN_CONTEXT_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512,
+                    "description": "The name to resolve.",
+                },
+                "context_entity_ids": {
+                    "type": "array",
+                    "items": {"type": "string", "format": "uuid"},
+                    "minItems": 1,
+                    "maxItems": RESOLVE_CONTEXT_MAX,
+                    "description": "Entities the name is likely related to.",
+                },
+            },
+            required=("name", "context_entity_ids"),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /resolve",
+    ),
+    ToolDefinition(
+        name="lookup_relations",
+        description=_LOOKUP_RELATIONS_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "subject_entity_id": _uuid("Relations from this entity."),
+                "predicate": {**_PREDICATE, "description": "Relations of this type."},
+                "object_entity_id": _uuid("Relations to this entity."),
+                "valid_at": _instant(
+                    "Relations true at this UTC instant; omit for now."
+                ),
+                "limit": _page_limit(maximum=200, default=50),
+                "cursor": _CURSOR,
+            }
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /lookup/relations",
+    ),
+    ToolDefinition(
+        name="lookup_observations",
+        description=_LOOKUP_OBSERVATIONS_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "entity_id": _uuid("The entity, from resolve_entity."),
+                "property_query": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096,
+                    "description": "Words naming the property; excludes cursor.",
+                },
+                "k": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 400,
+                    "default": 10,
+                    "description": "With property_query: maximum results.",
+                },
+                "limit": {
+                    **_page_limit(maximum=200, default=50),
+                    "description": "Without property_query: page size.",
+                },
+                "cursor": {
+                    **_CURSOR,
+                    "description": (
+                        "Without property_query: the previous page's next_cursor."
+                    ),
+                },
+            },
+            required=("entity_id",),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /lookup/observations",
+    ),
+    ToolDefinition(
+        name="hydrate_relation",
+        description=_HYDRATE_RELATION_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={"relation_id": _RELATION_ID}, required=("relation_id",)
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /hydrate/relation/{relation_id}",
+    ),
+    ToolDefinition(
+        name="transcript_relation",
+        description=_TRANSCRIPT_RELATION_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={"relation_id": _RELATION_ID}, required=("relation_id",)
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /transcript/relation/{relation_id}",
+    ),
+    ToolDefinition(
+        name="graph_neighborhood",
+        description=_GRAPH_NEIGHBORHOOD_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "entity_id": _uuid("The entity at the center, from resolve_entity."),
+                "hops": {"type": "integer", "minimum": 1, "maximum": 4, "default": 2},
+                "predicates": _GRAPH_PREDICATES,
+                "valid_at": _VALID_AT,
+                "believed_at": _BELIEVED_AT,
+                "limit": _page_limit(maximum=500, default=100),
+                "cursor": {**_CURSOR, "maxLength": 2048},
+                "include_paths": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Also return how each entity was reached.",
+                },
+            },
+            required=("entity_id",),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /graph/neighborhood",
+    ),
+    ToolDefinition(
+        name="graph_path",
+        description=_GRAPH_PATH_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "from_entity_id": _uuid("One entity, from resolve_entity."),
+                "to_entity_id": _uuid("The other entity."),
+                "max_hops": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 6,
+                    "default": 4,
+                },
+                "predicates": _GRAPH_PREDICATES,
+                "valid_at": _VALID_AT,
+                "believed_at": _BELIEVED_AT,
+            },
+            required=("from_entity_id", "to_entity_id"),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /graph/path",
+    ),
+    ToolDefinition(
+        name="graph_citation_path",
+        description=_GRAPH_CITATION_PATH_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "from_doc_id": _uuid("The citing document's doc_id."),
+                "to_doc_id": _uuid("The cited document's doc_id."),
+                "max_hops": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 6,
+                    "default": 6,
+                },
+            },
+            required=("from_doc_id", "to_doc_id"),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /graph/citation-path",
+    ),
+    ToolDefinition(
+        name="reference_generations",
+        description=_REFERENCE_GENERATIONS_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={"doc_id": _DOC_ID, "version_id": _VERSION_ID},
+            required=("doc_id", "version_id"),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /documents/{doc_id}/versions/{version_id}/references",
+    ),
+    ToolDefinition(
+        name="set_references",
+        description=_SET_REFERENCES_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "doc_id": _DOC_ID,
+                "version_id": _VERSION_ID,
+                "references": {
+                    "type": "array",
+                    "items": _REFERENCE_INPUT,
+                    "maxItems": SET_REFERENCES_MAX,
+                    "description": "The version's complete set of references.",
+                },
+            },
+            required=("doc_id", "version_id", "references"),
+        ),
+        permission="memory:write",
+        tool_version=1,
+        http_route="PUT /documents/{doc_id}/versions/{version_id}/references",
+    ),
+    ToolDefinition(
+        name="set_effective_periods",
+        description=_SET_EFFECTIVE_PERIODS_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={
+                "doc_id": _DOC_ID,
+                "version_id": _VERSION_ID,
+                "periods": {
+                    "type": "array",
+                    "items": _EFFECTIVE_PERIOD,
+                    "maxItems": EFFECTIVE_PERIODS_MAX,
+                    "description": (
+                        "The version's complete set of periods, no two starting"
+                        " at the same instant."
+                    ),
+                },
+            },
+            required=("doc_id", "version_id", "periods"),
+        ),
+        permission="memory:write",
+        tool_version=1,
+        http_route="PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
+    ),
+    ToolDefinition(
+        name="clear_effective_time",
+        description=_CLEAR_EFFECTIVE_TIME_DESCRIPTION,
+        input_schema=_object_schema(
+            properties={"doc_id": _DOC_ID}, required=("doc_id",)
+        ),
+        permission="memory:write",
+        tool_version=1,
+        http_route="DELETE /documents/{doc_id}/effective-periods",
+    ),
+)
+
 _TOOLS: Final[tuple[ToolDefinition, ...]] = (
     ToolDefinition(
         name=INGEST_TOOL_NAME,
@@ -1437,6 +2168,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         tool_version=1,
         http_route="POST /query/saved/{namespace}/{name}/run",
     ),
+    *_ROUTE_TOOLS,
 )
 
 _BY_NAME: Final[dict[str, ToolDefinition]] = {

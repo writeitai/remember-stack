@@ -23,11 +23,13 @@ from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PROJECT_ARGUMENT
 from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import ROUTE_TOOL_NAMES
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import validate_arguments
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
+from remember.models import ProcessingLayerStates
 from remember.models import SectionHistoryPage
 from remember.models import SectionHistoryRequest
 from rememberstack.model import DeploymentBuildInfo
@@ -67,7 +69,7 @@ def _properties(entry: dict[str, object]) -> dict[str, object]:
 
 
 def test_catalogue_lists_exactly_the_memory_tools() -> None:
-    """Write tools, the four operations and the seven query tools — no examples."""
+    """Write tools, operations, query and route tools — no examples."""
     names = [definition.name for definition in memory_tools()]
     assert names == [
         "ingest",
@@ -86,6 +88,7 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         *OPERATION_TOOL_NAMES,
         ADJACENT_CHUNKS_TOOL_NAME,
         *OPEN_QUERY_TOOL_NAMES,
+        *ROUTE_TOOL_NAMES,
     ]
     assert len(set(names)) == len(names)
     assert not any(name.startswith("examples.") for name in names)
@@ -164,6 +167,9 @@ def test_permission_matches_the_scope_the_engine_requires() -> None:
         concrete = (
             path.replace("{doc_id}", str(uuid4()))
             .replace("{chunk_id}", str(uuid4()))
+            .replace("{version_id}", str(uuid4()))
+            .replace("{forget_id}", str(uuid4()))
+            .replace("{relation_id}", str(uuid4()))
             .replace("{namespace}", "examples")
             .replace("{name}", "top_entities")
         )
@@ -294,9 +300,24 @@ def _deployment_tools(**composed: object) -> dict[str, int]:
     return body["tools"]
 
 
+_ENGINE_ROUTE_TOOLS = {
+    "search_claims",
+    "search_chunks",
+    "resolve_entity_in_context",
+    "lookup_relations",
+    "lookup_observations",
+    "hydrate_relation",
+    "transcript_relation",
+}
+
+
 def test_deployment_reports_exactly_the_composed_tools() -> None:
-    """`tools` follows composition: query tools with open query, archive with archive."""
-    assert _deployment_tools() == {}
+    """`tools` follows composition: query tools with open query, archive with archive.
+
+    The engine's own read routes are mounted on every API, so their tools
+    are always served.
+    """
+    assert set(_deployment_tools()) == _ENGINE_ROUTE_TOOLS
 
     surface = MagicMock()
     surface.deployment_id = _DEPLOYMENT
@@ -313,18 +334,85 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         section_history=MagicMock(),
         document_references=MagicMock(),
         tags=MagicMock(),
+        documents=MagicMock(),
+        processing_layers=_Layers(claims="enabled", facts="enabled"),
+        graph=MagicMock(),
+        references=MagicMock(),
+        effective_time=MagicMock(),
     )
     assert everything == {
         definition.name: definition.tool_version for definition in memory_tools()
     }
 
     operations_only = _deployment_tools(surface=surface)
-    assert set(operations_only) == {*OPERATION_TOOL_NAMES, ADJACENT_CHUNKS_TOOL_NAME}
+    assert set(operations_only) == {
+        *OPERATION_TOOL_NAMES,
+        ADJACENT_CHUNKS_TOOL_NAME,
+        *_ENGINE_ROUTE_TOOLS,
+    }
     assert operations_only["facts_context"] == tool("facts_context").tool_version
     assert (
         operations_only[ADJACENT_CHUNKS_TOOL_NAME]
         == tool(ADJACENT_CHUNKS_TOOL_NAME).tool_version
     )
+
+
+class _Layers:
+    """A processing-layers port reporting fixed states (D143)."""
+
+    def __init__(self, *, claims: str, facts: str) -> None:
+        self._states = ProcessingLayerStates(claims=claims, facts=facts)  # type: ignore[arg-type]
+
+    def states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
+        return self._states
+
+
+@pytest.mark.parametrize(
+    ("claims", "facts", "withheld"),
+    [
+        ("enabled", "enabled", set()),
+        ("backfilling", "backfilling", set()),
+        (
+            "enabled",
+            "disabled",
+            {
+                "facts_context",
+                "resolve_entity",
+                "resolve_entity_in_context",
+                "lookup_relations",
+                "lookup_observations",
+                "hydrate_relation",
+                "transcript_relation",
+                "graph_neighborhood",
+                "graph_path",
+            },
+        ),
+        ("disabled", "enabled", {"search_claims"}),
+    ],
+)
+def test_deployment_withholds_route_tools_of_unserved_layers(
+    claims: str, facts: str, withheld: set[str]
+) -> None:
+    """D143 §7.4: a tool whose only layer is disabled is not listed."""
+    surface = MagicMock()
+    surface.deployment_id = _DEPLOYMENT
+    served = _deployment_tools(
+        surface=surface,
+        graph=MagicMock(),
+        documents=MagicMock(),
+        processing_layers=_Layers(claims=claims, facts=facts),
+    )
+    composed = {
+        *OPERATION_TOOL_NAMES,
+        ADJACENT_CHUNKS_TOOL_NAME,
+        *_ENGINE_ROUTE_TOOLS,
+        "graph_neighborhood",
+        "graph_path",
+        "graph_citation_path",
+        "list_documents",
+        "processing_layers",
+    }
+    assert set(served) == composed - withheld
 
 
 def test_read_only_mode_preserves_adjacent_chunks() -> None:

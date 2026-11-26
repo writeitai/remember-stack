@@ -14,6 +14,7 @@ from remember.mcp_tools._definitions import FORGET_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools._definitions import ROUTE_TOOL_NAMES
 from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools._definitions import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools._definitions import TAG_TOOL_NAMES
@@ -30,6 +31,7 @@ from remember.mcp_tools._memory import parse_pipeline_readiness_arguments
 from remember.mcp_tools._memory import reject_unknown_keys
 from remember.mcp_tools._query import validate_open_query_arguments
 from remember.mcp_tools._references import parse_document_references_arguments
+from remember.mcp_tools._routes import parse_route_tool_arguments
 from remember.mcp_tools._sections import parse_section_history_arguments
 from remember.mcp_tools._tags import parse_tag_tool_arguments
 from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
@@ -91,7 +93,8 @@ def validate_arguments(
     also requires ``confirm: true``) return ``doc_id`` as a UUID;
     ``search_documents``, ``section_history`` and ``document_references``
     return their ``request`` model; the tag tools return their parsed
-    ``tag``/``doc_id``/``query`` and ``request`` model.
+    ``tag``/``doc_id``/``query`` and ``request`` model; the route tools
+    return their arguments unchanged once every value is checked.
 
     Raises :class:`ToolArgumentError` for the memory write tools and the
     assured operations, and ``SandboxRejection`` (the open-query error
@@ -129,6 +132,11 @@ def validate_arguments(
         return validate_open_query_arguments(name=name, arguments=arguments)
     if name == ADJACENT_CHUNKS_TOOL_NAME:
         return parse_adjacent_chunks_arguments(arguments=arguments)
+    if name in ROUTE_TOOL_NAMES:
+        # Checked in full, returned as given: the host parses them again
+        # when it sends them (handle_route_tool).
+        parse_route_tool_arguments(name=name, arguments=arguments)
+        return dict(arguments)
     # An assured operation: the engine validates values against its registry;
     # the catalogue enforces the closed argument object, so a stray key such as
     # a host's `project` routing argument is refused before it is sent.

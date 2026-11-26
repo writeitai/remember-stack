@@ -106,6 +106,7 @@ src/tests/surfaces/test_document_archive_http.py
 src/tests/surfaces/test_document_inventory_http.py
 src/tests/surfaces/test_graph_http_api.py
 src/tests/surfaces/test_http_api_robustness.py
+src/tests/surfaces/test_mcp_route_tools.py
 src/tests/surfaces/test_mcp_tool_catalogue.py
 src/tests/surfaces/test_context_retrieval_budget.py
 src/tests/surfaces/test_d143_defaults_unchanged.py

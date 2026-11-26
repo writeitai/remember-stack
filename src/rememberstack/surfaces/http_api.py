@@ -1224,14 +1224,29 @@ def _served_tools(
     document_references: bool = False,
     tags: bool = False,
     forget: bool = False,
+    documents: bool = False,
+    processing_layers: bool = False,
+    graph: bool = False,
+    references: bool = False,
+    effective_time: bool = False,
 ) -> dict[str, int]:
     """Catalogue tool name → ``tool_version`` for every tool this API serves.
 
     A tool is listed exactly when the route it calls is composed, so a host
     renders only tools this deployment can answer, at the version it answers
-    them (D136 §3.4).
+    them (D136 §3.4). The engine's own read routes are always composed.
     """
-    names: list[str] = []
+    names: list[str] = list(_ENGINE_ROUTE_TOOLS)
+    if documents:
+        names.append("list_documents")
+    if processing_layers:
+        names.append("processing_layers")
+    if graph:
+        names.extend(_GRAPH_TOOLS)
+    if references:
+        names.extend(("reference_generations", "set_references"))
+    if effective_time:
+        names.extend(("set_effective_periods", "clear_effective_time"))
     if ingest:
         names.append(INGEST_TOOL_NAME)
     if pipeline_readiness:
@@ -1239,7 +1254,7 @@ def _served_tools(
     if archive:
         names.extend(ARCHIVE_TOOL_NAMES)
     if forget:
-        names.append(FORGET_DOCUMENT_TOOL_NAME)
+        names.extend((FORGET_DOCUMENT_TOOL_NAME, "list_forgets", "get_forget"))
     if document_search:
         names.append(SEARCH_DOCUMENTS_TOOL_NAME)
     if section_history:
@@ -1269,7 +1284,52 @@ def _deployment_tools(deployment: ApiDeployment) -> dict[str, int]:
         document_references=deployment.document_references is not None,
         tags=deployment.tags is not None,
         forget=deployment.forget is not None,
+        documents=deployment.documents is not None,
+        processing_layers=deployment.processing_layers is not None,
+        graph=deployment.graph is not None,
+        references=deployment.references is not None,
+        effective_time=deployment.effective_time is not None,
     )
+
+
+#: The route tools of the engine's read routes, which every API mounts.
+_ENGINE_ROUTE_TOOLS: Final = (
+    "search_claims",
+    "search_chunks",
+    "resolve_entity_in_context",
+    "lookup_relations",
+    "lookup_observations",
+    "hydrate_relation",
+    "transcript_relation",
+)
+_GRAPH_TOOLS: Final = ("graph_neighborhood", "graph_path", "graph_citation_path")
+#: Route tools that read only the facts layer (D143 §7.2).
+_FACTS_ONLY_ROUTE_TOOLS: Final = frozenset(
+    {
+        "resolve_entity_in_context",
+        "lookup_relations",
+        "lookup_observations",
+        "hydrate_relation",
+        "transcript_relation",
+        "graph_neighborhood",
+        "graph_path",
+    }
+)
+
+
+def _unserved_route_tools(
+    *, layers: ProcessingLayersPort | None, deployment_id: UUID
+) -> frozenset[str]:
+    """Route tools whose only layer the deployment does not serve (D143 §7.4)."""
+    if layers is None:
+        return frozenset()
+    states = layers.states(deployment_id=deployment_id)
+    unserved: set[str] = set()
+    if states.facts == "disabled":
+        unserved |= _FACTS_ONLY_ROUTE_TOOLS
+    if states.claims == "disabled":
+        unserved.add("search_claims")
+    return frozenset(unserved)
 
 
 def _mount_build_info(*, app: FastAPI, tools: dict[str, int]) -> None:
@@ -1299,6 +1359,8 @@ def _mount_build_info(*, app: FastAPI, tools: dict[str, int]) -> None:
         """Report which code, model bindings and tools are serving, before any work."""
         # D143 §7.4: tools that read only an unserved layer are not listed.
         unserved = unserved_operation_names(
+            layers=deployment.processing_layers, deployment_id=deployment.deployment_id
+        ) | _unserved_route_tools(
             layers=deployment.processing_layers, deployment_id=deployment.deployment_id
         )
         build_info = _served(deployment.build_info)

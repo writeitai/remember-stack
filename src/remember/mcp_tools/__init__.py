@@ -27,6 +27,7 @@ from remember.mcp_tools._definitions import Permission
 from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools._definitions import PROJECT_ARGUMENT
 from remember.mcp_tools._definitions import render_tools_list
+from remember.mcp_tools._definitions import ROUTE_TOOL_NAMES
 from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools._definitions import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools._definitions import TAG_READ_TOOL_NAMES
@@ -53,6 +54,7 @@ from remember.mcp_tools._memory import MemoryWriteBackend
 from remember.mcp_tools._query import validate_saved_query_identifier
 from remember.mcp_tools._references import DocumentReferencesBackend
 from remember.mcp_tools._references import handle_document_references_tool
+from remember.mcp_tools._routes import handle_route_tool
 from remember.mcp_tools._sections import handle_section_history_tool
 from remember.mcp_tools._sections import SectionHistoryBackend
 from remember.mcp_tools._tags import handle_tag_tool
@@ -73,6 +75,7 @@ __all__ = (
     "OPERATION_TOOL_NAMES",
     "PIPELINE_READINESS_TOOL_NAME",
     "PROJECT_ARGUMENT",
+    "ROUTE_TOOL_NAMES",
     "SEARCH_DOCUMENTS_TOOL_NAME",
     "SECTION_HISTORY_TOOL_NAME",
     "SectionHistoryBackend",
@@ -93,6 +96,7 @@ __all__ = (
     "handle_archive_tool",
     "handle_forget_document_tool",
     "handle_document_references_tool",
+    "handle_route_tool",
     "invalid_arguments",
     "layer_unavailable",
     "handle_memory_write_tool",

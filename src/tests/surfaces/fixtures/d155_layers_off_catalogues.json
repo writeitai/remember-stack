@@ -10,6 +10,7 @@
         "adjacent_chunks": 1,
         "archive_document": 1,
         "claims_and_sources_context": 6,
+        "clear_effective_time": 1,
         "combined_context": 7,
         "create_tag": 1,
         "delete_tag": 1,
@@ -18,15 +19,25 @@
         "document_references": 1,
         "explain_sql": 1,
         "forget_document": 1,
+        "get_forget": 1,
+        "graph_citation_path": 1,
         "ingest": 4,
+        "list_documents": 1,
+        "list_forgets": 1,
         "list_saved_queries": 1,
         "list_tags": 1,
         "pipeline_readiness": 1,
+        "processing_layers": 1,
         "query_sql": 1,
+        "reference_generations": 1,
         "run_saved_query": 1,
+        "search_chunks": 1,
+        "search_claims": 1,
         "search_documents": 5,
         "search_query_space": 1,
         "section_history": 1,
+        "set_effective_periods": 1,
+        "set_references": 1,
         "unarchive_document": 1,
         "update_document_tags": 1,
         "update_tag": 1
@@ -320,6 +331,39 @@
         },
         {
           "name": "run_saved_query"
+        },
+        {
+          "name": "list_documents"
+        },
+        {
+          "name": "list_forgets"
+        },
+        {
+          "name": "get_forget"
+        },
+        {
+          "name": "processing_layers"
+        },
+        {
+          "name": "search_claims"
+        },
+        {
+          "name": "search_chunks"
+        },
+        {
+          "name": "graph_citation_path"
+        },
+        {
+          "name": "reference_generations"
+        },
+        {
+          "name": "set_references"
+        },
+        {
+          "name": "set_effective_periods"
+        },
+        {
+          "name": "clear_effective_time"
         }
       ],
       "read_only": [
@@ -585,6 +629,24 @@
         },
         {
           "name": "run_saved_query"
+        },
+        {
+          "name": "list_documents"
+        },
+        {
+          "name": "processing_layers"
+        },
+        {
+          "name": "search_claims"
+        },
+        {
+          "name": "search_chunks"
+        },
+        {
+          "name": "graph_citation_path"
+        },
+        {
+          "name": "reference_generations"
         }
       ],
       "stdio": [
@@ -874,6 +936,39 @@
         },
         {
           "name": "run_saved_query"
+        },
+        {
+          "name": "list_documents"
+        },
+        {
+          "name": "list_forgets"
+        },
+        {
+          "name": "get_forget"
+        },
+        {
+          "name": "processing_layers"
+        },
+        {
+          "name": "search_claims"
+        },
+        {
+          "name": "search_chunks"
+        },
+        {
+          "name": "graph_citation_path"
+        },
+        {
+          "name": "reference_generations"
+        },
+        {
+          "name": "set_references"
+        },
+        {
+          "name": "set_effective_periods"
+        },
+        {
+          "name": "clear_effective_time"
         }
       ]
     },
@@ -1182,6 +1277,7 @@
         "adjacent_chunks": 1,
         "archive_document": 1,
         "claims_and_sources_context": 6,
+        "clear_effective_time": 1,
         "combined_context": 7,
         "create_tag": 1,
         "delete_tag": 1,
@@ -1190,15 +1286,24 @@
         "document_references": 1,
         "explain_sql": 1,
         "forget_document": 1,
+        "get_forget": 1,
+        "graph_citation_path": 1,
         "ingest": 4,
+        "list_documents": 1,
+        "list_forgets": 1,
         "list_saved_queries": 1,
         "list_tags": 1,
         "pipeline_readiness": 1,
+        "processing_layers": 1,
         "query_sql": 1,
+        "reference_generations": 1,
         "run_saved_query": 1,
+        "search_chunks": 1,
         "search_documents": 5,
         "search_query_space": 1,
         "section_history": 1,
+        "set_effective_periods": 1,
+        "set_references": 1,
         "unarchive_document": 1,
         "update_document_tags": 1,
         "update_tag": 1
@@ -1492,6 +1597,36 @@
         },
         {
           "name": "run_saved_query"
+        },
+        {
+          "name": "list_documents"
+        },
+        {
+          "name": "list_forgets"
+        },
+        {
+          "name": "get_forget"
+        },
+        {
+          "name": "processing_layers"
+        },
+        {
+          "name": "search_chunks"
+        },
+        {
+          "name": "graph_citation_path"
+        },
+        {
+          "name": "reference_generations"
+        },
+        {
+          "name": "set_references"
+        },
+        {
+          "name": "set_effective_periods"
+        },
+        {
+          "name": "clear_effective_time"
         }
       ],
       "read_only": [
@@ -1757,6 +1892,21 @@
         },
         {
           "name": "run_saved_query"
+        },
+        {
+          "name": "list_documents"
+        },
+        {
+          "name": "processing_layers"
+        },
+        {
+          "name": "search_chunks"
+        },
+        {
+          "name": "graph_citation_path"
+        },
+        {
+          "name": "reference_generations"
         }
       ],
       "stdio": [
@@ -2046,6 +2196,36 @@
         },
         {
           "name": "run_saved_query"
+        },
+        {
+          "name": "list_documents"
+        },
+        {
+          "name": "list_forgets"
+        },
+        {
+          "name": "get_forget"
+        },
+        {
+          "name": "processing_layers"
+        },
+        {
+          "name": "search_chunks"
+        },
+        {
+          "name": "graph_citation_path"
+        },
+        {
+          "name": "reference_generations"
+        },
+        {
+          "name": "set_references"
+        },
+        {
+          "name": "set_effective_periods"
+        },
+        {
+          "name": "clear_effective_time"
         }
       ]
     },

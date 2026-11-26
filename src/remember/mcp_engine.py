@@ -33,6 +33,7 @@ from remember.mcp_tools import handle_archive_tool
 from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_forget_document_tool
 from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import handle_route_tool
 from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import handle_section_history_tool
 from remember.mcp_tools import handle_tag_tool
@@ -41,6 +42,7 @@ from remember.mcp_tools import memory_tools
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import ROUTE_TOOL_NAMES
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools import TAG_TOOL_NAMES
@@ -279,6 +281,10 @@ class EngineMcpServer:
             return handle_tag_tool(
                 name=name, arguments=arguments, backend=self._backend
             )
+        if name in ROUTE_TOOL_NAMES:
+            return handle_route_tool(
+                name=name, arguments=arguments, client=self._client
+            )
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(
                 name=name,
@@ -324,11 +330,24 @@ _TOOL_LAYERS: dict[str, frozenset[str]] = {
     SEARCH_DOCUMENTS_TOOL_NAME: frozenset({"sources"}),
     SECTION_HISTORY_TOOL_NAME: frozenset({"sources"}),
     DOCUMENT_REFERENCES_TOOL_NAME: frozenset({"sources"}),
+    "list_documents": frozenset({"sources"}),
+    "search_chunks": frozenset({"sources"}),
+    "graph_citation_path": frozenset({"sources"}),
+    "reference_generations": frozenset({"sources"}),
+    "search_claims": frozenset({"claims"}),
+    "resolve_entity_in_context": frozenset({"facts"}),
+    "lookup_relations": frozenset({"facts"}),
+    "lookup_observations": frozenset({"facts"}),
+    "hydrate_relation": frozenset({"facts"}),
+    "transcript_relation": frozenset({"facts"}),
+    "graph_neighborhood": frozenset({"facts"}),
+    "graph_path": frozenset({"facts"}),
 }
 """The processing layers a read tool can answer from (D143 §7.2).
 
-Tools not listed (``combined_context``, the open-query and write tools) are
-offered whatever the session's selection; the engine applies it per call.
+Tools not listed (``combined_context``, the open-query, forget-record,
+processing-layer and write tools) are offered whatever the session's
+selection; the engine applies it per call.
 """
 
 

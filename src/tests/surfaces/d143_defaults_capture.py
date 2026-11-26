@@ -19,8 +19,9 @@ the tag port and its five tools, ``ingest``'s ``tags`` argument at
 the three context operations at versions 5, 5 and 6; D159 archive: the
 ``archive_document``/``unarchive_document`` tools replace ``delete_document``,
 and ``include_archived`` moves ``search_documents`` to 5 and the context
-operations to 6, 6 and 7); ``test_d143_defaults_unchanged.py``
-recomputes it.
+operations to 6, 6 and 7; the eighteen route tools that give every public
+HTTP route an MCP tool, served by ``remember mcp`` only);
+``test_d143_defaults_unchanged.py`` recomputes it.
 Run as a script to print the JSON.
 """
 
@@ -105,6 +106,10 @@ def _http(
     extra: dict[str, Any] = {}
     if _accepts(build_api, "processing_layers"):
         extra["processing_layers"] = _UnconfiguredLayers(claims=claims, facts=facts)
+    # Ports only the HTTP API takes; each adds route tools to the tools map.
+    for port in ("documents", "references", "effective_time", "graph"):
+        if _accepts(build_api, port):
+            extra[port] = MagicMock()
     app = build_api(
         engine=MagicMock(),
         deployment_id=_DEPLOYMENT,

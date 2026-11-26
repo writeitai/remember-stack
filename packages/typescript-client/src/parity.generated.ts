@@ -634,6 +634,10 @@ export default {
           "disposition": "public client support export",
           "typescript": "Permission"
         },
+        "ROUTE_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "ROUTE_TOOL_NAMES"
+        },
         "SEARCH_DOCUMENTS_TOOL_NAME": {
           "disposition": "public client support export",
           "typescript": "SEARCH_DOCUMENTS_TOOL_NAME"
@@ -690,6 +694,9 @@ export default {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "handle_memory_write_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_route_tool": {
           "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         },
         "handle_search_documents_tool": {

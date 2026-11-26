@@ -26,6 +26,8 @@ export const TAG_WRITE_TOOL_NAMES=Object.freeze([CREATE_TAG_TOOL_NAME,UPDATE_TAG
 export const TAG_TOOL_NAMES=Object.freeze([...TAG_READ_TOOL_NAMES,...TAG_WRITE_TOOL_NAMES]);
 export const OPEN_QUERY_TOOL_NAMES=Object.freeze(['query_sql','explain_sql','describe_query_space','search_query_space','list_saved_queries','describe_saved_query','run_saved_query']);
 export const OPERATION_TOOL_NAMES=Object.freeze(['resolve_entity','claims_and_sources_context','facts_context','combined_context']);
+/** Tools that each call one public HTTP route; hosts that reach the engine over HTTP serve them. */
+export const ROUTE_TOOL_NAMES=Object.freeze(['list_documents','list_forgets','get_forget','processing_layers','search_claims','search_chunks','resolve_entity_in_context','lookup_relations','lookup_observations','hydrate_relation','transcript_relation','graph_neighborhood','graph_path','graph_citation_path','reference_generations','set_references','set_effective_periods','clear_effective_time']);
 export const MEMORY_WRITE_TOOL_NAMES=Object.freeze([INGEST_TOOL_NAME,PIPELINE_READINESS_TOOL_NAME]);
 export const PROJECT_ARGUMENT=structuredClone(catalogue.projectArgument);
 /** A source-derived tool contract, independent of any MCP host implementation. */

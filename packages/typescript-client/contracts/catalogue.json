@@ -2097,6 +2097,1160 @@
       "name": "run_saved_query",
       "permission": "memory:read",
       "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List this deployment's documents a page at a time, newest first by when each was first stored (re-ingesting a document does not move it). Use it to browse what memory holds or to find documents whose processing failed (status=failed); to find a particular file by name or content use search_documents. status keeps documents whose newest version is in that state (ingesting, converting, structuring, ready, failed). Archived documents are left out unless include_archived is true; each one listed has archived_at. Each document carries doc_id, title, source_kind, source_uri, first_seen_at, tags, serving and its latest version (version_id, version_no, status, error). Pass next_cursor back as cursor for the next page; null means this is the last page. A cursor the deployment cannot read is refused with status 400: list again without cursor.",
+      "destructive": false,
+      "http_route": "GET /documents",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Pass the previous page's next_cursor; omit for the first page.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "include_archived": {
+            "default": false,
+            "description": "Also list archived documents.",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Page size.",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "status": {
+            "description": "Keep documents whose newest version is in this state.",
+            "enum": [
+              "ingesting",
+              "converting",
+              "structuring",
+              "ready",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_documents",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "List this deployment's forget records, oldest first: forget_id, doc_id, status (erasing, waiting_for_redaction, complete), requested_at, completed_at, blocking_k_paths and last_error. A record holds IDs and progress only, never content. Use it when the user asks what has been forgotten or whether forgetting has finished; follow one forget with get_forget. Like forget_document, it needs a key with write permission.",
+      "destructive": false,
+      "http_route": "GET /forgets",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "list_forgets",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Read one forget record by the forget_id that forget_document returned, to follow the erasing that continues after a forget. The forgotten document is already gone from every read, whatever the status. status=erasing: copies derived from it are still being erased in the background and failed sweeps are retried by themselves (last_error names the last one); waiting_for_redaction: authored knowledge pages still cite the document and their owner must remove the citation (blocking_k_paths lists them), so tell the user; complete: nothing derived from it remains (completed_at). Poll no more than every minute or so. A forget_not_found error means the id is unknown: do not retry it. Like forget_document, it needs a key with write permission.",
+      "destructive": false,
+      "http_route": "GET /forgets/{forget_id}",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "forget_id": {
+            "description": "The forget_id forget_document returned.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "forget_id"
+        ],
+        "type": "object"
+      },
+      "name": "get_forget",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Report which processing layers this deployment serves. Source passages are always served; claims (statements extracted from the text) and facts (entities, relations and observations adjudicated from claims) are each enabled, backfilling or disabled. backfilling means the layer is on but documents processed while it was off are still being processed by it, so an empty answer from it does not prove absence. Use it when a tool fails with layer_unavailable, or to decide which tools can answer: with facts disabled use the claim and source tools; with claims disabled use the source tools.",
+      "destructive": false,
+      "http_route": "GET /processing-layers",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object"
+      },
+      "name": "processing_layers",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Search claims: single statements extracted from the documents, as evidence (who said what, where and when), including statements the memory has not adopted as facts. Use it to find what sources assert about a topic; for current adjudicated facts use facts_context, and for one ranked context of claims and passages use claims_and_sources_context. channel: semantic (meaning, default) or bm25 (exact words). documents keeps claims found in matching documents (the search_documents filters and tags; call list_tags before filtering by tag). time chooses the editions read for documents with declared effective periods (default: in force now). Returns an evidence envelope: evidence lists each claim with its source passage and document, truncation says whether k cut the results, and freshness says how current the read is. A claim is evidence, never current truth. layer_unavailable means this deployment does not process claims; unknown_tag names a tag that is not registered.",
+      "destructive": false,
+      "http_route": "POST /search/claims",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "default": "semantic",
+            "description": "semantic matches meaning; bm25 matches exact words.",
+            "enum": [
+              "semantic",
+              "bm25"
+            ],
+            "type": "string"
+          },
+          "documents": {
+            "additionalProperties": false,
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+                "minProperties": 1,
+                "properties": {
+                  "all": {
+                    "description": "The document has every one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "any": {
+                    "description": "The document has at least one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "none": {
+                    "description": "The document has none of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "type": "object"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "k": {
+            "default": 10,
+            "description": "Maximum results.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "What to look for in the claims.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "time": {
+            "default": {
+              "mode": "current"
+            },
+            "description": "For documents with declared effective periods, which text counts: current (default, in force now), at an instant, overlap a window, or history. Other documents are read as they are.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "current"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "at"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "at"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "from": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "overlap"
+                  },
+                  "to": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "from",
+                  "to"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "history"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              }
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_claims",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Search source passages (chunks of the documents' own text) by meaning (channel semantic, default) or exact words (bm25). Use it when you need the original wording, or when claims and facts do not cover the question; for one ranked context of claims and passages use claims_and_sources_context. documents keeps passages of matching documents (the search_documents filters and tags; call list_tags before filtering by tag). time chooses the editions read for documents with declared effective periods (default: in force now). Returns an envelope whose chunks carry chunk_id, the document and version, and the text; read around a passage with adjacent_chunks. unknown_tag names a tag that is not registered.",
+      "destructive": false,
+      "http_route": "POST /search/chunks",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "channel": {
+            "default": "semantic",
+            "description": "semantic matches meaning; bm25 matches exact words.",
+            "enum": [
+              "semantic",
+              "bm25"
+            ],
+            "type": "string"
+          },
+          "documents": {
+            "additionalProperties": false,
+            "description": "Only read what these documents say: the search_documents filters (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids) and tags. Call list_tags before filtering by tag; an unknown tag is unknown_tag. include_archived also reads archived documents, whose claims never count as current support.",
+            "properties": {
+              "authors": {
+                "description": "Any of these authors.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "created_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "created_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "doc_ids": {
+                "description": "Only these documents (UUIDs).",
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "family": {
+                "description": "Keep these format families.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "include_archived": {
+                "default": false,
+                "description": "Also consider archived documents (history, hidden by default); each result from one is marked archived.",
+                "type": "boolean"
+              },
+              "language": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "modified_from": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "modified_to": {
+                "description": "An ISO 8601 instant with a timezone, inclusive.",
+                "format": "date-time",
+                "type": "string"
+              },
+              "recipients": {
+                "description": "Any of these recipients.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "description": "Registered tags (name or tag_id; call list_tags first). Lists combine with AND; an unknown tag is unknown_tag.",
+                "minProperties": 1,
+                "properties": {
+                  "all": {
+                    "description": "The document has every one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "any": {
+                    "description": "The document has at least one of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  },
+                  "none": {
+                    "description": "The document has none of these tags.",
+                    "items": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 32,
+                    "type": "array",
+                    "uniqueItems": true
+                  }
+                },
+                "type": "object"
+              },
+              "thread_ref": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "k": {
+            "default": 10,
+            "description": "Maximum results.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "query": {
+            "description": "What to look for in the passages.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "time": {
+            "default": {
+              "mode": "current"
+            },
+            "description": "For documents with declared effective periods, which text counts: current (default, in force now), at an instant, overlap a window, or history. Other documents are read as they are.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "current"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "at"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "at"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "from": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "overlap"
+                  },
+                  "to": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "from",
+                  "to"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "history"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              }
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      },
+      "name": "search_chunks",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Resolve a name to entity candidates, using entities you already know to rank namesakes. It runs the same resolution as resolve_entity (exact alias, then fuzzy and phonetic matches, then a profile search; never a silent guess) and then orders the candidates by how many current relations connect each to context_entity_ids. Call resolve_entity first; use this when a name is ambiguous (\"Alex\" names several people) and the conversation already gave you entity_ids of related entities, such as the person's employer or project. Returns an envelope whose entities list every candidate with its tier and context_hits. More than one candidate is still ambiguity: ask the user or narrow the question, never pick one silently. layer_unavailable means this deployment does not process facts.",
+      "destructive": false,
+      "http_route": "GET /resolve",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "context_entity_ids": {
+            "description": "Entities the name is likely related to.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "description": "The name to resolve.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "context_entity_ids"
+        ],
+        "type": "object"
+      },
+      "name": "resolve_entity_in_context",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List relations (adjudicated facts linking two entities, such as Alice works_at Acme) matching a pattern: any of subject_entity_id, predicate and object_entity_id (entity ids from resolve_entity). Without valid_at it lists relations true now; with valid_at, those true at that UTC instant. Use it to enumerate facts exactly (everything one entity is the subject of, or every pair with one predicate); for answering a question use facts_context. Returns an envelope whose facts are the relations, with next_cursor: pass it back as cursor for the next page; null means the last page. A cursor the deployment cannot read is refused with status 400. layer_unavailable means this deployment does not process facts.",
+      "destructive": false,
+      "http_route": "GET /lookup/relations",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Pass the previous page's next_cursor; omit for the first page.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Page size.",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "object_entity_id": {
+            "description": "Relations to this entity.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "predicate": {
+            "description": "Relations of this type.",
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "subject_entity_id": {
+            "description": "Relations from this entity.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "valid_at": {
+            "description": "Relations true at this UTC instant; omit for now.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "lookup_relations",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List one entity's current observations: facts about a single entity, such as Acme's headcount or Alice's role. Takes the entity_id from resolve_entity. Without property_query it lists them a page at a time (limit and cursor; pass next_cursor back, null ends). With property_query it returns the k observations whose property best matches those words, with no cursor. layer_unavailable means this deployment does not process facts.",
+      "destructive": false,
+      "http_route": "GET /lookup/observations",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Without property_query: the previous page's next_cursor.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "entity_id": {
+            "description": "The entity, from resolve_entity.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "k": {
+            "default": 10,
+            "description": "With property_query: maximum results.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "limit": {
+            "default": 50,
+            "description": "Without property_query: page size.",
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "property_query": {
+            "description": "Words naming the property; excludes cursor.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      },
+      "name": "lookup_observations",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Trace one relation back to its proof: the claims that support it and the source documents and passages they came from. Use it to show the user where a fact comes from, or to check a fact before relying on it; to see why the memory adopted or changed it, use transcript_relation. Returns an envelope with the relation, its evidence and sources. layer_unavailable means this deployment does not process facts.",
+      "destructive": false,
+      "http_route": "GET /hydrate/relation/{relation_id}",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "relation_id": {
+            "description": "The relation's UUID, from facts_context, lookup_relations or a graph tool.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relation_id"
+        ],
+        "type": "object"
+      },
+      "name": "hydrate_relation",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Explain why the memory believes one relation: the bounded record of the decisions that adopted, changed or closed it, each with its reason and evidence. Use it when the user asks why a fact is held or why it changed; to see the supporting sources, use hydrate_relation. Returns an envelope whose transcript lists the decisions in order. layer_unavailable means this deployment does not process facts.",
+      "destructive": false,
+      "http_route": "GET /transcript/relation/{relation_id}",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "relation_id": {
+            "description": "The relation's UUID, from facts_context, lookup_relations or a graph tool.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "relation_id"
+        ],
+        "type": "object"
+      },
+      "name": "transcript_relation",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Map the entity graph around one entity: the entities and relations within hops steps (1 to 4, default 2). Use it to see how an entity is connected; for answering a question use facts_context. predicates follows only those relation types. valid_at with believed_at (both or neither) reads the graph as true at valid_at, as the memory believed it at believed_at; without them it reads now. include_paths also returns how each entity was reached. Returns an envelope with nodes, edges and next_cursor: pass it back as cursor for the next page (the cursor keeps the first page's clocks); null means the last page. A busy or slow graph answers status 503: retry later. layer_unavailable means this deployment does not process facts.",
+      "destructive": false,
+      "http_route": "POST /graph/neighborhood",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "believed_at": {
+            "description": "Read the graph as the memory believed it at this UTC instant; requires valid_at.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "cursor": {
+            "description": "Pass the previous page's next_cursor; omit for the first page.",
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "entity_id": {
+            "description": "The entity at the center, from resolve_entity.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "hops": {
+            "default": 2,
+            "maximum": 4,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "include_paths": {
+            "default": false,
+            "description": "Also return how each entity was reached.",
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 100,
+            "description": "Page size.",
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "predicates": {
+            "description": "Follow only relations with these predicates.",
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "valid_at": {
+            "description": "Read the graph as true at this UTC instant; requires believed_at.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id"
+        ],
+        "type": "object"
+      },
+      "name": "graph_neighborhood",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Find how two entities are connected: every shortest path between them, up to max_hops relations long (1 to 6, default 4). Use it for questions such as \"how is Alice connected to Acme\". predicates follows only those relation types; valid_at with believed_at (both or neither) reads the graph at that time instead of now. Returns an envelope with the paths, their nodes and edges; no path means none within max_hops. A busy or slow graph answers status 503: retry later. layer_unavailable means this deployment does not process facts.",
+      "destructive": false,
+      "http_route": "POST /graph/path",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "believed_at": {
+            "description": "Read the graph as the memory believed it at this UTC instant; requires valid_at.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "from_entity_id": {
+            "description": "One entity, from resolve_entity.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "max_hops": {
+            "default": 4,
+            "maximum": 6,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "predicates": {
+            "description": "Follow only relations with these predicates.",
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "to_entity_id": {
+            "description": "The other entity.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "valid_at": {
+            "description": "Read the graph as true at this UTC instant; requires believed_at.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_entity_id",
+          "to_entity_id"
+        ],
+        "type": "object"
+      },
+      "name": "graph_path",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Find how one document leads to another through references (one document citing, linking, amending or replying to another), following them in their direction up to max_hops steps (1 to 6, default 6). Use it for questions such as \"does this contract rely on that policy, and through what\". Returns an envelope with the paths; no path means none within max_hops. A busy or slow graph answers status 503: retry later.",
+      "destructive": false,
+      "http_route": "POST /graph/citation-path",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "from_doc_id": {
+            "description": "The citing document's doc_id.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "max_hops": {
+            "default": 6,
+            "maximum": 6,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "to_doc_id": {
+            "description": "The cited document's doc_id.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_doc_id",
+          "to_doc_id"
+        ],
+        "type": "object"
+      },
+      "name": "graph_citation_path",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Check the reference sets recorded for one document version, newest first. Each generation has origin (supplied by set_references, or extracted by the pipeline), status, item_count and timestamps. status: pending (the pipeline has not validated it yet), active (the version's references), rejected (errors lists each failing item, field and reason; the earlier active set stays) or superseded. Use it after set_references to confirm the new set became active. To read the references themselves use document_references. document_not_found or version_not_found means the id is unknown: do not retry it.",
+      "destructive": false,
+      "http_route": "GET /documents/{doc_id}/versions/{version_id}/references",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "description": "The document's UUID (doc_id).",
+            "format": "uuid",
+            "type": "string"
+          },
+          "version_id": {
+            "description": "The document version's UUID (version_id), as ingest returned it.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id"
+        ],
+        "type": "object"
+      },
+      "name": "reference_generations",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Replace the references one document version makes to other documents with a complete set: a reference left out is removed and an empty list removes them all. References the pipeline extracts are kept separately and are not affected. Use it only when the user asks to record or correct which documents or sections a version cites, amends, implements or refers to. Each reference has kind (cites, links_to, attaches, replies_to, refers_to, amends, implements); target, the cited document by its source identity (source_kind and source_ref as it was or will be ingested; section_key for one section; version_key for one version, required with binding pinned, whereas floating follows whichever version is in force); optionally from_section_key (the citing section; omitted: the whole version); and, for amends, change_date_known, with change_effective_from when the date is known. At most 1000 references per call; a larger set goes through the HTTP API or the SDK. The latest call wins: the same set again is a harmless retry, and a new set becomes a pending generation that the pipeline validates as a whole (an unknown from_section_key rejects the set and the earlier one stays). Returns outcome (created, unchanged or pending_cancelled) and the generation; confirm it with reference_generations. document_not_found or version_not_found means the id is unknown: do not retry it.",
+      "destructive": false,
+      "http_route": "PUT /documents/{doc_id}/versions/{version_id}/references",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "description": "The document's UUID (doc_id).",
+            "format": "uuid",
+            "type": "string"
+          },
+          "references": {
+            "description": "The version's complete set of references.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "binding": {
+                  "default": "floating",
+                  "enum": [
+                    "floating",
+                    "pinned"
+                  ],
+                  "type": "string"
+                },
+                "change_date_known": {
+                  "description": "amends only, and required there.",
+                  "type": "boolean"
+                },
+                "change_effective_from": {
+                  "description": "amends only: when the amendment takes effect (UTC).",
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "context": {
+                  "maxLength": 2000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "from_section_key": {
+                  "description": "The citing section's key; omit for the whole version.",
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9_.:/-]+$",
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "cites",
+                    "links_to",
+                    "attaches",
+                    "replies_to",
+                    "refers_to",
+                    "amends",
+                    "implements"
+                  ],
+                  "type": "string"
+                },
+                "source_label": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "target": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "section_key": {
+                      "description": "The cited section; omit for the whole document.",
+                      "maxLength": 200,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9_.:/-]+$",
+                      "type": "string"
+                    },
+                    "source_kind": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "source_ref": {
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "version_key": {
+                      "description": "The cited version; required when pinned.",
+                      "maxLength": 512,
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source_kind",
+                    "source_ref"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "kind",
+                "target"
+              ],
+              "type": "object"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "version_id": {
+            "description": "The document version's UUID (version_id), as ingest returned it.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id",
+          "references"
+        ],
+        "type": "object"
+      },
+      "name": "set_references",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Declare when one document version's text is in force, such as a policy edition in force from 2026-01-01, by replacing the version's complete set of periods. Use it only when the user asks to record or correct when a version applies; at ingest, effective_from does this. Each period has effective_from (included) and optionally effective_until (excluded), both UTC; without effective_until the period lasts until the next declared start in the document. Periods left out are retracted; an empty list leaves the version in force at no time while the document keeps effective time (clear_effective_time leaves it). Nothing is reprocessed, and the change is recorded, so a read pinned to an earlier time still sees the old periods; to undo, call again with the previous periods (section_history and search_documents show them). Returns the version's periods with declared and retracted counts. Refusals: status 409 effective_period_conflict (another version already starts at that instant), 422 effective_time_requires_snapshot (a living document has no editions), document_not_found or version_not_found (an unknown id: do not retry it).",
+      "destructive": false,
+      "http_route": "PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "description": "The document's UUID (doc_id).",
+            "format": "uuid",
+            "type": "string"
+          },
+          "periods": {
+            "description": "The version's complete set of periods, no two starting at the same instant.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "effective_from": {
+                  "description": "Start, included (UTC).",
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "effective_until": {
+                  "description": "End, excluded (UTC); omit to run to the next start.",
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "effective_from"
+              ],
+              "type": "object"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "version_id": {
+            "description": "The document version's UUID (version_id), as ingest returned it.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id",
+          "periods"
+        ],
+        "type": "object"
+      },
+      "name": "set_effective_periods",
+      "permission": "memory:write",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Take a document out of effective time: retract the declared periods of all its versions, so its newest processed version is current again. Use it only when the user says the document's versions are not editions in force at different times (for example, periods declared by mistake). The change is recorded, so a read pinned to an earlier time still sees the periods; to undo, declare them again with set_effective_periods. Returns retracted and cleared_at (null when the document had no effective time). document_not_found means the id is unknown: do not retry it.",
+      "destructive": false,
+      "http_route": "DELETE /documents/{doc_id}/effective-periods",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "description": "The document's UUID (doc_id).",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id"
+        ],
+        "type": "object"
+      },
+      "name": "clear_effective_time",
+      "permission": "memory:write",
+      "tool_version": 1
     }
   ]
 }

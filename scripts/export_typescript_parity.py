@@ -1654,6 +1654,46 @@ def tool_fixtures() -> list[dict[str, Any]]:
         "list_saved_queries": {},
         "describe_saved_query": {"namespace": "examples", "name": "safe"},
         "run_saved_query": {"namespace": "examples", "name": "safe"},
+        "list_documents": {"limit": 7, "status": "failed", "include_archived": True},
+        "list_forgets": {},
+        "get_forget": {"forget_id": ID},
+        "processing_layers": {},
+        # A documents or time filter makes the SDK send the declared POST form.
+        "search_claims": {"query": "fixture", "time": {"mode": "history"}},
+        "search_chunks": {"query": "fixture", "documents": {"language": "en"}},
+        "resolve_entity_in_context": {"name": "fixture", "context_entity_ids": [ID]},
+        "lookup_relations": {"subject_entity_id": ID, "predicate": "p", "limit": 7},
+        "lookup_observations": {"entity_id": ID, "property_query": "role", "k": 3},
+        "hydrate_relation": {"relation_id": ID},
+        "transcript_relation": {"relation_id": ID},
+        "graph_neighborhood": {
+            "entity_id": ID,
+            "hops": 1,
+            "valid_at": STAMP,
+            "believed_at": STAMP,
+        },
+        "graph_path": {"from_entity_id": ID, "to_entity_id": ID, "predicates": ["p"]},
+        "graph_citation_path": {"from_doc_id": ID, "to_doc_id": ID, "max_hops": 2},
+        "reference_generations": {"doc_id": ID, "version_id": ID},
+        "set_references": {
+            "doc_id": ID,
+            "version_id": ID,
+            "references": [
+                {
+                    "kind": "amends",
+                    "from_section_key": "part/4",
+                    "target": {"source_kind": "policy", "source_ref": "expenses"},
+                    "change_date_known": True,
+                    "change_effective_from": STAMP,
+                }
+            ],
+        },
+        "set_effective_periods": {
+            "doc_id": ID,
+            "version_id": ID,
+            "periods": [{"effective_from": STAMP}],
+        },
+        "clear_effective_time": {"doc_id": ID},
     }
     assert set(valid) == {definition.name for definition in memory_tools()}
     cases = []
