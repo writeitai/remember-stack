@@ -281,6 +281,24 @@ test('typed request timestamps require offsets before HTTP',async()=>{
   }finally{client.close();}
 });
 
+test('lookup clocks preserve source precision while converting to UTC',async()=>{
+  const instants=[];
+  const client=new Client({client:{request:async request=>{
+    instants.push(new Map(request.query).get('valid_at'));
+    return Response.json(fixtures.envelope);
+  }}});
+  try{
+    await client.lookupRelations({validAt:'2026-01-01T00:00:00.123456+0530'});
+    await client.lookupRelations({validAt:'2025-12-31T19:00:00-05'});
+    await client.lookupRelations({validAt:new Date('2026-01-01T00:00:00.123Z')});
+    assert.deepEqual(instants,[
+      '2025-12-31T18:30:00.123456+00:00',
+      '2026-01-01T00:00:00+00:00',
+      '2026-01-01T00:00:00.123000+00:00',
+    ]);
+  }finally{client.close();}
+});
+
 test('citation path edges keep each reference binding and source label',async()=>{
   const [a,b,c]=['20000000-0000-0000-0000-00000000000a','20000000-0000-0000-0000-00000000000b','20000000-0000-0000-0000-00000000000c'];
   /** One citation edge as the engine hydrates it. */

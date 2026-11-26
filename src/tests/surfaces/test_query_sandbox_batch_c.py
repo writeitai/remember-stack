@@ -355,11 +355,11 @@ def test_claim_timestamp_filters_require_offsets_and_normalize_to_utc() -> None:
         target="claims",
         filters={
             "asserted_from": "2026-11-20T14:03:11.123456+01:00",
-            "asserted_to": "2026-11-20T08:03:11-05:00",
+            "asserted_to": "2026-11-20T08:03:12-05:00",
         },
     ) == {
         "asserted_from": "2026-11-20T13:03:11.123456+00:00",
-        "asserted_to": "2026-11-20T13:03:11+00:00",
+        "asserted_to": "2026-11-20T13:03:12+00:00",
     }
     with pytest.raises(SandboxRejection, match="asserted_from must be timezone-aware"):
         validate_filters(

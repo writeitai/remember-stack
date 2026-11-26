@@ -1942,6 +1942,7 @@ export default {
         }
       },
       {
+        "description": "When the source last changed. Include a UTC offset.",
         "in": "query",
         "name": "source_modified_at",
         "required": false,
@@ -1955,6 +1956,7 @@ export default {
               "type": "null"
             }
           ],
+          "description": "When the source last changed. Include a UTC offset.",
           "title": "Source Modified At"
         }
       },

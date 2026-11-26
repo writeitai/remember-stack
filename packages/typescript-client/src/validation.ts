@@ -5,7 +5,7 @@ import schemas from './schemas.generated';
 import constants from './constants.generated';
 import { InputValidationError, MemoryApiError } from './errors';
 import { assertJson } from './json';
-import { TimestampOffsetError, utcTimestamp } from './timestamps';
+import { OFFSET_REQUIRED, utcTimestamp } from './timestamps';
 
 /** JSON Schema vocabulary used by same-revision Pydantic contracts. */
 interface Schema {
@@ -92,7 +92,7 @@ function normalize({ value, schema, name, field }: { value: unknown; schema: Sch
         const validate = validator({schema:variant,model:true});
         if (validate(candidate)) return candidate;
       } catch (error) {
-        if (error instanceof TimestampOffsetError || !(error instanceof InputValidationError)) throw error;
+        if (!(error instanceof InputValidationError) || error.message.endsWith(OFFSET_REQUIRED)) throw error;
       }
     }
     fail({ detail: 'value does not match any schema variant' });

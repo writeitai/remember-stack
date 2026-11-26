@@ -186,7 +186,8 @@ def test_lookup_refuses_a_naive_instant() -> None:
 
 
 @pytest.mark.parametrize(
-    "valid_at", ["2026-01-01T00:00:00Z", "2026-01-01T05:30:00+05:30"]
+    "valid_at",
+    ["2026-01-01T00:00:00Z", "2026-01-01T05:30:00+05:30", "2025-12-31T19:00:00-05"],
 )
 def test_lookup_normalizes_the_instant_and_forwards_limit(valid_at: str) -> None:
     """A clock with an offset reaches lookup in UTC."""

@@ -2,8 +2,7 @@ import { InputValidationError } from './errors';
 
 const isoTimestamp = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}:\d{2})(?::(\d{2})(?:[.,](\d+))?)?([Zz]|[+-]\d{2}(?::?\d{2})?)?$/;
 
-/** Keep the offset diagnostic when a timestamp is inside a model union. */
-export class TimestampOffsetError extends InputValidationError {}
+export const OFFSET_REQUIRED = 'must be timezone-aware (include Z or a numeric UTC offset)';
 
 /** Convert an aware instant to UTC at the same microsecond precision as Python. */
 export function utcTimestamp({ value, field }: { value: unknown; field: string }): string {
@@ -11,12 +10,12 @@ export function utcTimestamp({ value, field }: { value: unknown; field: string }
     value = value.toISOString();
   }
   const match = typeof value === 'string' ? isoTimestamp.exec(value) : null;
-  if (!match || match[1]?.startsWith('0000')) {
+  if (!match || match[0] !== value || match[1]?.startsWith('0000')) {
     throw new InputValidationError({ detail: field + ' must be a valid ISO 8601 timestamp' });
   }
   const [, date, time, second = '00', fractionalSeconds = '', offset] = match;
   if (!offset) {
-    throw new TimestampOffsetError({ detail: field + ' must be timezone-aware (include Z or a numeric UTC offset)' });
+    throw new InputValidationError({ detail: field + ' ' + OFFSET_REQUIRED });
   }
   const local = date + 'T' + time + ':' + second;
   const wallTime = new Date(local + 'Z');

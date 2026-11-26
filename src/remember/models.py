@@ -21,14 +21,13 @@ from uuid import UUID
 
 from pydantic import AfterValidator
 from pydantic import AliasChoices
-from pydantic import AwareDatetime
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import JsonValue
 from pydantic import model_validator
 
-from remember._timestamps import normalize_utc
+from remember._timestamps import UTCInstant
 
 # ---------------------------------------------------------------------------
 # Helpers & UTC DateTime
@@ -45,13 +44,6 @@ def _require_utc(value: datetime) -> datetime:
 UTCDateTime: TypeAlias = Annotated[
     datetime, Field(strict=True), AfterValidator(_require_utc)
 ]
-
-UTCInstant: TypeAlias = Annotated[
-    AwareDatetime,
-    AfterValidator(normalize_utc),
-    Field(json_schema_extra={"x-normalize-utc": True}),
-]
-"""A request instant with an explicit offset, normalized to UTC."""
 
 
 class ProjectActivationCheckout(TypedDict):

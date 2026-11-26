@@ -67,7 +67,9 @@ from starlette.types import Receive
 from starlette.types import Scope
 from starlette.types import Send
 
+from remember._timestamps import ISODateTime
 from remember._timestamps import optional_utc
+from remember._timestamps import UTCInstant
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
@@ -101,7 +103,6 @@ from remember.models import TagList
 from remember.models import TagRef
 from remember.models import TAGS_PER_DOCUMENT_MAX
 from remember.models import TagUpdate
-from remember.models import UTCInstant
 from remember.models import VERSION_KEY_MAX_LEN
 from rememberstack import __version__
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
@@ -2584,7 +2585,10 @@ def _mount_ingest(
         title: str | None = None,
         source_kind: Annotated[str | None, Query(min_length=1)] = None,
         source_ref: Annotated[str | None, Query(min_length=1)] = None,
-        source_modified_at: datetime | None = None,
+        source_modified_at: Annotated[
+            ISODateTime | None,
+            Query(description="When the source last changed. Include a UTC offset."),
+        ] = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         source_path: Annotated[
@@ -2613,7 +2617,7 @@ def _mount_ingest(
             ),
         ] = None,
         effective_from: Annotated[
-            datetime | None,
+            ISODateTime | None,
             Query(
                 description=(
                     "Start (inclusive) of the period this version's text is in force."
@@ -2623,7 +2627,7 @@ def _mount_ingest(
             ),
         ] = None,
         effective_until: Annotated[
-            datetime | None,
+            ISODateTime | None,
             Query(
                 description=(
                     "Declared end (exclusive) of that period. Include a UTC offset."

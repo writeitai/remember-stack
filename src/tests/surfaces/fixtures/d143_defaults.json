@@ -40,7 +40,7 @@
           "destructiveHint": false,
           "readOnlyHint": false
         },
-        "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host — with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. A document_forgotten error means this content belongs to a document that was forgotten on purpose: tell the user and do not retry. Set allow_forgotten=true only after the user confirms they want that content added back; it is then stored under a new doc_id. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
+        "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host — with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force for snapshot lineages. Timestamps require an offset and are converted to UTC. Without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. A document_forgotten error means this content belongs to a document that was forgotten on purpose: tell the user and do not retry. Set allow_forgotten=true only after the user confirms they want that content added back; it is then stored under a new doc_id. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
         "inputSchema": {
           "additionalProperties": false,
           "oneOf": [
@@ -87,12 +87,12 @@
               "type": "string"
             },
             "effective_from": {
-              "description": "Optional ISO-8601 UTC start (inclusive) of the period this version's text is in force. Requires source_kind/source_ref and versioning_mode snapshot.",
+              "description": "Optional start (inclusive) of the period this version's text is in force. Requires source_kind/source_ref and versioning_mode snapshot. Include a UTC offset.",
               "format": "date-time",
               "type": "string"
             },
             "effective_until": {
-              "description": "Optional ISO-8601 UTC end (exclusive) of that period; requires effective_from. Omit it to last until the next declared start.",
+              "description": "Optional end (exclusive) of that period with a UTC offset. Requires effective_from. Omit it to last until the next declared start.",
               "format": "date-time",
               "type": "string"
             },
@@ -115,7 +115,7 @@
               "type": "string"
             },
             "source_modified_at": {
-              "description": "Optional ISO-8601 UTC timestamp (timezone-aware). Requires source_kind/source_ref.",
+              "description": "Optional ISO 8601 timestamp with a UTC offset. Requires source_kind/source_ref.",
               "type": "string"
             },
             "source_ref": {
@@ -3356,7 +3356,7 @@
           "destructiveHint": false,
           "readOnlyHint": false
         },
-        "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host — with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. A document_forgotten error means this content belongs to a document that was forgotten on purpose: tell the user and do not retry. Set allow_forgotten=true only after the user confirms they want that content added back; it is then stored under a new doc_id. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
+        "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host — with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force for snapshot lineages. Timestamps require an offset and are converted to UTC. Without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. A document_forgotten error means this content belongs to a document that was forgotten on purpose: tell the user and do not retry. Set allow_forgotten=true only after the user confirms they want that content added back; it is then stored under a new doc_id. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
         "inputSchema": {
           "additionalProperties": false,
           "oneOf": [
@@ -3432,12 +3432,12 @@
               "type": "string"
             },
             "effective_from": {
-              "description": "Optional ISO-8601 UTC start (inclusive) of the period this version's text is in force. Requires source_kind/source_ref and versioning_mode snapshot.",
+              "description": "Optional start (inclusive) of the period this version's text is in force. Requires source_kind/source_ref and versioning_mode snapshot. Include a UTC offset.",
               "format": "date-time",
               "type": "string"
             },
             "effective_until": {
-              "description": "Optional ISO-8601 UTC end (exclusive) of that period; requires effective_from. Omit it to last until the next declared start.",
+              "description": "Optional end (exclusive) of that period with a UTC offset. Requires effective_from. Omit it to last until the next declared start.",
               "format": "date-time",
               "type": "string"
             },
@@ -3465,7 +3465,7 @@
               "type": "string"
             },
             "source_modified_at": {
-              "description": "Optional ISO-8601 UTC timestamp (timezone-aware). Requires source_kind/source_ref.",
+              "description": "Optional ISO 8601 timestamp with a UTC offset. Requires source_kind/source_ref.",
               "type": "string"
             },
             "source_ref": {
@@ -5223,7 +5223,7 @@
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host — with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. A document_forgotten error means this content belongs to a document that was forgotten on purpose: tell the user and do not retry. Set allow_forgotten=true only after the user confirms they want that content added back; it is then stored under a new doc_id. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
+      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host — with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force for snapshot lineages. Timestamps require an offset and are converted to UTC. Without effective_until it lasts until the next declared start. tags adds registered tags (see list_tags) to the document; ingest never removes a tag, and an unregistered tag refuses the ingest with unknown_tag before anything is stored. A document_forgotten error means this content belongs to a document that was forgotten on purpose: tell the user and do not retry. Set allow_forgotten=true only after the user confirms they want that content added back; it is then stored under a new doc_id. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
       "inputSchema": {
         "additionalProperties": false,
         "oneOf": [
@@ -5270,12 +5270,12 @@
             "type": "string"
           },
           "effective_from": {
-            "description": "Optional ISO-8601 UTC start (inclusive) of the period this version's text is in force. Requires source_kind/source_ref and versioning_mode snapshot.",
+            "description": "Optional start (inclusive) of the period this version's text is in force. Requires source_kind/source_ref and versioning_mode snapshot. Include a UTC offset.",
             "format": "date-time",
             "type": "string"
           },
           "effective_until": {
-            "description": "Optional ISO-8601 UTC end (exclusive) of that period; requires effective_from. Omit it to last until the next declared start.",
+            "description": "Optional end (exclusive) of that period with a UTC offset. Requires effective_from. Omit it to last until the next declared start.",
             "format": "date-time",
             "type": "string"
           },
@@ -5298,7 +5298,7 @@
             "type": "string"
           },
           "source_modified_at": {
-            "description": "Optional ISO-8601 UTC timestamp (timezone-aware). Requires source_kind/source_ref.",
+            "description": "Optional ISO 8601 timestamp with a UTC offset. Requires source_kind/source_ref.",
             "type": "string"
           },
           "source_ref": {

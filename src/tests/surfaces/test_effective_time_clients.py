@@ -346,8 +346,9 @@ def test_cli_ingest_forwards_the_d140_flags(
         (["lookup", "relations", "--valid-at", "2026-11-20T14:03:11"], "--valid-at"),
         (
             [
-                "documents",
                 "search",
+                "claims",
+                "travel",
                 "--time",
                 '{"mode":"at","at":"2026-11-20T14:03:11"}',
             ],

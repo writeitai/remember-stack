@@ -2,6 +2,13 @@
 
 from datetime import datetime
 from datetime import UTC
+from typing import Annotated
+from typing import TypeAlias
+
+from pydantic import AfterValidator
+from pydantic import AwareDatetime
+from pydantic import BeforeValidator
+from pydantic import Field
 
 OFFSET_REQUIRED = "must be timezone-aware (include Z or a numeric UTC offset)"
 
@@ -30,3 +37,26 @@ def parse_iso_timestamp(value: str, *, field: str = "timestamp") -> datetime:
     except ValueError as error:
         raise ValueError(f"{field} must be a valid ISO 8601 timestamp") from error
     return normalize_utc(instant, field=field)
+
+
+def _expand_hour_offset(value: object) -> object:
+    """Expand an ISO hour-only offset to the hours and minutes Pydantic parses."""
+    if (
+        isinstance(value, str)
+        and len(value) > 13
+        and value[-3] in "+-"
+        and value[-2:].isdigit()
+    ):
+        return value + ":00"
+    return value
+
+
+ISODateTime: TypeAlias = Annotated[datetime, BeforeValidator(_expand_hour_offset)]
+
+UTCInstant: TypeAlias = Annotated[
+    AwareDatetime,
+    BeforeValidator(_expand_hour_offset),
+    AfterValidator(normalize_utc),
+    Field(json_schema_extra={"x-normalize-utc": True}),
+]
+"""A request instant with an explicit offset, normalized to UTC."""
