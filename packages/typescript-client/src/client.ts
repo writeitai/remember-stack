@@ -433,6 +433,23 @@ export class Client extends MemoryClient {
 }
 
 type AccountObject = Record<string, Models.JsonValue>;
+
+/** Hosted payment details for a project that needs human action. */
+export interface ProjectActivationCheckout extends AccountObject {
+  checkout_session_id: string;
+  url: string;
+  amount_credits: string;
+  client_secret: string | null;
+}
+
+/** Issuer JSON from creating a project or paying for activation. */
+export type ProjectActivationResult = AccountObject & {
+  project: AccountObject;
+  payment: 'credits' | 'saved_card' | 'checkout';
+  requires_human_action: boolean;
+  checkout?: ProjectActivationCheckout | null;
+};
+
 type AccountRequest = RequestOptions & {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   path: string;
@@ -450,7 +467,7 @@ function accountId(value: string): string {
 }
 
 /** Use the caller's retry key or generate a fresh key for this POST. */
-function checkoutIdempotencyKey(value: string | null | undefined): string {
+function projectIdempotencyKey(value: string | null | undefined): string {
   if (value == null) return randomUUID();
   if (typeof value !== 'string' || !value || value !== value.trim() || value.length > 160 || /[^\x20-\x7e]/.test(value)) {
     throw new InputValidationError({detail: 'Idempotency-Key must be 1 to 160 printable ASCII characters with no surrounding spaces'});
@@ -488,17 +505,17 @@ export class AccountApi {
     return this.#object({method: 'GET', path: this.#projectPath(projectId), signal});
   }
 
-  /** Create a project and its hosted Checkout for a person to complete. */
+  /** Create a project and return its activation payment outcome. */
   async createProject({name, monthlySubcapCredits = null, idempotencyKey, signal}: RequestOptions & {
     name: string;
     monthlySubcapCredits?: string | null;
     idempotencyKey?: string | null;
-  }): Promise<AccountObject> {
+  }): Promise<ProjectActivationResult> {
     return this.#object({
       method: 'POST', path: this.#orgPath('projects'), signal,
       body: {name, monthly_subcap_credits: monthlySubcapCredits},
-      idempotencyKey: checkoutIdempotencyKey(idempotencyKey),
-    });
+      idempotencyKey: projectIdempotencyKey(idempotencyKey),
+    }) as Promise<ProjectActivationResult>;
   }
 
   /** Set a project's monthly cap in credits, or pass null to clear it. */
@@ -512,15 +529,15 @@ export class AccountApi {
     });
   }
 
-  /** Open a hosted Checkout for an unpaid project. A person completes payment. */
+  /** Pay for an unpaid project's activation or return a hosted Checkout. */
   async startActivationCheckout({projectId, idempotencyKey, signal}: RequestOptions & {
     projectId: string;
     idempotencyKey?: string | null;
-  }): Promise<AccountObject> {
+  }): Promise<ProjectActivationResult> {
     return this.#object({
       method: 'POST', path: this.#projectPath(projectId) + '/activation-checkout',
-      idempotencyKey: checkoutIdempotencyKey(idempotencyKey), signal,
-    });
+      idempotencyKey: projectIdempotencyKey(idempotencyKey), signal,
+    }) as Promise<ProjectActivationResult>;
   }
 
   /** List key metadata visible to the caller, without the secrets. */

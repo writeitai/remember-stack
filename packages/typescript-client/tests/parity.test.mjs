@@ -53,7 +53,7 @@ for(const scenario of fixture.failures)test(`${scenario.typescriptMethod}: share
 });
 
 
-for (const scenario of fixture.accountCases) test(`${scenario.typescriptMethod}: Python account parity ${JSON.stringify(scenario.typescriptOptions)}`, async () => {
+for (const scenario of fixture.accountCases) test(`${scenario.typescriptMethod}: Python account parity ${scenario.reply.payment ?? ''} ${JSON.stringify(scenario.typescriptOptions)}`, async () => {
   const wire = [];
   const client = new Client({
     apiKey: scenario.key,

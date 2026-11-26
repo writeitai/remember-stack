@@ -307,9 +307,9 @@ The results use the account API's snake_case JSON fields.
 |---|---|
 | `listProjects()` | Visible projects and slot usage. |
 | `getProject({ projectId })` | A project's details, cap, activation state and deployment. |
-| `createProject({ name, monthlySubcapCredits?, idempotencyKey? })` | The new project and its Checkout. |
+| `createProject({ name, monthlySubcapCredits?, idempotencyKey? })` | `ProjectActivationResult` for the new project. |
 | `setProjectSpendCap({ projectId, monthlySubcapCredits })` | The updated project. Use a decimal string for credits or `null` to clear the cap. |
-| `startActivationCheckout({ projectId, idempotencyKey? })` | A fresh Checkout for an unpaid project. |
+| `startActivationCheckout({ projectId, idempotencyKey? })` | `ProjectActivationResult` for an unpaid project. |
 | `listKeys()` | Visible key metadata. |
 | `createKey({ name, projects?, permissions?, defaultProjectId?, lifetimeDays? })` | The new key's metadata and its one-time `key` secret. |
 | `revokeKey({ keyId })` | Metadata for the revoked key. Its descendants are revoked too. |
@@ -321,9 +321,16 @@ choose coverage and an array of scope names in `permissions`.
 
 For `createProject` and `startActivationCheckout`, the client generates a UUID
 unless you pass `idempotencyKey`. Reuse the key to retry the same request.
-Both return `requires_human_action: true` with the URL in the returned
-`checkout` object for a person to complete payment. When an owner's
-**Settings → Agent permissions** switch blocks a call, catch
+
+`ProjectActivationResult` includes `project`, `payment` and
+`requires_human_action`. With `"credits"` or `"saved_card"`, the issuer
+uses the organisation's credit balance or saved card and starts provisioning
+immediately.
+A payment of `"checkout"` sets `requires_human_action` to `true`. Give
+`checkout.url` to a person to complete payment. The optional `checkout`
+field may be `null` for automatic payments.
+
+When an owner's **Settings → Agent permissions** switch blocks a call, catch
 `AgentPermissionDisabled` and read `action` and `settingsUrl`. See the
 [account API](/docs/reference/cloud-api) and the
 [project setup guide](/docs/cloud/setup-project-from-agent).

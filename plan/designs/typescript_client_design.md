@@ -19,8 +19,9 @@ provides `MemoryClient`, `Client`, `RememberClient` (an alias), `AccountApi`,
 The issuer owns its account API; this repository owns memory HTTP and client
 behavior. The public provider contract contains only issuer metadata,
 ResolvedProject and an object-shaped whoami response. The named account methods
-forward the issuer's project and key results as JSON. Neither SDK owns memory
-truth.
+forward the issuer's project and key results as JSON. Project creation and
+activation expose the issuer's payment fields through `ProjectActivationResult`,
+with optional `checkout` and support for issuer-specific fields in the JSON.
 
 CLI and MCP are separate library/distribution boundaries, intended coordinates
 `@rememberdev/cli` and `@rememberdev/mcp`; they depend on this client, not vice
@@ -182,8 +183,8 @@ Use option objects and union types. Generation is a development step, never a pu
 network dependency. Custom routing/error behavior wraps generated request
 metadata rather than copying the API's request/response definitions.
 
-Successful responses are runtime-validated against exported JSON schemas, not
-merely cast to TypeScript. Export supplementary Python-client model schemas
+Validate successful memory responses at runtime against exported JSON schemas.
+Export supplementary Python-client model schemas
 for contracts absent from the served OpenAPI (including connector descriptors
 and SDK discovery models). Use the same Python source as the parity inventory.
 Use JSON Schema draft 2020-12. Fill model defaults recursively, return all

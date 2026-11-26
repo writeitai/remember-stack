@@ -52,8 +52,7 @@ deployment. Nothing else creates the first deployment.
 
 ### Creating another project
 
-An owner creates another project from **Projects** in the console. Each new
-project needs its own activation Checkout:
+An owner can create another project from **Projects** in the console.
 
 1. You name the project and choose **Create and activate**.
 2. remember.dev reserves a project slot and opens a Stripe Checkout for the
@@ -65,9 +64,11 @@ Abandoning the Checkout does not create a deployment. The project stays in
 the list, not activated.
 
 An agent with a shell can create a project with `remember projects create`
-using an owner's key with `account:manage`. The command returns the Checkout
-link for a person to complete payment. Owners control project creation from
-**Settings → Agent permissions**. [Set up a Project from your agent](/docs/cloud/setup-project-from-agent)
+using an owner's key with `account:manage`. remember.dev uses the
+organisation's credit balance or saved card to pay for activation and starts
+provisioning immediately. If the organisation has neither enough credits nor
+a saved card, the command returns a Checkout link. Owners control project
+creation from **Settings → Agent permissions**. [Set up a Project from your agent](/docs/cloud/setup-project-from-agent)
 
 The `create_project` tool also returns a Checkout link for an owner's
 connection with `account:manage`. [Hosted MCP](/docs/cloud/hosted-mcp#account-tools)

@@ -17,6 +17,7 @@ from datetime import timedelta
 import json
 from pathlib import Path
 import time
+from typing import cast
 from typing import Final
 from typing import Literal
 from typing import Self
@@ -82,6 +83,7 @@ from remember.models import HistoryReadTime
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ProcessingLayerStates
+from remember.models import ProjectActivationResult
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
 from remember.models import ReadTime
@@ -1976,14 +1978,15 @@ class AccountApi:
         name: str,
         monthly_subcap_credits: str | None = None,
         idempotency_key: str | None = None,
-    ) -> dict[str, object]:
-        """Create a project and its hosted Checkout for a person to complete."""
-        return self._object(
+    ) -> ProjectActivationResult:
+        """Create a project and return its activation payment outcome."""
+        result = self._object(
             "POST",
             self._org_path("projects"),
             json_body={"name": name, "monthly_subcap_credits": monthly_subcap_credits},
-            idempotency_key=_checkout_idempotency_key(idempotency_key),
+            idempotency_key=_project_idempotency_key(idempotency_key),
         )
+        return cast(ProjectActivationResult, result)
 
     def set_project_spend_cap(
         self, *, project_id: str, monthly_subcap_credits: str | None
@@ -1997,13 +2000,14 @@ class AccountApi:
 
     def start_activation_checkout(
         self, *, project_id: str, idempotency_key: str | None = None
-    ) -> dict[str, object]:
-        """Open a hosted Checkout for an unpaid project. A person completes payment."""
-        return self._object(
+    ) -> ProjectActivationResult:
+        """Pay for an unpaid project's activation or return a hosted Checkout."""
+        result = self._object(
             "POST",
             self._project_path(project_id) + "/activation-checkout",
-            idempotency_key=_checkout_idempotency_key(idempotency_key),
+            idempotency_key=_project_idempotency_key(idempotency_key),
         )
+        return cast(ProjectActivationResult, result)
 
     def list_keys(self) -> dict[str, object] | list[object]:
         """List key metadata visible to the caller, without the secrets."""
@@ -2155,7 +2159,7 @@ def _account_id(value: str) -> str:
     return quote(value, safe="")
 
 
-def _checkout_idempotency_key(value: str | None) -> str:
+def _project_idempotency_key(value: str | None) -> str:
     """Use the caller's retry key or generate a fresh key for this POST."""
     if value is None:
         return str(uuid4())

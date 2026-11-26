@@ -5702,7 +5702,14 @@ D32, D43's untyped statement, D98, D100–D105.
 > The console-only instruction for project creation in item 4 is superseded.
 > `remember projects` and `remember keys` use the issuer account API for
 > project setup and key management. The owner controls agent permissions in
-> the issuer's Settings, and a person completes activation payment.
+> the issuer's Settings. The owner follow-up below supersedes the original
+> requirement for a person to complete every activation payment.
+>
+> **Owner follow-up on project activation.** With a key, the issuer pays from
+> the organisation's credit balance or saved card when available and starts
+> provisioning immediately. A person completes payment when the issuer returns
+> Checkout. This lets agents finish project setup when the organisation can
+> already cover the activation.
 > [Issuer account calls](plan/designs/one_key_client_surfaces_design.md#83-resolving-the-data-plane-host-from-a-key)
 
 **Context.** In D62 the distribution was designed as a single monolithic package family on PyPI (`rememberstack`) carrying the `remember` CLI binary, client SDK, and server extras (`[server]`), while `remember` existed as an early standalone client package. In practice, this created three compounding problems:

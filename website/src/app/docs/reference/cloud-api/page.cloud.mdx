@@ -126,14 +126,14 @@ members with the `remove_member` tool of
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | `GET` | `/v1/orgs/{org_id}/projects` | session member, key `account:read` | Projects visible to you and covered by your key, plus `project_limit`, `slots_used`, `is_owner` |
-| `POST` | `/v1/orgs/{org_id}/projects` | session owner, owner key `account:manage` | Create a project and its activation Checkout. Body `name` (≤100) and optional `monthly_subcap_credits` (decimal string ≥0 or `null`) |
+| `POST` | `/v1/orgs/{org_id}/projects` | session owner, owner key `account:manage` | Create a project and start activation. Body `name` (≤100) and optional `monthly_subcap_credits` (decimal string ≥0 or `null`) |
 | `GET` | `/v1/orgs/{org_id}/projects/{project_id}` | session member, key `account:read` | One project, with `activation_state`, `deployment`, `member_count`, `monthly_subcap_credits` |
 | `PATCH` | `/v1/orgs/{org_id}/projects/{project_id}` | session owner | Rename. Body `name` (1–100). The slug does not change |
 | `POST` | `/v1/orgs/{org_id}/projects/{project_id}/archive` | session owner | Archive a project with no deployment and no activation in progress |
 | `POST` | `/v1/orgs/{org_id}/projects/{project_id}/members` | session owner | Assign a member. Body `user_id` |
 | `DELETE` | `/v1/orgs/{org_id}/projects/{project_id}/members/{membership_id}` | session owner | Revoke an assignment |
 | `PUT` | `/v1/orgs/{org_id}/projects/{project_id}/spend-cap` | session owner, owner key `account:manage` | Set or clear the monthly sub-cap. Body `monthly_subcap_credits` (decimal string ≥0 or `null`). Returns the updated project |
-| `POST` | `/v1/orgs/{org_id}/projects/{project_id}/activation-checkout` | owner key `account:manage` | Open a fresh Checkout for an unpaid project. Send an empty request body |
+| `POST` | `/v1/orgs/{org_id}/projects/{project_id}/activation-checkout` | owner key `account:manage` | Pay for an unpaid project's activation or open Checkout. Send an empty request body |
 | `GET` | `/v1/orgs/{org_id}/projects/{project_id}/intake` | session member | Ingest counts for the project: totals, per-day buckets and failure reasons, with no document names. Query `days` (default 14) |
 
 `POST /v1/orgs/{org_id}/projects` answers `409` when billing is not active,
@@ -141,12 +141,18 @@ when the Default project has not been activated, or when
 `Project limit reached (n of m)`.
 
 Both project POST requests require `Idempotency-Key` (1–160 characters).
-Reuse it for a retry of the same request. Each returns `project`, `checkout`
-and `requires_human_action: true`. The `checkout` object includes
+Reuse it for a retry of the same request. For key-authenticated calls, both
+return `project`, `payment` (`credits`, `saved_card` or `checkout`) and
+`requires_human_action`. With `credits` or `saved_card`, remember.dev pays for
+activation and starts provisioning immediately. `requires_human_action` is
+`false`, and `checkout` may be null or omitted.
+
+With `payment: "checkout"`, `requires_human_action` is `true` and a person
+completes payment at the Checkout URL. The `checkout` object includes
 `checkout_session_id`, the hosted `url`, `amount_credits` as a decimal
-string and `client_secret` (`null` for hosted Checkout). A person completes
-payment at the URL. Starting a fresh activation Checkout replaces the
-earlier unpaid Checkout.
+string and `client_secret` (`null` for hosted Checkout). A fresh activation
+Checkout replaces the earlier unpaid Checkout. Creating a project with a
+browser session opens Checkout.
 
 Owners can control project creation and spend cap changes in
 **Settings → Agent permissions**. A key creating a project with a cap

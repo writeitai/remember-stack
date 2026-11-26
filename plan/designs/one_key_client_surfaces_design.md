@@ -767,9 +767,15 @@ The account API's operations and their permissions are defined by the issuer
 The CLI's `projects` and `keys` groups use the same account methods as the
 SDKs. For these calls the key's `org` claim supplies the organisation path
 segment. The issuer checks current membership, coverage and permissions.
-For project creation and activation Checkout the clients send a request
-identifier in `Idempotency-Key`. A caller retrying the same operation can
-reuse the identifier. A Checkout result gives a person the payment URL.
+For project creation and activation the clients send a request identifier in
+`Idempotency-Key`. A caller retrying the same operation can reuse the identifier.
+For key-authenticated activation, remember.dev uses the organisation's credits
+or saved card when available and starts provisioning the project immediately.
+Both responses contain `project`, `payment` (`credits`, `saved_card` or
+`checkout`) and `requires_human_action`. The CLI reports the payment method
+when activation is automatic and shows the Checkout URL when the issuer sets
+`requires_human_action` to true. Both SDKs and the CLI's JSON output preserve
+the issuer's response fields, including a null or omitted `checkout`.
 When a project write is blocked by an owner switch, the clients surface the
 issuer's action and Settings URL. These are issuer operations for clients
 such as remember.dev (Autoboard D55, cloud D117).

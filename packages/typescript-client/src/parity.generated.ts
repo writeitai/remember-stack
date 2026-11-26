@@ -21,7 +21,7 @@ export default {
       "create_project": {
         "arguments": "self, *, name: str, monthly_subcap_credits: str | None=None, idempotency_key: str | None=None",
         "property": false,
-        "returns": "dict[str, object]"
+        "returns": "ProjectActivationResult"
       },
       "get": {
         "arguments": "self, path: str, *, params: Mapping[str, str | int] | None=None",
@@ -56,7 +56,7 @@ export default {
       "start_activation_checkout": {
         "arguments": "self, *, project_id: str, idempotency_key: str | None=None",
         "property": false,
-        "returns": "dict[str, object]"
+        "returns": "ProjectActivationResult"
       },
       "whoami": {
         "arguments": "self",
@@ -430,6 +430,8 @@ export default {
     "PipelineStageReadiness",
     "ProcessingLayer",
     "ProcessingLayerStates",
+    "ProjectActivationCheckout",
+    "ProjectActivationResult",
     "ProjectResolutionError",
     "QueryResultDict",
     "RateLimited",

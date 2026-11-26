@@ -1,4 +1,4 @@
-"""Typed models for the remember memory client (D62/D65).
+"""Typed models for the remember memory and issuer account clients.
 
 Dependency-light: standard library and Pydantic only.
 """
@@ -12,8 +12,10 @@ from enum import StrEnum
 from typing import Annotated
 from typing import Final
 from typing import Literal
+from typing import NotRequired
 from typing import Self
 from typing import TypeAlias
+from typing import TypedDict
 import unicodedata
 from uuid import UUID
 
@@ -44,6 +46,28 @@ UTCDateTime: TypeAlias = Annotated[
 
 UTCInstant: TypeAlias = Annotated[AwareDatetime, AfterValidator(_require_utc)]
 """A request instant: ISO 8601 text or a datetime, with a zero UTC offset."""
+
+
+class ProjectActivationCheckout(TypedDict):
+    """Hosted payment details for a project that needs human action."""
+
+    checkout_session_id: str
+    url: str
+    amount_credits: str
+    client_secret: str | None
+
+
+# Evaluate NotRequired eagerly so the optional key is visible at runtime.
+ProjectActivationResult = TypedDict(
+    "ProjectActivationResult",
+    {
+        "project": dict[str, object],
+        "payment": Literal["credits", "saved_card", "checkout"],
+        "requires_human_action": bool,
+        "checkout": NotRequired[ProjectActivationCheckout | None],
+    },
+)
+"""Issuer JSON from creating a project or paying for activation."""
 
 
 # ---------------------------------------------------------------------------

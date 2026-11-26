@@ -782,20 +782,30 @@ does not cover the project.
 |---|---|
 | `remember projects list` | Covered projects you can access, with project slot usage and the `is_owner` flag. |
 | `remember projects show PROJECT_ID` | One project's details, including its monthly cap, activation state and deployment. |
-| `remember projects create --name NAME [--monthly-cap CREDITS] [--idempotency-key KEY]` | The new project and its Checkout URL. Omit the cap for no project limit. |
+| `remember projects create --name NAME [--monthly-cap CREDITS] [--idempotency-key KEY]` | The new project ID and its activation payment outcome. Omit the cap for no project limit. |
 | `remember projects set-cap PROJECT_ID (--monthly-cap CREDITS \| --clear)` | The project with its new cap or with the cap cleared. |
-| `remember projects activate PROJECT_ID [--idempotency-key KEY]` | A fresh Checkout URL for an unpaid project. |
+| `remember projects activate PROJECT_ID [--idempotency-key KEY]` | The activation payment outcome for an unpaid project. |
 
 Use `account:read` for `list` and `show`. Writes require an organisation
 owner's key with `account:manage`. The key must cover an existing project
-to change its cap or open a fresh Checkout. Pass credit amounts as decimals
+to change its cap or activate it. Pass credit amounts as decimals
 such as `25.00`.
 
-`create` and `activate` exit 0 when Checkout opens. A person completes
-payment at `checkout.url`. With `--json`, both return `project`, `checkout`
-and `requires_human_action: true`. Use the same `--idempotency-key` to retry
-the same request. Each invocation without it generates a fresh key.
-`activate` with a new key replaces an earlier unpaid Checkout.
+`create` and `activate` use the organisation's credit balance when it covers
+activation, or charge its saved card. The command reports the payment method
+and remember.dev starts provisioning immediately. If the organisation has
+neither enough credits nor a saved card, the command prints a Checkout URL
+for a person to complete payment. Both outcomes exit 0.
+
+With `--json`, both print the issuer's response. It includes `project`,
+`payment` (`credits`, `saved_card` or `checkout`), and
+`requires_human_action`. Only `checkout` payments set that flag to `true`
+and provide a payment URL in `checkout.url`. The `checkout` field may be
+null or omitted for automatic payments.
+
+Use the same `--idempotency-key` to retry the same request. Each invocation
+without it generates a fresh key. When `activate` opens a new Checkout,
+it replaces the earlier unpaid link.
 
 An organisation owner controls project creation and cap changes in
 **Settings → Agent permissions**. Creating with a cap requires both

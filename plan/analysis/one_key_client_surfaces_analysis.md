@@ -321,6 +321,16 @@ The aliases are removed rather than kept, because
 nobody depends on them and each alias is a place where the two resolvers
 could diverge again.
 
+### 3.10 Project activation from an agent
+
+A Checkout link for every project stops a key-driven setup even when the
+organisation can pay for activation from its balance or saved card. The owner
+chose automatic payment on the issuer for covered account writes, with hosted
+Checkout when neither source is available. The issuer owns the balance and
+saved card and can tie the payment to the activation attempt through the
+caller's idempotency key. Each client can use the issuer's response to tell
+the caller what comes next.
+
 ## 4. Library-boundary check (CLAUDE.md Rule 3, D60/D61)
 
 - The engine gains no organisation, member, billing or project-directory

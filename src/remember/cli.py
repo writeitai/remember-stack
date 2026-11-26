@@ -7,6 +7,7 @@ API. ``remember ops`` imports the server extra and connects to the spine.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 from datetime import timedelta
@@ -556,34 +557,57 @@ def _run_projects(args: argparse.Namespace) -> int:
                 project_id=args.project_id, idempotency_key=args.idempotency_key
             )
     if args.projects_command in {"create", "activate"}:
-        _print_project_checkout(result, machine=args.json)
+        _print_project_activation(result, machine=args.json)
     else:
         print(json.dumps(result, indent=None if args.json else 2))
     return 0
 
 
-def _print_project_checkout(result: dict[str, object], *, machine: bool) -> None:
-    """Show the hosted Checkout and the remaining payment step."""
+def _print_project_activation(result: Mapping[str, object], *, machine: bool) -> None:
+    """Report how activation was paid or hand off hosted Checkout."""
+    if machine:
+        print(json.dumps(result))
+        return
+
     project = result.get("project")
-    checkout = result.get("checkout")
-    url = checkout.get("url") if isinstance(checkout, dict) else None
     if not (
         isinstance(project, dict)
         and isinstance(project.get("id"), str)
         and isinstance(project.get("name"), str)
-        and isinstance(url, str)
-        and url
-        and result.get("requires_human_action") is True
     ):
         raise MemoryApiError(
-            status_code=200, detail="Account API returned an invalid project Checkout"
+            status_code=200, detail="Account API returned an invalid project"
         )
-    if machine:
-        print(json.dumps(result))
+
+    requires_human_action = result.get("requires_human_action")
+    if requires_human_action is True:
+        checkout = result.get("checkout")
+        url = checkout.get("url") if isinstance(checkout, dict) else None
+        if not isinstance(url, str) or not url:
+            raise MemoryApiError(
+                status_code=200,
+                detail="Account API returned an invalid project Checkout",
+            )
+        message = f"Checkout: {url}\nA human must complete payment at this URL."
     else:
-        print(f"Project: {project['name']} ({project['id']})")
-        print(f"Checkout: {url}")
-        print("A human must complete payment at this URL.")
+        payment = result.get("payment")
+        if requires_human_action is not False or payment not in (
+            "credits",
+            "saved_card",
+        ):
+            raise MemoryApiError(
+                status_code=200,
+                detail="Account API returned an invalid project activation payment",
+            )
+        source = (
+            "from the organisation's credit balance"
+            if payment == "credits"
+            else "with the organisation's saved card"
+        )
+        message = f"Project activated. Paid {source}."
+
+    print(f"Project: {project['name']} ({project['id']})")
+    print(message)
 
 
 def _run_keys(args: argparse.Namespace) -> int:
@@ -1491,7 +1515,7 @@ def _add_account_commands(commands: argparse._SubParsersAction) -> None:
     show = project_commands.add_parser("show", parents=parents, help="show a project")
     show.add_argument("project_id", metavar="PROJECT_ID")
     create = project_commands.add_parser(
-        "create", parents=parents, help="create a project and open Checkout"
+        "create", parents=parents, help="create a project and pay for activation"
     )
     create.add_argument("--name", required=True)
     create.add_argument("--monthly-cap", metavar="CREDITS")
@@ -1503,7 +1527,7 @@ def _add_account_commands(commands: argparse._SubParsersAction) -> None:
     cap.add_argument("--monthly-cap", metavar="CREDITS")
     cap.add_argument("--clear", action="store_const", const=None, dest="monthly_cap")
     activate = project_commands.add_parser(
-        "activate", parents=parents, help="open a fresh Checkout for an unpaid project"
+        "activate", parents=parents, help="activate an unpaid project"
     )
     activate.add_argument("project_id", metavar="PROJECT_ID")
     for command in (create, activate):

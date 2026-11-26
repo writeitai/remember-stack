@@ -1921,6 +1921,7 @@ def account_method_fixtures() -> list[dict[str, Any]]:
     project = {"id": OTHER_ID, "name": "Research", "monthly_subcap_credits": "25.00"}
     checkout = {
         "project": project,
+        "payment": "checkout",
         "checkout": {
             "checkout_session_id": "checkout-fixture",
             "url": "https://payments.invalid/checkout",
@@ -1929,6 +1930,12 @@ def account_method_fixtures() -> list[dict[str, Any]]:
         },
         "requires_human_action": True,
     }
+    automatic_activation = {
+        "project": {**project, "activation_state": "requested"},
+        "requires_human_action": False,
+    }
+    credits_result = {**automatic_activation, "payment": "credits", "checkout": None}
+    saved_card_result = {**automatic_activation, "payment": "saved_card"}
     key_info = {"id": "key-fixture", "name": "Memory", "state": "active"}
     scenarios = [
         (
@@ -1950,8 +1957,9 @@ def account_method_fixtures() -> list[dict[str, Any]]:
                 "monthly_subcap_credits": "25.00",
                 "idempotency_key": "attempt",
             },
-            checkout,
+            credits_result,
         ),
+        ("create_project", {"name": "Research"}, saved_card_result),
         (
             "set_project_spend_cap",
             {"project_id": OTHER_ID, "monthly_subcap_credits": "25.00"},
@@ -1966,8 +1974,9 @@ def account_method_fixtures() -> list[dict[str, Any]]:
         (
             "start_activation_checkout",
             {"project_id": OTHER_ID, "idempotency_key": "attempt"},
-            checkout,
+            credits_result,
         ),
+        ("start_activation_checkout", {"project_id": OTHER_ID}, saved_card_result),
         ("list_keys", {}, [key_info]),
         (
             "create_key",

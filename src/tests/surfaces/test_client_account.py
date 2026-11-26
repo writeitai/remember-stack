@@ -38,6 +38,7 @@ PROJECT = {
 }
 CHECKOUT = {
     "project": PROJECT,
+    "payment": "checkout",
     "checkout": {
         "checkout_session_id": "checkout-fixture",
         "url": CHECKOUT_URL,
@@ -46,6 +47,21 @@ CHECKOUT = {
     },
     "requires_human_action": True,
 }
+AUTOMATIC_ACTIVATION = {
+    "project": {
+        **PROJECT,
+        "activation_state": "requested",
+        "deployment": {"id": "d-notes", "state": "requested"},
+    },
+    "requires_human_action": False,
+}
+CREDITS = {
+    **AUTOMATIC_ACTIVATION,
+    "payment": "credits",
+    "checkout": None,
+    "request_id": "activation-fixture",
+}
+SAVED_CARD = {**AUTOMATIC_ACTIVATION, "payment": "saved_card"}
 KEY = {"id": "k-notes", "name": "Research memory", "state": "active"}
 CREATE_KEY_ARGS = {
     "name": "Research memory",
@@ -235,30 +251,61 @@ def test_cli_calls_account_route(
     [route for route in ROUTES if route.idempotent_post],
     ids=lambda route: route.sdk,
 )
-def test_checkout_key_is_reused_when_supplied(
+@pytest.mark.parametrize(
+    ("result", "message"),
+    [
+        pytest.param(
+            CHECKOUT,
+            f"Checkout: {CHECKOUT_URL}\nA human must complete payment at this URL.",
+            id="checkout",
+        ),
+        pytest.param(
+            CREDITS,
+            "Project activated. Paid from the organisation's credit balance.",
+            id="credits",
+        ),
+        pytest.param(
+            SAVED_CARD,
+            "Project activated. Paid with the organisation's saved card.",
+            id="saved-card",
+        ),
+        pytest.param(
+            {**SAVED_CARD, "checkout": CHECKOUT["checkout"]},
+            "Project activated. Paid with the organisation's saved card.",
+            id="saved-card-with-checkout",
+        ),
+    ],
+)
+def test_project_payment_outcomes(
     route: AccountRoute,
+    result: dict[str, object],
+    message: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    fake = FakeAccount(CHECKOUT)
+    fake = FakeAccount(result)
     fake.install_cli(monkeypatch)
     with Client(api_key=TOKEN, transport=fake.transport) as client:
-        getattr(client.account, route.sdk)(
-            **route.options, idempotency_key="same-attempt"
+        assert (
+            getattr(client.account, route.sdk)(
+                **route.options, idempotency_key="same-attempt"
+            )
+            == result
         )
-    assert main([*route.argv, "--idempotency-key", "same-attempt"]) == 0
-    first, second = fake.requests
-    assert (
-        first.headers["idempotency-key"]
-        == second.headers["idempotency-key"]
-        == "same-attempt"
-    )
-    assert first.content == second.content
+    argv = [*route.argv, "--idempotency-key", "same-attempt"]
+    assert main(argv) == 0
     out, err = capsys.readouterr()
-    assert "Project: Research (p-notes)" in out
-    assert f"Checkout: {CHECKOUT_URL}" in out
-    assert "A human must complete payment at this URL." in out
+    assert out == f"Project: Research (p-notes)\n{message}\n"
     assert not err
+    assert main([*argv, "--json"]) == 0
+    out, err = capsys.readouterr()
+    assert json.loads(out) == result
+    assert not err
+    assert len(fake.requests) == 3
+    assert {request.headers["idempotency-key"] for request in fake.requests} == {
+        "same-attempt"
+    }
+    assert len({request.content for request in fake.requests}) == 1
 
 
 def test_cli_clears_cap(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -112,8 +112,9 @@ is defined by the issuer. `projects` and `keys` also accept `--api-key` or
 - **`remember whoami`**: Displays the key's issuer, id, expiry, default project and permissions, then the issuer's account view when the key has `account:read`.
 - **`remember balance`** (or `remember billing`): Directs operators to the cloud console at `https://remember.dev/app/billing` to view balances and top up credits.
 - **`remember projects list|show|create|set-cap|activate`**: Read covered projects,
-  create one, change its monthly cap or open an activation Checkout. A person
-  completes payment at the returned URL.
+  create one, change its monthly cap or activate an unpaid project. Creation and
+  activation report how the issuer paid or show a Checkout URL for a person to
+  complete payment.
 - **`remember keys list|create|revoke`**: Read visible key metadata, issue a key
   with selected permissions and coverage, or revoke a key and its descendants.
 - **`remember switch <project>`**: Sets the default project in local configuration; no new credential is minted, because the one key already covers its projects.

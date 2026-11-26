@@ -1,16 +1,17 @@
 export const metadata = {
   title: "Set up a Project from your agent",
-  description: "Use the remember CLI to create a project with a spend cap, hand off Checkout and issue a project-scoped memory key.",
+  description: "Use the remember CLI to create and activate a project with a spend cap and issue a project-scoped memory key.",
 };
 
 # Set up a Project from your agent
 
 <AppliesTo products={["remember.dev"]} />
 
-Your agent can create a project, set its monthly cap and issue a memory key
-using the `remember` CLI. A person approves sign-in and completes the
-activation purchase. To add a project, you need an organisation owner,
-active billing, a paid Default project activation and a free project slot.
+Your agent can create and activate a project, set its monthly cap and issue
+a memory key using the `remember` CLI. A person approves sign-in. Your agent
+normally completes activation using the organisation's credit balance or
+saved card. To add a project, you need an organisation owner, active billing,
+a paid Default project activation and a free project slot.
 
 ## Sign in and create the project
 
@@ -28,23 +29,31 @@ Both switches are required when creating a project with a cap.
 remember projects create --name "Billing migration" --monthly-cap 25.00
 ```
 
-The command prints the new project ID and its Checkout URL. Use that ID as
-`PROJECT_ID` in the commands below.
+The command prints the new project ID. Use that ID as `PROJECT_ID` in the
+commands below.
 
-## Activate the project
+## Check activation
 
-Open the Checkout URL from `create` in a browser and complete payment. If
-you need a fresh link for the unpaid project, run `activate` and open the
-new URL. This replaces the previous unpaid link.
+When `create` pays from the credit balance or saved card, it reports the
+payment method and remember.dev starts provisioning immediately. If the
+organisation has neither enough credits nor a saved card, `create` prints a
+Checkout URL. Give the URL to a person to open in a browser and complete
+payment.
+
+Use `activate` to retry payment for a project that's still unpaid.
 
 ```bash
 remember projects activate "$PROJECT_ID"
+```
+
+If `activate` prints a new Checkout URL, it replaces the previous unpaid
+link. After payment, use `show` to check `activation_state` and `deployment`.
+
+```bash
 remember projects show "$PROJECT_ID"
 ```
 
-After payment, use `show` to check `activation_state` and `deployment` while
-remember.dev provisions the deployment. Wait for the deployment to become
-active before sending it memory requests.
+Wait for the deployment to become active before sending memory requests.
 
 ## Create and use a memory key
 

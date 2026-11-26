@@ -77,6 +77,7 @@
           "client_secret": null,
           "url": "https://payments.invalid/checkout"
         },
+        "payment": "checkout",
         "project": {
           "id": "10000000-0000-0000-0000-000000000002",
           "monthly_subcap_credits": "25.00",
@@ -91,6 +92,7 @@
           "client_secret": null,
           "url": "https://payments.invalid/checkout"
         },
+        "payment": "checkout",
         "project": {
           "id": "10000000-0000-0000-0000-000000000002",
           "monthly_subcap_credits": "25.00",
@@ -119,32 +121,26 @@
       "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
       "method": "create_project",
       "reply": {
-        "checkout": {
-          "amount_credits": "10.00",
-          "checkout_session_id": "checkout-fixture",
-          "client_secret": null,
-          "url": "https://payments.invalid/checkout"
-        },
+        "checkout": null,
+        "payment": "credits",
         "project": {
+          "activation_state": "requested",
           "id": "10000000-0000-0000-0000-000000000002",
           "monthly_subcap_credits": "25.00",
           "name": "Research"
         },
-        "requires_human_action": true
+        "requires_human_action": false
       },
       "result": {
-        "checkout": {
-          "amount_credits": "10.00",
-          "checkout_session_id": "checkout-fixture",
-          "client_secret": null,
-          "url": "https://payments.invalid/checkout"
-        },
+        "checkout": null,
+        "payment": "credits",
         "project": {
+          "activation_state": "requested",
           "id": "10000000-0000-0000-0000-000000000002",
           "monthly_subcap_credits": "25.00",
           "name": "Research"
         },
-        "requires_human_action": true
+        "requires_human_action": false
       },
       "status": 200,
       "typescriptMethod": "createProject",
@@ -160,6 +156,46 @@
         },
         "contentType": "application/json",
         "idempotencyKey": "attempt",
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "create_project",
+      "reply": {
+        "payment": "saved_card",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "result": {
+        "payment": "saved_card",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "status": 200,
+      "typescriptMethod": "createProject",
+      "typescriptOptions": {
+        "name": "Research"
+      },
+      "wire": {
+        "body": {
+          "monthly_subcap_credits": null,
+          "name": "Research"
+        },
+        "contentType": "application/json",
+        "idempotencyKey": "<uuid4>",
         "method": "POST",
         "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects"
       }
@@ -235,6 +271,7 @@
           "client_secret": null,
           "url": "https://payments.invalid/checkout"
         },
+        "payment": "checkout",
         "project": {
           "id": "10000000-0000-0000-0000-000000000002",
           "monthly_subcap_credits": "25.00",
@@ -249,6 +286,7 @@
           "client_secret": null,
           "url": "https://payments.invalid/checkout"
         },
+        "payment": "checkout",
         "project": {
           "id": "10000000-0000-0000-0000-000000000002",
           "monthly_subcap_credits": "25.00",
@@ -274,32 +312,26 @@
       "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
       "method": "start_activation_checkout",
       "reply": {
-        "checkout": {
-          "amount_credits": "10.00",
-          "checkout_session_id": "checkout-fixture",
-          "client_secret": null,
-          "url": "https://payments.invalid/checkout"
-        },
+        "checkout": null,
+        "payment": "credits",
         "project": {
+          "activation_state": "requested",
           "id": "10000000-0000-0000-0000-000000000002",
           "monthly_subcap_credits": "25.00",
           "name": "Research"
         },
-        "requires_human_action": true
+        "requires_human_action": false
       },
       "result": {
-        "checkout": {
-          "amount_credits": "10.00",
-          "checkout_session_id": "checkout-fixture",
-          "client_secret": null,
-          "url": "https://payments.invalid/checkout"
-        },
+        "checkout": null,
+        "payment": "credits",
         "project": {
+          "activation_state": "requested",
           "id": "10000000-0000-0000-0000-000000000002",
           "monthly_subcap_credits": "25.00",
           "name": "Research"
         },
-        "requires_human_action": true
+        "requires_human_action": false
       },
       "status": 200,
       "typescriptMethod": "startActivationCheckout",
@@ -311,6 +343,43 @@
         "body": null,
         "contentType": null,
         "idempotencyKey": "attempt",
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects/10000000-0000-0000-0000-000000000002/activation-checkout"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "start_activation_checkout",
+      "reply": {
+        "payment": "saved_card",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "result": {
+        "payment": "saved_card",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "status": 200,
+      "typescriptMethod": "startActivationCheckout",
+      "typescriptOptions": {
+        "projectId": "10000000-0000-0000-0000-000000000002"
+      },
+      "wire": {
+        "body": null,
+        "contentType": null,
+        "idempotencyKey": "<uuid4>",
         "method": "POST",
         "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects/10000000-0000-0000-0000-000000000002/activation-checkout"
       }

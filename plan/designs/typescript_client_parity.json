@@ -54,6 +54,8 @@
     "PipelineStageReadiness",
     "ProcessingLayer",
     "ProcessingLayerStates",
+    "ProjectActivationCheckout",
+    "ProjectActivationResult",
     "ProjectResolutionError",
     "QueryResultDict",
     "RateLimited",
@@ -427,7 +429,7 @@
       },
       "create_project": {
         "arguments": "self, *, name: str, monthly_subcap_credits: str | None=None, idempotency_key: str | None=None",
-        "returns": "dict[str, object]",
+        "returns": "ProjectActivationResult",
         "property": false
       },
       "set_project_spend_cap": {
@@ -437,7 +439,7 @@
       },
       "start_activation_checkout": {
         "arguments": "self, *, project_id: str, idempotency_key: str | None=None",
-        "returns": "dict[str, object]",
+        "returns": "ProjectActivationResult",
         "property": false
       },
       "list_keys": {

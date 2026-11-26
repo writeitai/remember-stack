@@ -274,9 +274,9 @@ your key and return the issuer's JSON fields. [Account API](/docs/reference/clou
 |---|---|
 | `list_projects()` | `projects`, `project_limit`, `slots_used` and `is_owner`. |
 | `get_project(project_id=…)` | A project's details, cap, activation state and deployment. |
-| `create_project(name=…, monthly_subcap_credits=None, idempotency_key=None)` | The new project and its hosted Checkout. |
+| `create_project(name=…, monthly_subcap_credits=None, idempotency_key=None)` | `ProjectActivationResult` for the new project. |
 | `set_project_spend_cap(project_id=…, monthly_subcap_credits=…)` | The updated project. Pass a decimal string to set the cap or `None` to clear it. |
-| `start_activation_checkout(project_id=…, idempotency_key=None)` | A fresh Checkout for an unpaid project. |
+| `start_activation_checkout(project_id=…, idempotency_key=None)` | `ProjectActivationResult` for an unpaid project. |
 | `list_keys()` | Visible key metadata. |
 | `create_key(name=…, projects=None, permissions=None, default_project_id=None, lifetime_days=None)` | The new key's metadata and its one-time `key` secret. |
 | `revoke_key(key_id=…)` | Metadata for the revoked key. Its descendants are revoked too. |
@@ -288,11 +288,17 @@ or `"org:*"` for organisation-wide coverage. Pass a sequence of permission
 names to scope the key. Omit either option to use the issuer's child-key
 defaults.
 
-Both Checkout methods generate a UUID for `Idempotency-Key` unless you
-provide `idempotency_key`. Reuse it to retry the same request. Both return
-`requires_human_action: True` and a `checkout` object. Give `checkout["url"]`
-to a person to complete payment. An owner can control project creation and
-cap changes in **Settings → Agent permissions**.
+Both activation methods generate a UUID for `Idempotency-Key` unless you
+provide `idempotency_key`. Reuse it to retry the same request.
+
+`ProjectActivationResult` is a dictionary with `project`, `payment` and
+`requires_human_action`. With `"credits"` or `"saved_card"`, the issuer
+uses the organisation's credit balance or saved card and starts provisioning
+immediately.
+When `payment` is `"checkout"`, `requires_human_action` is `True`. Give
+`checkout["url"]` to a person to complete payment. The optional `checkout`
+field may be `None` for automatic payments. An owner can control project
+creation and cap changes in **Settings → Agent permissions**.
 
 ```python
 from remember import Client
@@ -301,8 +307,8 @@ with Client() as client:
     result = client.account.create_project(
         name="Billing migration", monthly_subcap_credits="25.00"
     )
-    checkout = result["checkout"]
-    if isinstance(checkout, dict):
+    checkout = result.get("checkout")
+    if result["requires_human_action"] and checkout is not None:
         print(checkout["url"])
 ```
 
