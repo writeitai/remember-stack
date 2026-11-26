@@ -15259,7 +15259,7 @@
   },
   "info": {
     "title": "RememberStack query API",
-    "version": "0.22.2"
+    "version": "0.22.3"
   },
   "openapi": "3.1.0",
   "paths": {

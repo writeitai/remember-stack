@@ -1,3 +1,3 @@
 /* Generated package version; regenerate with npm run generate. */
 export const version = "0.1.0";
-export const pythonCompatibility = {"openapiHash":"9f654a69e0231f11824eb1115ee00d684bbe8ab095ec930a462eefd49fe99a12","publishedBaseline":{"revision":"dd0c78015099cdd84ab5f3501744d6e225125989","version":"0.17.2"},"pythonSourceRevision":"2cde3baf7a820164170f2e4b91065056309f68e8","sourceHash":"56c87372b8f4f707119770a1ee30050b30577fa84fef7600670d605f2abebec5"} as const;
+export const pythonCompatibility = {"openapiHash":"44d48e90243b5223211db4a98863b0e24add50fcb70664fcb14160708cb7c05e","publishedBaseline":{"revision":"dd0c78015099cdd84ab5f3501744d6e225125989","version":"0.17.2"},"pythonSourceRevision":"2cde3baf7a820164170f2e4b91065056309f68e8","sourceHash":"56c87372b8f4f707119770a1ee30050b30577fa84fef7600670d605f2abebec5"} as const;
