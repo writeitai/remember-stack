@@ -147,6 +147,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
     }
     const required=definition.input_schema.required as string[]|undefined;
     const missing=(required??[]).filter(key=>!(key in args)).sort();if(missing.length)refuse({detail:`Missing required arguments: ${missing.join(', ')}.`});
+    if(ROUTE_TOOL_NAMES.includes(name))validateSchema({schema:definition.input_schema,value:args});
     assertJson({value:args});return {...args};
   }catch(error) {if(error instanceof ToolArgumentError)throw error;if(error instanceof InputValidationError)refuse({detail:error.message});throw error;}
 }

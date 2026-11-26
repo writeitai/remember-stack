@@ -15,6 +15,14 @@ test('all forty-three definitions preserve metadata, schemas and rendering behav
   wire[0].inputSchema.properties.filename.type='number';assert.equal(memoryTools()[0].inputSchema.properties.filename.type,'string');
 });
 
+test('route tools check every value against the catalogue schema and return the arguments',async()=>{
+  const args={doc_id:'10000000-0000-0000-0000-000000000001'};
+  assert.deepEqual(await validateArguments({name:'clear_effective_time',arguments:args}),args);
+  await assert.rejects(validateArguments({name:'clear_effective_time',arguments:{doc_id:'nope'}}),error=>error instanceof ToolArgumentError&&error.error.code==='invalid_arguments');
+  await assert.rejects(validateArguments({name:'search_claims',arguments:{query:'x',k:401}}),ToolArgumentError);
+  await assert.rejects(validateArguments({name:'get_forget',arguments:{}}),error=>error instanceof ToolArgumentError&&error.message==='Missing required arguments: forget_id.');
+});
+
 test('path is refused before any body-mode ambiguity unless a host injects a resolver',async()=>{
   await assert.rejects(validateArguments({name:'ingest',arguments:{path:'/host/file',text:'note',filename:'note.md'}}),error=>error instanceof ToolArgumentError&&error.error.code==='invalid_arguments'&&error.message==='Unknown argument keys: path.');
   let invoked=false;

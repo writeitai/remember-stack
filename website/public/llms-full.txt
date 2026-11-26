@@ -14735,8 +14735,10 @@ None.
 | `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`, plus `openrouter_embedding_provider_only` when the embedding host allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) is set. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
 | `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `archive_document` and `unarchive_document` only when archiving is, `forget_document` only when forget is, `search_documents`
-only when document search is, and `section_history` and
-`document_references` only when their routes are. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
+only when document search is, `section_history` and
+`document_references` only when their routes are, and each
+[route tool](https://remember.dev/docs/reference/mcp#route-tools) only when its route is (the
+seven over the engine's own read routes always). A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
 The first three fields also appear on every
 [`PipelineReadinessReport`](https://remember.dev/docs/reference/result-types#pipelinereadinessreport).
@@ -14778,7 +14780,9 @@ is not listed.
 
 With the facts layer disabled, `GET /operations`, the `tools` of
 `GET /deployment` and the MCP tool list leave out `facts_context` and
-`resolve_entity`.
+`resolve_entity`; the `tools` map and the MCP tool list also leave out the
+route tools that read only facts. With the claims layer disabled they leave
+out `search_claims`.
 
 ```python
 from remember import Client
@@ -20105,9 +20109,11 @@ identify the source-defined groups. Individual constants include
 INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, ARCHIVE_DOCUMENT_TOOL_NAME,
 UNARCHIVE_DOCUMENT_TOOL_NAME, SEARCH_DOCUMENTS_TOOL_NAME and
 ADJACENT_CHUNKS_TOOL_NAME; `ARCHIVE_TOOL_NAMES` groups the two archive tools. `TAG_READ_TOOL_NAMES`,
-`TAG_WRITE_TOOL_NAMES` and `TAG_TOOL_NAMES` group the five tag tools.
+`TAG_WRITE_TOOL_NAMES` and `TAG_TOOL_NAMES` group the five tag tools, and
+`ROUTE_TOOL_NAMES` the eighteen route tools that each call one HTTP route.
 
-`validateArguments` checks every memory tool and returns parsed arguments.
+`validateArguments` checks every memory tool and returns parsed arguments; a
+route tool's arguments are checked against its schema and returned as given.
 `validateSavedQueryIdentifier` checks saved-query names. `ToolError`,
 `ToolArgumentError`, `invalidArguments`, `mapError` and `errorResult` supply a
 common structured failure shape. `ToolError.asDict()` renders its envelope.
@@ -20937,9 +20943,12 @@ then environment variables, then the credential file. See [CLI: How the CLI find
 [Over HTTP](#over-http).
 
 `--read-only` leaves out the tools that change memory (`ingest`,
-`archive_document`, `unarchive_document`, `forget_document` and the four tag
-tools that change tags), and refuses calls to them with the error `read_only`.
-`pipeline_readiness` and `search_documents` only read, so they stay.
+`archive_document`, `unarchive_document`, `forget_document`, the four tag
+tools that change tags, `set_references`, `set_effective_periods` and
+`clear_effective_time`) and the two forget-record tools `list_forgets` and
+`get_forget`, whose routes need write permission. It refuses calls to them
+with the error `read_only`. `pipeline_readiness` and `search_documents` only
+read, so they stay.
 
 ### Protocol
 
@@ -20981,26 +20990,36 @@ each tool the deployment reports at the same version:
    `facts_context`, `combined_context`.
 3. Context expansion: `adjacent_chunks`.
 4. The seven SQL query tools, when the deployment serves the query space.
+5. The eighteen [route tools](#route-tools), each of which calls one HTTP
+   route, when the deployment serves that route.
 
 A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 24 tools: 12 + 4 + 1 + 7.
+lists 43 tools: 13 + 4 + 1 + 7 + 18.
 
 A deployment that does not process the facts
 [layer](https://remember.dev/docs/concepts/pipeline#processing-layers) does not report
-`resolve_entity` or `facts_context`, so they are left out. With `--layers`,
+`resolve_entity`, `facts_context` or the route tools that read only facts
+(`resolve_entity_in_context`, `lookup_relations`, `lookup_observations`,
+`hydrate_relation`, `transcript_relation`, `graph_neighborhood`,
+`graph_path`), so they are left out; one that does not process claims leaves
+out `search_claims`. With `--layers`,
 the server also leaves out every tool that reads only layers outside the
 selection, and each remaining read uses only the selected layers. A call that
 needs a missing layer fails with `layer_unavailable`.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
-`ingest`, `archive_document`, `unarchive_document`, `forget_document` and the
-four tag tools that change tags, and `destructiveHint` is `true` only for
-`forget_document` and `delete_tag`. Archiving is not destructive: the document
-stays as history and `unarchive_document` undoes it.
+`ingest`, `archive_document`, `unarchive_document`, `forget_document`, the
+four tag tools that change tags, `set_references`, `set_effective_periods`,
+`clear_effective_time`, and the forget-record tools `list_forgets` and
+`get_forget` (they only read, but their routes need write permission).
+`destructiveHint` is `true` only for `forget_document` and `delete_tag`.
+Archiving is not destructive: the document stays as history and
+`unarchive_document` undoes it. Nor are the period and reference writes: each
+change is recorded and can be made again with the earlier values.
 
 The server serves one deployment, so no tool takes a `project` argument; a
 call that passes one is refused with `project_routing_unavailable`. A call to
@@ -21335,8 +21354,10 @@ An unknown document is `document_not_found`, an unknown passage
 `chunk_not_found`. The token needs `read` scope. See
 [`POST /documents/references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
 
-Apart from the period arguments of `ingest`, no MCP tool changes effective
-periods or supplies references; use the HTTP API or the SDK for those.
+To change effective periods or supply references, use the route tools
+[`set_effective_periods`](#set_effective_periods),
+[`clear_effective_time`](#clear_effective_time) and
+[`set_references`](#set_references).
 
 ### Tag tools
 
@@ -21538,6 +21559,147 @@ string field), booleans in place of integers, and out-of-range numbers.
 Identifiers (`namespace`, `name`) must match `^[a-z][a-z0-9_]*$`. See
 [Saved queries](https://remember.dev/docs/guides/saved-queries).
 
+### Route tools
+
+These eighteen tools each call one HTTP route and return its JSON answer
+unchanged, so every route an agent can use has a tool. `remember mcp` lists
+one only when the deployment serves its route. All are at tool version 1.
+Each refuses unknown keys and checks every value against the route's limits
+before sending anything (`invalid_arguments`). UUIDs are strings; timestamps
+are ISO 8601 with a zero UTC offset, such as `2026-01-01T00:00:00Z`.
+
+The write tools (`set_references`, `set_effective_periods`,
+`clear_effective_time`) tell the agent in their descriptions to use them only
+when the user asks. `list_forgets` and `get_forget` only read, but their
+routes need a key with write permission, so `--read-only` leaves them out too.
+
+#### Documents and layers
+
+| Tool | Parameters | Result |
+|---|---|---|
+| `list_documents` | `limit` (1–200, default 50); `cursor`; `status` (`ingesting`, `converting`, `structuring`, `ready` or `failed`: the newest version's state); `include_archived` (default `false`) | A [`DocumentPage`](https://remember.dev/docs/reference/result-types#documentpage), newest first by when each document was first stored. Pass `next_cursor` back as `cursor`; `null` ends. See [`GET /documents`](https://remember.dev/docs/reference/http-api/ingest#get-documents). |
+| `list_forgets` | none | A [`ForgetList`](https://remember.dev/docs/reference/result-types#forgetlist), oldest first. See [`GET /forgets`](https://remember.dev/docs/reference/http-api/ingest#get-forgets). |
+| `get_forget` | `forget_id` (required) | One [`Forget`](https://remember.dev/docs/reference/result-types#forget) record, to follow erasing after `forget_document`; an unknown id is `forget_not_found`. See [`GET /forgets/{forget_id}`](https://remember.dev/docs/reference/http-api/ingest#get-forgetsforget_id). |
+| `processing_layers` | none | Whether the claims and facts layers are `enabled`, `backfilling` or `disabled`. See [`GET /processing-layers`](https://remember.dev/docs/reference/http-api/deployment#get-processing-layers). |
+
+The `list_documents` description tells the agent to use it to browse or to
+find failed documents, and `search_documents` to find a particular file.
+
+#### Search
+
+`search_claims` searches the claims extracted from documents (statements as
+evidence, never current truth); `search_chunks` searches the documents' own
+passages. Both take the same parameters:
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `query` | string | yes | 1–4,096 characters. |
+| `k` | integer | no | 1–400; default 10. |
+| `channel` | `"semantic"` or `"bm25"` | no | Default `"semantic"` (meaning); `bm25` matches exact words. |
+| `documents` | object | no | Only what matching documents say; the fields are under [`facts_context`](#facts_context). |
+| `time` | object | no | Default `{"mode": "current"}`; which editions of documents with declared effective periods are read. The forms are under [`facts_context`](#facts_context). |
+
+The result is an [`Envelope`](https://remember.dev/docs/reference/result-types#envelope):
+`evidence` for claims, `chunks` for passages. With `documents` or `time` the
+tool calls `POST /search/claims` or `POST /search/chunks`; without either it
+sends the same search as `GET`. A deployment that does not process claims
+answers `search_claims` with `layer_unavailable`. See
+[Search](https://remember.dev/docs/reference/http-api/search#post-searchclaims).
+
+#### Entities and facts
+
+These tools read the facts layer; a deployment that does not process it
+answers `layer_unavailable`. Each returns an
+[`Envelope`](https://remember.dev/docs/reference/result-types#envelope).
+
+| Tool | Parameters | Result |
+|---|---|---|
+| `resolve_entity_in_context` | `name` (required, 1–512 characters); `context_entity_ids` (required, 1–8 entity UUIDs) | The candidates `resolve_entity` finds, ordered by how many current relations connect each to the context entities, with `context_hits`. See [`GET /resolve`](https://remember.dev/docs/reference/http-api/entities-and-facts#get-resolve). |
+| `lookup_relations` | `subject_entity_id`, `predicate` (1–200 characters), `object_entity_id`, all optional; `valid_at` (relations true then; default now); `limit` (1–200, default 50); `cursor` | The matching relations in `facts`, paged by `next_cursor`. See [`GET /lookup/relations`](https://remember.dev/docs/reference/http-api/entities-and-facts#get-lookuprelations). |
+| `lookup_observations` | `entity_id` (required); `property_query` (1–4,096 characters); `k` (1–400, default 10, with `property_query`); `limit` (1–200, default 50) and `cursor` (without `property_query`) | One entity's observations: ranked by `property_query`, or paged without it. `property_query` and `cursor` together are refused. See [`GET /lookup/observations`](https://remember.dev/docs/reference/http-api/entities-and-facts#get-lookupobservations). |
+| `hydrate_relation` | `relation_id` (required) | The relation's supporting claims and their source documents. See [`GET /hydrate/relation/{relation_id}`](https://remember.dev/docs/reference/http-api/entities-and-facts#get-hydraterelationrelation_id). |
+| `transcript_relation` | `relation_id` (required) | The decisions that adopted, changed or closed the relation, in `transcript`. See [`GET /transcript/relation/{relation_id}`](https://remember.dev/docs/reference/http-api/entities-and-facts#get-transcriptrelationrelation_id). |
+
+`resolve_entity_in_context` runs the same resolution as `resolve_entity`; its
+description tells the agent to call `resolve_entity` first and to use this
+tool when a name is ambiguous and the conversation already gave the ids of
+related entities.
+
+#### Graph
+
+Each returns an [`Envelope`](https://remember.dev/docs/reference/result-types#envelope) with
+`nodes`, `edges` and `paths`. A busy or slow graph answers `503`
+(`engine_unavailable`, retryable).
+
+| Tool | Parameters | Result |
+|---|---|---|
+| `graph_neighborhood` | `entity_id` (required); `hops` (1–4, default 2); `predicates` (up to 100, each 1–200 characters); `valid_at` and `believed_at` (both or neither); `limit` (1–500, default 100); `cursor` (up to 2,048 characters); `include_paths` (default `false`) | The entities and relations within `hops` steps, paged by `next_cursor`; the cursor keeps the first page's clocks. Needs the facts layer. See [`POST /graph/neighborhood`](https://remember.dev/docs/reference/http-api/graph#post-graphneighborhood). |
+| `graph_path` | `from_entity_id`, `to_entity_id` (required); `max_hops` (1–6, default 4); `predicates`; `valid_at` and `believed_at` (both or neither) | Every shortest path between the two entities. Needs the facts layer. See [`POST /graph/path`](https://remember.dev/docs/reference/http-api/graph#post-graphpath). |
+| `graph_citation_path` | `from_doc_id`, `to_doc_id` (required); `max_hops` (1–6, default 6) | Directed reference paths from one document to the other. See [`POST /graph/citation-path`](https://remember.dev/docs/reference/http-api/graph#post-graphcitation-path). |
+
+#### `reference_generations`
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID. |
+| `version_id` | string | yes | The version's UUID. |
+
+The result is a [`ReferenceGenerations`](https://remember.dev/docs/reference/result-types#referencegenerations):
+each reference set recorded for the version, newest first, with `status`
+`pending`, `active`, `rejected` (with `errors`) or `superseded`. The
+description tells the agent to check it after `set_references`. An unknown
+document is `document_not_found`, an unknown version `version_not_found`. See
+[`GET …/references`](https://remember.dev/docs/reference/http-api/ingest#get-documentsdoc_idversionsversion_idreferences).
+
+#### `set_references`
+
+Replaces the references one document version makes to other documents with
+a complete set: a reference left out is removed, and an empty list removes
+them all.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID. |
+| `version_id` | string | yes | The version's UUID. |
+| `references` | array of objects | yes | Up to 1,000 [`ReferenceInput`](https://remember.dev/docs/reference/result-types#referenceinput) objects: `kind`, `target` (`source_kind`, `source_ref`, optional `version_key` and `section_key`), optional `from_section_key`, `binding` (`floating` or `pinned`, which needs `target.version_key`), `change_date_known` and `change_effective_from` (for `amends` only), `source_label`, `context`. |
+
+`remember mcp` sends the set as NDJSON to
+[`PUT …/references`](https://remember.dev/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences);
+a larger set goes through the HTTP API or the SDK. The result is a
+[`ReferencesSet`](https://remember.dev/docs/reference/result-types#referencesset): `outcome`
+(`created`, `unchanged` or `pending_cancelled`) and the generation, which the
+pipeline then validates as a whole. An unknown document or version is
+`document_not_found` or `version_not_found`.
+
+#### `set_effective_periods`
+
+Replaces the periods during which one version's text is in force.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID. |
+| `version_id` | string | yes | The version's UUID. |
+| `periods` | array of objects | yes | Up to 1,000 `{"effective_from": …, "effective_until": …}`; `effective_until` is optional and later than `effective_from`; no two periods start at the same instant. An empty list leaves the version in force at no time. |
+
+The result is an [`EffectivePeriodsSet`](https://remember.dev/docs/reference/result-types#effectiveperiodsset).
+Another version already starting at the same instant is refused with `409`
+(the detail names `effective_period_conflict`), a `living` document with `422`
+(`effective_time_requires_snapshot`). See
+[`PUT …/effective-periods`](https://remember.dev/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_ideffective-periods).
+
+#### `clear_effective_time`
+
+Retracts every declared period of a document, so its newest processed
+version is current again.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID. |
+
+The result is an [`EffectiveTimeCleared`](https://remember.dev/docs/reference/result-types#effectivetimecleared):
+`retracted` and `cleared_at`. An unknown document is `document_not_found`.
+See [`DELETE …/effective-periods`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_ideffective-periods).
+
 ### Errors
 
 Errors come back as a tool result with `isError: true`, so the agent can read
@@ -21580,7 +21742,10 @@ them. Every tool returns the same JSON:
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
 | `confirmation_required` | `null` | no | `forget_document` without `confirm: true`. Nothing was forgotten. |
-| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`, `forget_document`: no such document (forgetting a forgotten document again returns its existing record). `section_history`, `document_references`, `update_document_tags`: no such document, or it is forgotten. |
+| `document_not_found` | 404 | no | `archive_document`, `unarchive_document`, `forget_document`: no such document (forgetting a forgotten document again returns its existing record). `section_history`, `document_references`, `update_document_tags` and the route tools that take a `doc_id`: no such document, or it is forgotten. |
+| `version_not_found` | 404 | no | `reference_generations`, `set_references`, `set_effective_periods`: the document has no such version. |
+| `forget_not_found` | 404 | no | `get_forget`: no such forget record. |
+| `layer_unavailable` | 409 | no | The call needs a processing layer the deployment does not process. |
 | `document_forgotten` | 409 | no | `ingest` of content that belongs to a forgotten document, without `allow_forgotten`. |
 | `forget_not_complete` | 409 | no | `ingest` with `allow_forgotten` while the matching forget is still erasing. |
 | `unknown_tag` | 422, or 404 for `update_tag` and `delete_tag` | no | A tag the call names is not registered. `detail` names every one. |
@@ -23545,11 +23710,9 @@ absent from the current release; nothing here has a date.
   references itself (links, citations, "see section 4.2"); every reference
   `document_references` returns is one you supplied with
   `PUT /documents/{doc_id}/versions/{version_id}/references`.
-- **Periods, references and section history from the CLI and MCP.** The CLI
-  declares periods only at `remember ingest`, and the MCP server only through
-  `ingest`; neither can change periods later or supply references. The CLI
-  has no section history or references command; the MCP server has the
-  `section_history` and `document_references` tools.
+- **Periods, references and section history from the CLI.** The CLI
+  declares periods only at `remember ingest`; it cannot change periods later
+  or supply references. The CLI has no section history or references command.
 
 ## Knowledge
 

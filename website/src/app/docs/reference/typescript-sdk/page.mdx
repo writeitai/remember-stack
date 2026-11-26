@@ -364,9 +364,11 @@ identify the source-defined groups. Individual constants include
 INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, ARCHIVE_DOCUMENT_TOOL_NAME,
 UNARCHIVE_DOCUMENT_TOOL_NAME, SEARCH_DOCUMENTS_TOOL_NAME and
 ADJACENT_CHUNKS_TOOL_NAME; `ARCHIVE_TOOL_NAMES` groups the two archive tools. `TAG_READ_TOOL_NAMES`,
-`TAG_WRITE_TOOL_NAMES` and `TAG_TOOL_NAMES` group the five tag tools.
+`TAG_WRITE_TOOL_NAMES` and `TAG_TOOL_NAMES` group the five tag tools, and
+`ROUTE_TOOL_NAMES` the eighteen route tools that each call one HTTP route.
 
-`validateArguments` checks every memory tool and returns parsed arguments.
+`validateArguments` checks every memory tool and returns parsed arguments; a
+route tool's arguments are checked against its schema and returned as given.
 `validateSavedQueryIdentifier` checks saved-query names. `ToolError`,
 `ToolArgumentError`, `invalidArguments`, `mapError` and `errorResult` supply a
 common structured failure shape. `ToolError.asDict()` renders its envelope.

@@ -71,6 +71,11 @@ route only when it genuinely does not belong on that surface.
 - Both SDKs, the CLI and MCP use the GET adjacent-chunks route for bounded
   windows. The equivalent POST form is available through HTTP.
 - MCP uses its own `tools/list` for discovery instead of `GET /operations`.
+- MCP's `search_claims` and `search_chunks` declare the POST search routes and
+  send the same search as GET only when no `documents` or `time` filter is given.
+- `remember mcp` reads `GET /deployment` itself to choose which tools to list;
+  no tool returns it, as `pipeline_readiness` already reports the build
+  revision and model bindings.
 
 ## Object-store integration tests
 
