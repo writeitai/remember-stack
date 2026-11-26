@@ -497,7 +497,8 @@ class VertexModelProvider:
                     preview = _error_preview(response)
                     if retry_delay_s is None:
                         raise VertexProviderError(
-                            f"Vertex {path} returned 429: {preview}"
+                            f"Vertex {path} returned 429: {preview}",
+                            status_code=response.status_code,
                         )
                 elif response.status_code in (401, 403):
                     raise VertexAccessError(
@@ -507,7 +508,8 @@ class VertexModelProvider:
                 elif response.status_code >= 400:
                     raise VertexProviderError(
                         f"Vertex {path} returned {response.status_code}:"
-                        f" {_error_preview(response)}"
+                        f" {_error_preview(response)}",
+                        status_code=response.status_code,
                     )
                 else:
                     return _completion_from_stream(

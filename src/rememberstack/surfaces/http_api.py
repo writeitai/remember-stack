@@ -1699,13 +1699,26 @@ def _mount_pipeline_readiness(*, app: FastAPI) -> None:
         response_model=PipelineReadinessReport,
     )
     def pipeline_readiness(
-        deployment: _Deployment, request: Annotated[PipelineReadinessRequest, Body()]
-    ) -> PipelineReadinessReport:
+        deployment: _Deployment,
+        request: Annotated[PipelineReadinessRequest, Body()],
+        include_blockers: Annotated[bool, Query()] = False,
+    ) -> PipelineReadinessReport | JSONResponse:
         """Inspect exact pipeline and explicitly requested capabilities."""
-        return _served(deployment.pipeline_readiness).inspect(
+        report = _served(deployment.pipeline_readiness).inspect(
             deployment_id=deployment.deployment_id,
             version_ids=tuple(request.version_ids),
             require=request.require,
+        )
+        if include_blockers:
+            return report
+        # Older clients validate each stage against a closed response model.
+        return JSONResponse(
+            content=report.model_dump(
+                mode="json",
+                exclude={
+                    "versions": {"__all__": {"stages": {"__all__": {"blocked_by"}}}}
+                },
+            )
         )
 
 

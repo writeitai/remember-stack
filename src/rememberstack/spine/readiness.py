@@ -39,6 +39,55 @@ from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_ONE_HOP
 from rememberstack.spine.processing_layers import layer_configuration_on
 
+_FACTS_PREREQUISITES = {
+    PipelineStage.STRUCTURE: PipelineStage.CONVERT,
+    PipelineStage.CHUNK: PipelineStage.STRUCTURE,
+    PipelineStage.EMBED_CHUNK: PipelineStage.CHUNK,
+    PipelineStage.EXTRACT_CLAIMS: PipelineStage.EMBED_CHUNK,
+    PipelineStage.GROUND_CLAIMS: PipelineStage.EXTRACT_CLAIMS,
+    PipelineStage.NORMALIZE_RELATIONS: PipelineStage.GROUND_CLAIMS,
+    PipelineStage.ADJUDICATE_OBSERVATIONS: PipelineStage.NORMALIZE_RELATIONS,
+    PipelineStage.ADJUDICATE_SUPERSESSION: PipelineStage.ADJUDICATE_OBSERVATIONS,
+    PipelineStage.EMBED_CLAIM: PipelineStage.ADJUDICATE_OBSERVATIONS,
+    PipelineStage.RECONCILE: PipelineStage.ADJUDICATE_SUPERSESSION,
+    PipelineStage.LABEL_RELATION: PipelineStage.RECONCILE,
+}
+_CLAIMS_PREREQUISITES = {
+    **_FACTS_PREREQUISITES,
+    PipelineStage.EMBED_CLAIM: PipelineStage.GROUND_CLAIMS,
+    PipelineStage.RECONCILE: PipelineStage.GROUND_CLAIMS,
+}
+
+
+def _with_dead_letter_blockers(
+    *, stages: list[PipelineStageReadiness], facts_expected: bool
+) -> tuple[PipelineStageReadiness, ...]:
+    """Name the terminal ancestor of each unscheduled stage on its own branch."""
+    prerequisites = _FACTS_PREREQUISITES if facts_expected else _CLAIMS_PREREQUISITES
+    by_stage = {PipelineStage(item.stage): item for item in stages}
+    result: list[PipelineStageReadiness] = []
+    for item in stages:
+        stage = PipelineStage(item.stage)
+        while (
+            item.status == "missing"
+            or (item.status == "succeeded" and item.finished_at is None)
+        ) and (upstream_stage := prerequisites.get(stage)) is not None:
+            upstream = by_stage.get(upstream_stage)
+            if upstream is None:
+                break
+            if upstream.status == "dead_letter":
+                item = item.model_copy(
+                    update={"status": "missing", "blocked_by": upstream.stage}
+                )
+                break
+            if upstream.status != "missing" and not (
+                upstream.status == "succeeded" and upstream.finished_at is None
+            ):
+                break
+            stage = upstream_stage
+        result.append(item)
+    return tuple(result)
+
 
 class PipelineReadinessCatalog:
     """Read exact per-version stage and aggregate-projection completion."""
@@ -84,29 +133,12 @@ class PipelineReadinessCatalog:
         version_ids = tuple(dict.fromkeys(version_ids))
         if not version_ids:
             raise ValueError("pipeline readiness requires at least one version_id")
-        extract_version = next(
-            (
-                version
-                for stage, version in self._expected
-                if stage is PipelineStage.EXTRACT_CLAIMS
-            ),
-            None,
-        )
-        normalize_version = next(
-            (
-                version
-                for stage, version in self._expected
-                if stage is PipelineStage.NORMALIZE_RELATIONS
-            ),
-            None,
-        )
-        obs_flush_version = next(
-            (
-                version
-                for stage, version in self._expected
-                if stage is PipelineStage.ADJUDICATE_OBSERVATIONS
-            ),
-            None,
+        expected_components = dict(self._expected)
+        extract_version = expected_components.get(PipelineStage.EXTRACT_CLAIMS)
+        ground_version = expected_components.get(PipelineStage.GROUND_CLAIMS)
+        normalize_version = expected_components.get(PipelineStage.NORMALIZE_RELATIONS)
+        obs_flush_version = expected_components.get(
+            PipelineStage.ADJUDICATE_OBSERVATIONS
         )
         # Packing generation on chunk rows includes params (D58); the CHUNK
         # processing_state component_version is the bare algorithm pin. Use the
@@ -286,17 +318,33 @@ class PipelineReadinessCatalog:
         claims_reconciles = {
             UUID(str(row["target_id"])): row for row in claims_reconcile_rows
         }
+        facts_expected = ProcessingLayer.FACTS in expected_layers
         versions: list[VersionPipelineReadiness] = []
         for version_id in version_ids:
-            stages: list[PipelineStageReadiness] = []
+            stage_rows: list[PipelineStageReadiness] = []
             for stage, configured_version in self._expected:
-                layer = _stage_layer(
-                    stage=stage, facts_expected=ProcessingLayer.FACTS in expected_layers
-                )
+                layer = _stage_layer(stage=stage, facts_expected=facts_expected)
                 if layer not in expected_layers:
                     continue
                 component_version = configured_version
                 row = by_key.get((version_id, stage, component_version))
+                if (
+                    stage is PipelineStage.NORMALIZE_RELATIONS
+                    and row is not None
+                    and row.get("no_claims")
+                    and ground_version is not None
+                ):
+                    # Zero claims only completes normalize after grounding
+                    # had a chance to produce them.
+                    ground = by_key.get(
+                        (version_id, PipelineStage.GROUND_CLAIMS, ground_version)
+                    )
+                    if (
+                        ground is None
+                        or ground["status"] != "succeeded"
+                        or ground["finished_at"] is None
+                    ):
+                        row = None
                 if stage is PipelineStage.RECONCILE and layer is ProcessingLayer.CLAIMS:
                     # Facts not expected: a succeeded full reconcile from before
                     # the switch satisfies the claims reconcile (D143 §4.5).
@@ -315,7 +363,7 @@ class PipelineReadinessCatalog:
                     # never process (its gap was discharged).
                     status = "skipped"
                     finished_at = checked_at
-                stages.append(
+                stage_rows.append(
                     PipelineStageReadiness.model_validate(
                         {
                             "stage": stage.value,
@@ -328,6 +376,9 @@ class PipelineReadinessCatalog:
                         }
                     )
                 )
+            stages = _with_dead_letter_blockers(
+                stages=stage_rows, facts_expected=facts_expected
+            )
             versions.append(
                 VersionPipelineReadiness(
                     version_id=version_id,
@@ -336,10 +387,15 @@ class PipelineReadinessCatalog:
                         and item.finished_at is not None
                         for item in stages
                     ),
-                    stages=tuple(stages),
+                    stages=stages,
                 )
             )
         versions_ready = all(version.ready for version in versions)
+        has_dead_letter = any(
+            stage.status == "dead_letter"
+            for version in versions
+            for stage in version.stages
+        )
         capabilities: dict[
             Literal["pipeline", "p1", "live_graph", "p3"], CapabilityReadiness
         ] = {
@@ -347,7 +403,13 @@ class PipelineReadinessCatalog:
                 required=require.pipeline,
                 ready=versions_ready,
                 checked_at=checked_at,
-                reason="ready" if versions_ready else "stage_incomplete",
+                reason=(
+                    "ready"
+                    if versions_ready
+                    else "stage_dead_lettered"
+                    if has_dead_letter
+                    else "stage_incomplete"
+                ),
             ),
             "p1": CapabilityReadiness(
                 required=require.p1,
@@ -822,7 +884,7 @@ _NORMALIZE_CLAIM_STATUS = text(
     -- can hold real timestamps from claims that already succeeded. Normalize
     -- never had the `now()` fabrication, so this only suppresses a misleading
     -- completion time; it never invents one.
-    SELECT target_id, stage, component_version, status,
+    SELECT target_id, stage, component_version, status, no_claims,
            CASE
              WHEN status IN ('succeeded', 'dead_letter') THEN finished_at
            END AS finished_at,
@@ -834,6 +896,7 @@ _NORMALIZE_CLAIM_STATUS = text(
     SELECT v.version_id AS target_id,
            'normalize_relations'::text AS stage,
            :normalize_version AS component_version,
+           count(cl.claim_id) = 0 AS no_claims,
            CASE
              WHEN count(cl.claim_id) = 0 THEN 'succeeded'
              WHEN count(cl.claim_id) FILTER (

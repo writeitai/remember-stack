@@ -13,6 +13,8 @@ selector of the document search filter; D156 step 3 adds the filtered fact
 read's optional ``in_documents_filter`` marks and matching evidence total.
 D159 adds the forget routes, their record schemas and the optional
 ``allow_forgotten`` query parameter on ``POST /ingest``.
+Readiness adds the optional ``include_blockers`` query parameter and
+``blocked_by`` stage property.
 Those are stripped too, along with the additive operation audience tags.
 """
 
@@ -110,7 +112,7 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
             kept = [
                 p
                 for p in operation["parameters"]
-                if p.get("name") not in {"layers", "allow_forgotten"}
+                if p.get("name") not in {"layers", "allow_forgotten", "include_blockers"}
                 and not (p.get("name") == "tags" and p.get("in") == "query")
             ]
             if kept:
@@ -131,7 +133,9 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
             schemas[name]["properties"].pop(
                 _D156_FILTER_DISCLOSURES[name.removeprefix("Output")]
             )
-    reasons = schemas["PipelineStageReadiness"]["properties"]["defer_reason"]["anyOf"]
+    stage_properties = schemas["PipelineStageReadiness"]["properties"]
+    stage_properties.pop("blocked_by")
+    reasons = stage_properties["defer_reason"]["anyOf"]
     reasons[0]["enum"] = [value for value in reasons[0]["enum"] if value != "admission"]
     return stripped
 
