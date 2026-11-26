@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
+import random
 from typing import cast
 from typing import Final
 from typing import Literal
@@ -61,6 +62,13 @@ from rememberstack.spine.new_work import record_new_work
 
 if TYPE_CHECKING:
     from rememberstack.workers.base import EmptyObsFlushComplete
+
+
+# A short retry handles a brief interruption. Subsequent retries wait out a
+# dependency outage without consuming the remaining attempts in a burst.
+_DEPENDENCY_FIRST_RETRY_S: Final = 60
+_DEPENDENCY_RETRY_COOLDOWN_S: Final = 20 * 60
+_DEPENDENCY_RETRY_JITTER_MAX: Final = 1.2
 
 
 class WorkLedgerSettings(BaseSettings):
@@ -753,7 +761,13 @@ class WorkLedger:
             )
 
     def fail(
-        self, *, processing_id: UUID, attempt: int, error: str, retryable: bool
+        self,
+        *,
+        processing_id: UUID,
+        attempt: int,
+        error: str,
+        retryable: bool,
+        dependency_unavailable: bool = False,
     ) -> datetime | None:
         """Record a failed attempt with its full traceback; never bury it (core value 6).
 
@@ -761,7 +775,8 @@ class WorkLedger:
         (status failed, defer_reason retry_backoff, not_before in the future) and
         returns the scheduled time — the caller re-announces it through the
         queue port (packaging §3: retry paths call the port in both profiles). A
-        failure at the attempt limit, or a non-retryable one, dead-letters the
+        dependency outage gets a longer, staggered delay. A failure at the
+        attempt limit, or a non-retryable one, dead-letters the
         row and returns None. Only the running ``attempt`` can fail: an attempt
         whose lease the reaper took back has nothing left to record.
         """
@@ -786,6 +801,16 @@ class WorkLedger:
                     self._settings.retry_backoff_base_s * 2 ** min(attempts - 1, 30),
                     self._settings.retry_backoff_max_s,
                 )
+                if dependency_unavailable:
+                    delay_s = (
+                        _DEPENDENCY_FIRST_RETRY_S
+                        if attempts == 1
+                        else _DEPENDENCY_RETRY_COOLDOWN_S
+                    )
+                    backoff_s = max(
+                        backoff_s,
+                        delay_s * random.uniform(1, _DEPENDENCY_RETRY_JITTER_MAX),
+                    )
                 scheduled = connection.execute(
                     _FAIL_RETRY,
                     {

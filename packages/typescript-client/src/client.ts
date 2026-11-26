@@ -248,7 +248,7 @@ export class MemoryClient {
   /** Inspect exact capabilities for a nonempty set of version identifiers. */
   async pipelineReadiness({versionIds,require,signal}:{versionIds:string[];require:Models.ReadinessRequirements;signal?:AbortSignal}):Promise<Models.OutputPipelineReadinessReport> {
     if(!versionIds.length)throw new InputValidationError({detail:'pipeline readiness requires at least one version_id'});
-    return validateModel({name:'PipelineReadinessReport',value:await this.json({method:'POST',path:'/readiness',body:{version_ids:versionIds.map(value=>uuid({value,field:'versionId'})),require:modelDump({name:'ReadinessRequirements',value:require})},signal}),response:true});
+    return validateModel({name:'PipelineReadinessReport',value:await this.json({method:'POST',path:'/readiness',params:{include_blockers:true},body:{version_ids:versionIds.map(value=>uuid({value,field:'versionId'})),require:modelDump({name:'ReadinessRequirements',value:require})},signal}),response:true});
   }
   /** Poll immediately and back off on retryable failures until the readiness deadline. */
   async waitForReadiness({ versionIds, timeoutMs = 1800000, pollIntervalMs = 15000, requireP3 = false, signal }: {

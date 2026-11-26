@@ -135,6 +135,11 @@ class PipelineStageReadiness(BaseModel):
     defer_reason: (
         Literal["scheduled", "retry_backoff", "budget", "no_route", "admission"] | None
     ) = None
+    blocked_by: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+        description="Dead-lettered prerequisite preventing this missing stage from running.",
+    )
 
 
 class VersionPipelineReadiness(BaseModel):

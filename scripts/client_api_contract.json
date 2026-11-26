@@ -38,7 +38,7 @@
   "POST /query/saved/{namespace}/{name}/run": "54997ce5b8553f0170eb0d90e3bda83e821b0ff20467612bd1fb77c0fca01a2e",
   "POST /query/sql": "b53cbecad2b4c2918b8ce45b22cbba4e289f9b2649b80990b9eb2b6d623cc95f",
   "POST /query/sql/explain": "aac2bd5f62df4be4aa3d9418a1986a714b240c4ad4a9b97b3aa3f5b823c7a0d3",
-  "POST /readiness": "f64f0994dd5788295b9af956bf6b3033b0efc91fa82d8783e89d0899ec3f3909",
+  "POST /readiness": "dc5a416fae7508b6885a39a5031caa145dab4ad909f1125239f0a79e612ed2c8",
   "POST /search/chunks": "eb1030a67d8f54bbcda4d7f3f5a6ef3beba0d7bf414c999d3d8968cc72a6d80e",
   "POST /search/claims": "eb1030a67d8f54bbcda4d7f3f5a6ef3beba0d7bf414c999d3d8968cc72a6d80e",
   "POST /tags": "550034b5acd7e683eaac78482c6a8743db68e4dd2226c0a9850f50aaef382c4f",

@@ -395,10 +395,9 @@ class OpenRouterProviderError(ProviderCallError):
         status_code: int | None = None,
     ) -> None:
         """Keep usage for the meter and the serving host for diagnosis."""
-        super().__init__(message, usage=usage)
+        super().__init__(message, usage=usage, status_code=status_code)
         self.provider_host = provider_host
         self.retryable_unbilled = retryable_unbilled
-        self.status_code = status_code
 
 
 class OpenRouterInvalidResponseError(
@@ -837,6 +836,7 @@ class OpenRouterModelProvider:
                     raise OpenRouterProviderError(
                         last_error,
                         provider_host=slug,
+                        status_code=response.status_code,
                         retryable_unbilled=unbilled_capacity_rejection(
                             response=response
                         ),
@@ -876,6 +876,7 @@ class OpenRouterModelProvider:
                     f"OpenRouter /chat/completions returned {response.status_code}: "
                     f"{response.text[:500]}",
                     provider_host=slug,
+                    status_code=response.status_code,
                 )
             body = _success_body(
                 response=response, path="/chat/completions", provider_host=slug
@@ -1110,12 +1111,14 @@ class OpenRouterModelProvider:
                 raise OpenRouterProviderError(
                     f"OpenRouter {path} returned {response.status_code}: "
                     "transient capacity retries exhausted",
+                    status_code=response.status_code,
                     retryable_unbilled=unbilled_capacity_rejection(response=response),
                 )
             if response.status_code >= 400:
                 raise OpenRouterProviderError(
                     f"OpenRouter {path} returned {response.status_code}: "
-                    f"{response.text[:500]}"
+                    f"{response.text[:500]}",
+                    status_code=response.status_code,
                 )
             return _success_body(response=response, path=path, provider_host=None)
         raise AssertionError("bounded OpenRouter POST retry loop did not return")

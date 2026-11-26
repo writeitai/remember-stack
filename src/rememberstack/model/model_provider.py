@@ -41,10 +41,17 @@ class ProviderCallUsage(BaseModel):
 class ProviderCallError(Exception):
     """A provider call failed after it may already have reported billable usage."""
 
-    def __init__(self, message: str, *, usage: ProviderCallUsage | None = None) -> None:
-        """Keep parsed usage available to the worker's authoritative meter."""
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: ProviderCallUsage | None = None,
+        status_code: int | None = None,
+    ) -> None:
+        """Keep parsed usage for the meter and HTTP status for retry policy."""
         super().__init__(message)
         self.usage = usage
+        self.status_code = status_code
 
 
 class ProviderInvalidResponseError(ProviderCallError):
