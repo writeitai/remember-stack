@@ -252,10 +252,7 @@ def client_models() -> dict[str, Any]:
         )
         for node in definition.body:
             if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                if any(
-                    alias in ast.unparse(node.annotation)
-                    for alias in ("UTCDateTime", "UTCInstant")
-                ):
+                if "UTCDateTime" in ast.unparse(node.annotation):
                     field = model.model_fields[node.target.id]
                     models[name]["properties"][field.alias or node.target.id][
                         "x-utc"

@@ -5,6 +5,7 @@ import schemas from './schemas.generated';
 import constants from './constants.generated';
 import { InputValidationError, MemoryApiError } from './errors';
 import { assertJson } from './json';
+import { OFFSET_REQUIRED, utcTimestamp } from './timestamps';
 
 /** JSON Schema vocabulary used by same-revision Pydantic contracts. */
 interface Schema {
@@ -20,6 +21,7 @@ interface Schema {
   'x-exclude'?: boolean;
   'x-exclude-if-none'?: boolean;
   'x-field-order'?: string[];
+  'x-normalize-utc'?: boolean;
   discriminator?: {propertyName:string};
   format?:string;
 }
@@ -69,12 +71,13 @@ function resolveSchema({ schema }: { schema: Schema }): { schema: Schema; name?:
 }
 
 /** Fill defaults on a copy, retaining strict JSON types and Python extra behavior. */
-function normalize({ value, schema, name }: { value: unknown; schema: Schema; name?: string }): unknown {
+function normalize({ value, schema, name, field }: { value: unknown; schema: Schema; name?: string; field?: string }): unknown {
   const resolved = resolveSchema({ schema });
   schema = resolved.schema;
   name = resolved.name ?? name;
   if(typeof value==='string'&&schema.type==='string') {
     if(!value.isWellFormed())fail({detail:'model strings must contain valid Unicode'});
+    if (schema['x-normalize-utc']) return utcTimestamp({ value, field: field ?? 'timestamp' });
     if(schema.format==='uuid') {
       const compact=value.replace(/^urn:uuid:/,'').replace(/^\{|\}$/g,'').replace(/-/g,'');
       if(/^[0-9a-fA-F]{32}$/.test(compact))return compact.toLowerCase().replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/,'$1-$2-$3-$4-$5');
@@ -85,10 +88,12 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
     if(schema.discriminator&&(value===null||typeof value!=='object'||!(schema.discriminator.propertyName in value)))fail({detail:'time requires an explicit mode'});
     for (const variant of variants) {
       try {
-        const candidate = normalize({ value, schema: variant });
+        const candidate = normalize({ value, schema: variant, field });
         const validate = validator({schema:variant,model:true});
         if (validate(candidate)) return candidate;
-      } catch (error) { if (!(error instanceof InputValidationError)) throw error; }
+      } catch (error) {
+        if (!(error instanceof InputValidationError) || error.message.endsWith(OFFSET_REQUIRED)) throw error;
+      }
     }
     fail({ detail: 'value does not match any schema variant' });
   }
@@ -96,7 +101,7 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     const fields = schema.properties ?? {};
     const result = Object.fromEntries(Object.entries(value).filter(([key]) => schema['x-extra'] !== 'ignore' || key in fields)
-      .map(([key, item]) => [key, normalize({ value: item, schema: fields[key]
+      .map(([key, item]) => [key, normalize({ value: item, field: key, schema: fields[key]
         ?? (typeof schema.additionalProperties === 'object' ? schema.additionalProperties : {}) })]));
     for (const [key, field] of Object.entries(fields)) {
       // Python omits an exclude-if-None field rather than serializing its null default.

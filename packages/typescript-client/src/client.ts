@@ -8,7 +8,8 @@ import { AbortError, InputValidationError, MemoryApiError, RequestTimeoutError, 
 import { assertJson } from './json';
 import { validateModel, modelDump } from './validation';
 import { inferUploadMime } from './mime';
-import { uuid, utcTimestamp, validateSavedQueryIdentifier, validateArguments, OPEN_QUERY_TOOL_NAMES } from './catalogue';
+import { utcTimestamp } from './timestamps';
+import { uuid, validateSavedQueryIdentifier, validateArguments, OPEN_QUERY_TOOL_NAMES } from './catalogue';
 import { fetchIssuerMetadata, sendSameOrigin, sameOrigin } from './issuer';
 
 export interface RequestOptions {signal?:AbortSignal;}
@@ -50,21 +51,6 @@ function segment({value}:{value:string}):string {return encodeURIComponent(value
 function clientIdentifier({value,field}:{value:unknown;field:string}):string {
   try{return validateSavedQueryIdentifier({value,field});}
   catch(error){if(error instanceof InputValidationError)throw new InputValidationError({detail:error.message});throw error;}
-}
-/** Preserve general-API ISO timestamps, including nonzero offsets. */
-function apiTimestamp({value,field}:{value:string|Date;field:string}):string {
-  if(value instanceof Date){if(!Number.isFinite(value.getTime()))throw new InputValidationError({detail:`${field} must be a valid timestamp`});return value.toISOString();}
-  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/i.test(value))throw new InputValidationError({detail:`${field} must be an ISO datetime`});
-  const [year,month,day,hour,minute,second]=value.slice(0,19).split(/[-T:]/i).map(Number) as [number,number,number,number,number,number];
-  const zone=/(?:Z|[+-]\d{2}:\d{2})$/i.test(value);
-  if(!zone)throw new InputValidationError({detail:`${field} must be timezone-aware`});
-  const days=new Date(Date.UTC(year,month,0)).getUTCDate();
-  if(year<1||month<1||month>12||day<1||day>days||hour>23||minute>59||second>59||!Number.isFinite(Date.parse(zone?value:value+'Z')))throw new InputValidationError({detail:`${field} must be a valid ISO datetime`});
-  return value;
-}
-/** Render model timestamps like datetime.isoformat for query parameters. */
-function queryTimestamp({value}:{value:string}):string {
-  return value.replace(/[zZ]$/,'+00:00').replace(/\.(\d+)(?=[+-]\d{2}:\d{2}$)/,(_match,fraction:string)=>Number(fraction.slice(0,6))===0?'':'.'+fraction.slice(0,6).padEnd(6,'0'));
 }
 /** Require a JSON object in discovery/account APIs with intentionally open response fields. */
 function objectResponse({value}:{value:unknown}):Record<string,Models.JsonValue> {
@@ -220,7 +206,7 @@ export class MemoryClient {
   /** Resolve a name with optional repeated focal-entity query parameters. */
   async resolve({name,contextEntityIds=[],signal}:{name:string;contextEntityIds?:string[];signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/resolve',params:[['name',name],...contextEntityIds.map(value=>['context_entity_ids',value] as const)],signal}),response:true});}
   /** Read matching current or valid-time relations. */
-  async lookupRelations({subjectEntityId,predicate,objectEntityId,validAt,limit=50,cursor,signal}:{subjectEntityId?:string|null;predicate?:string|null;objectEntityId?:string|null;validAt?:string|Date|null;limit?:number;cursor?:string|null;signal?:AbortSignal}={}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/relations',params:{limit,cursor,subject_entity_id:subjectEntityId,predicate,object_entity_id:objectEntityId,valid_at:validAt==null?undefined:apiTimestamp({value:validAt,field:'validAt'})},signal}),response:true});}
+  async lookupRelations({subjectEntityId,predicate,objectEntityId,validAt,limit=50,cursor,signal}:{subjectEntityId?:string|null;predicate?:string|null;objectEntityId?:string|null;validAt?:string|Date|null;limit?:number;cursor?:string|null;signal?:AbortSignal}={}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/relations',params:{limit,cursor,subject_entity_id:subjectEntityId,predicate,object_entity_id:objectEntityId,valid_at:validAt==null?undefined:utcTimestamp({value:validAt,field:'validAt'})},signal}),response:true});}
   /** Read the bounded decision transcript for a relation. */
   async transcriptRelation({relationId,signal}:{relationId:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:`/transcript/relation/${segment({value:relationId})}`,signal}),response:true});}
   /** Read live property observations for an entity. */
@@ -247,11 +233,11 @@ export class MemoryClient {
   async hydrateRelation({relationId,signal}:{relationId:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:`/hydrate/relation/${segment({value:relationId})}`,signal}),response:true});}
   /** Read a bounded current or bitemporal graph neighborhood. */
   async graphNeighborhood({entityId,hops=2,predicates=[],validAt,believedAt,limit=100,cursor=null,includePaths=false,signal}:{entityId:string;hops?:number;predicates?:string[];validAt?:string|Date|null;believedAt?:string|Date|null;limit?:number;cursor?:string|null;includePaths?:boolean;signal?:AbortSignal}):Promise<Envelope> {
-    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/neighborhood',body:{entity_id:entityId,hops,predicates,valid_at:validAt==null?null:apiTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:apiTimestamp({value:believedAt,field:'believedAt'}),limit,cursor,include_paths:includePaths},signal}),response:true});
+    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/neighborhood',body:{entity_id:entityId,hops,predicates,valid_at:validAt==null?null:utcTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:utcTimestamp({value:believedAt,field:'believedAt'}),limit,cursor,include_paths:includePaths},signal}),response:true});
   }
   /** Read bounded shortest paths between two entities. */
   async graphPath({fromEntityId,toEntityId,maxHops=4,predicates=[],validAt,believedAt,signal}:{fromEntityId:string;toEntityId:string;maxHops?:number;predicates?:string[];validAt?:string|Date|null;believedAt?:string|Date|null;signal?:AbortSignal}):Promise<Envelope> {
-    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/path',body:{from_entity_id:fromEntityId,to_entity_id:toEntityId,max_hops:maxHops,predicates,valid_at:validAt==null?null:apiTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:apiTimestamp({value:believedAt,field:'believedAt'})},signal}),response:true});
+    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/path',body:{from_entity_id:fromEntityId,to_entity_id:toEntityId,max_hops:maxHops,predicates,valid_at:validAt==null?null:utcTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:utcTimestamp({value:believedAt,field:'believedAt'})},signal}),response:true});
   }
   /** Read directed citation paths between documents. */
   async graphCitationPath({fromDocId,toDocId,maxHops=6,signal}:{fromDocId:string;toDocId:string;maxHops?:number;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/citation-path',body:{from_doc_id:fromDocId,to_doc_id:toDocId,max_hops:maxHops},signal}),response:true});}
@@ -319,6 +305,7 @@ export class MemoryClient {
     if((sourceKind==null)!==(sourceRef==null))throw new InputValidationError({detail:'sourceKind and sourceRef must be supplied together'});
     if(sourceKind==null&&(sourceModifiedAt!=null||sourceVersionRef!=null||versioningMode!=='snapshot'||versionKey!=null||effectiveFrom!=null||effectiveUntil!=null))throw new InputValidationError({detail:'source timestamps, revisions, and living mode require sourceKind/sourceRef'});
     if(effectiveUntil!=null&&effectiveFrom==null)throw new InputValidationError({detail:'effectiveUntil requires effectiveFrom'});
+    const modifiedAt=sourceModifiedAt==null?undefined:utcTimestamp({value:sourceModifiedAt,field:'sourceModifiedAt'});
     const start=effectiveFrom==null?undefined:utcTimestamp({value:effectiveFrom,field:'effectiveFrom'});
     const end=effectiveUntil==null?undefined:utcTimestamp({value:effectiveUntil,field:'effectiveUntil'});
     if(start!==undefined) {
@@ -330,7 +317,7 @@ export class MemoryClient {
     else if(bytes===undefined&&typeof source==='string') {bytes=await readFile(source,{signal});filename=filename||basename(source);mime=mime||inferUploadMime({filename:source});}
     else if(bytes===undefined&&source instanceof Uint8Array)bytes=source;
     if(!(bytes instanceof Uint8Array)||!filename)throw new InputValidationError({detail:'content and filename are required when ingesting bytes'});
-    const params={filename,mime:mime||inferUploadMime({filename}),versioning_mode:versioningMode,title,source_kind:sourceKind,source_ref:sourceRef,source_modified_at:sourceModifiedAt==null?undefined:utcTimestamp({value:sourceModifiedAt,field:'sourceModifiedAt'}),source_version_ref:sourceVersionRef,source_path:sourcePath,version_key:versionKey,effective_from:start,effective_until:end};
+    const params={filename,mime:mime||inferUploadMime({filename}),versioning_mode:versioningMode,title,source_kind:sourceKind,source_ref:sourceRef,source_modified_at:modifiedAt,source_version_ref:sourceVersionRef,source_path:sourcePath,version_key:versionKey,effective_from:start,effective_until:end};
     const ordered=[...Object.entries(params).filter((entry):entry is [string,string]=>entry[1]!=null),...tagParams,...(allowForgotten?[['allow_forgotten','true'] as const]:[])];
     return validateModel({name:'IngestedVersion',value:await this.json({method:'POST',path:'/ingest',params:ordered,content:bytes,headers:{'Content-Type':'application/octet-stream'},signal}),response:true});
   }
@@ -348,12 +335,12 @@ export class MemoryClient {
   async sectionHistory({docId,sectionKey,time=null,limit=50,cursor=null,signal}:{docId:string;sectionKey:string;time?:Models.ReadTime|null;limit?:number;cursor?:string|null;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
     return this.sectionHistoryRequest({request:{doc_id:uuid({value:docId,field:'docId'}),section_key:sectionKey,time:time??{mode:'history'},limit,cursor},signal});
   }
-  /** Encode a prepared section-history request and preserve its time offsets. */
+  /** Encode a prepared section-history request with UTC bounds. */
   async sectionHistoryRequest({request,signal}:{request:Models.SectionHistoryRequest;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
     const input=validateModel<Models.OutputSectionHistoryRequest>({name:'SectionHistoryRequest',value:request});
     const params:Record<string,string|number|null>={mode:input.time.mode,limit:input.limit};
-    if(input.time.mode==='at')params.at=queryTimestamp({value:input.time.at});
-    else if(input.time.mode==='overlap'){params.from=queryTimestamp({value:input.time.from});params.to=queryTimestamp({value:input.time.to});}
+    if(input.time.mode==='at')params.at=input.time.at;
+    else if(input.time.mode==='overlap'){params.from=input.time.from;params.to=input.time.to;}
     if(input.cursor!=null)params.cursor=input.cursor;
     return validateModel({name:'SectionHistoryPage',value:await this.json({method:'GET',path:`/documents/${input.doc_id}/sections/${segment({value:input.section_key})}/history`,params,signal}),response:true});
   }

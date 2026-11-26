@@ -13,7 +13,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from collections.abc import Sequence
 from datetime import datetime
-from datetime import timedelta
 import json
 from pathlib import Path
 import time
@@ -32,6 +31,8 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import ValidationError
 
+from remember._timestamps import normalize_utc
+from remember._timestamps import optional_utc
 from remember.connection import Connection
 from remember.connection import EngineRoute
 from remember.connection import resolve_connection
@@ -623,7 +624,7 @@ class MemoryClient:
         if object_entity_id is not None:
             params["object_entity_id"] = str(object_entity_id)
         if valid_at is not None:
-            params["valid_at"] = valid_at.isoformat()
+            params["valid_at"] = normalize_utc(valid_at, field="valid_at").isoformat()
         if cursor is not None:
             params["cursor"] = cursor
         return _validated(
@@ -808,10 +809,8 @@ class MemoryClient:
                     "entity_id": str(entity_id),
                     "hops": hops,
                     "predicates": list(predicates),
-                    "valid_at": valid_at.isoformat() if valid_at is not None else None,
-                    "believed_at": (
-                        believed_at.isoformat() if believed_at is not None else None
-                    ),
+                    "valid_at": _timestamp_param(valid_at, field="valid_at"),
+                    "believed_at": _timestamp_param(believed_at, field="believed_at"),
                     "limit": limit,
                     "cursor": cursor,
                     "include_paths": include_paths,
@@ -841,10 +840,8 @@ class MemoryClient:
                     "to_entity_id": str(to_entity_id),
                     "max_hops": max_hops,
                     "predicates": list(predicates),
-                    "valid_at": valid_at.isoformat() if valid_at is not None else None,
-                    "believed_at": (
-                        believed_at.isoformat() if believed_at is not None else None
-                    ),
+                    "valid_at": _timestamp_param(valid_at, field="valid_at"),
+                    "believed_at": _timestamp_param(believed_at, field="believed_at"),
                 },
             ),
             endpoint="POST /graph/path",
@@ -1026,9 +1023,10 @@ class MemoryClient:
         to the latest), and an existing key is accepted only when re-sending
         the latest version's bytes (``MemoryApiError`` 409 otherwise).
         ``effective_from`` and optional ``effective_until`` declare when this
-        version's text is in force (UTC, half-open); without an end it lasts
+        version's text is in force (half-open); without an end it lasts
         until the next declared start. Both need ``source_kind``/``source_ref``
-        and periods need ``versioning_mode="snapshot"``.
+        and periods need ``versioning_mode="snapshot"``. All three timestamps,
+        including ``source_modified_at``, must be aware and are converted to UTC.
 
         ``tags`` adds registered tags (names or ids) to the document's tags
         (D156); an ingest never removes a tag and tags never decide whether a
@@ -1057,15 +1055,11 @@ class MemoryClient:
                 "source timestamps, revisions, living mode, version keys and"
                 " effective periods require source_kind/source_ref"
             )
-        for name, instant in (
-            ("source_modified_at", source_modified_at),
-            ("effective_from", effective_from),
-            ("effective_until", effective_until),
-        ):
-            if instant is not None and (
-                instant.tzinfo is None or instant.utcoffset() != timedelta(0)
-            ):
-                raise ValueError(f"{name} must be timezone-aware UTC")
+        source_modified_at = optional_utc(
+            source_modified_at, field="source_modified_at"
+        )
+        effective_from = optional_utc(effective_from, field="effective_from")
+        effective_until = optional_utc(effective_until, field="effective_until")
         if effective_until is not None and effective_from is None:
             raise ValueError("effective_until requires effective_from")
         if effective_from is not None:
@@ -1869,6 +1863,12 @@ def _sdk_param_list(value: object) -> list[object]:
     if isinstance(value, tuple):
         return list(value)
     raise ValueError("parameters must be a JSON array")
+
+
+def _timestamp_param(value: datetime | None, *, field: str) -> str | None:
+    """Render an optional timestamp as a UTC wire value."""
+    instant = optional_utc(value, field=field)
+    return None if instant is None else instant.isoformat()
 
 
 def _saved_query_path_segment(*, value: str, field: str) -> str:

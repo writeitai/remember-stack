@@ -6,7 +6,6 @@ model deliberately cannot describe a fifth public operation.
 """
 
 from datetime import datetime
-from datetime import UTC
 from enum import StrEnum
 from typing import Annotated
 from typing import Literal
@@ -17,6 +16,8 @@ from pydantic import Field
 from pydantic import field_validator
 from pydantic import model_validator
 
+from remember._timestamps import ISODateTime
+from remember._timestamps import normalize_utc
 from rememberstack.model.envelope import Grain
 
 
@@ -98,15 +99,13 @@ class AtFactTime(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     mode: Literal["at"] = "at"
-    at: datetime
+    at: ISODateTime
 
     @field_validator("at")
     @classmethod
     def _aware_utc(cls, value: datetime) -> datetime:
         """Reject ambiguous wall time and normalize an aware instant to UTC."""
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("time.at must be timezone-aware")
-        return value.astimezone(UTC)
+        return normalize_utc(value, field="time.at")
 
 
 class OverlapFactTime(BaseModel):
@@ -115,16 +114,14 @@ class OverlapFactTime(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     mode: Literal["overlap"] = "overlap"
-    from_: datetime = Field(alias="from")
-    to: datetime
+    from_: ISODateTime = Field(alias="from")
+    to: ISODateTime
 
     @field_validator("from_", "to")
     @classmethod
     def _aware_utc(cls, value: datetime) -> datetime:
         """Reject ambiguous wall time and normalize an aware bound to UTC."""
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("overlap timestamps must be timezone-aware")
-        return value.astimezone(UTC)
+        return normalize_utc(value, field="overlap timestamp")
 
     @model_validator(mode="after")
     def _ordered(self) -> "OverlapFactTime":

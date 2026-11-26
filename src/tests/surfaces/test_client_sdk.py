@@ -2,7 +2,6 @@
 
 from collections.abc import Iterator
 from datetime import datetime
-from datetime import timedelta
 from datetime import timezone
 from datetime import UTC
 import json
@@ -170,7 +169,7 @@ def test_sdk_pushes_lineage_metadata_to_e0(
     client, ingest, _ = client_surface
     source = tmp_path / "note.md"
     source.write_bytes(b"revision two")
-    modified_at = datetime(2026, 7, 20, 10, 30, tzinfo=UTC)
+    modified_at = datetime.fromisoformat("2026-11-20T14:03:11+01:00")
 
     result = client.ingest(
         source,
@@ -185,7 +184,8 @@ def test_sdk_pushes_lineage_metadata_to_e0(
     assert ingest.observed is not None
     assert ingest.observed["source_kind"] == "custom-feeder"
     assert ingest.observed["source_ref"] == "workspace/note"
-    assert ingest.observed["source_modified_at"] == modified_at
+    received = cast("datetime", ingest.observed["source_modified_at"])
+    assert received.isoformat() == "2026-11-20T13:03:11+00:00"
     assert ingest.observed["source_version_ref"] == "etag-2"
     assert ingest.observed["versioning_mode"] == "living"
     upload = cast("DocumentUpload", ingest.observed["upload"])
@@ -278,18 +278,14 @@ def test_sdk_validates_lineage_pair_and_maps_api_failures(
         client.ingest(b"x", filename="x.txt", source_kind="custom")
     with pytest.raises(ValueError, match="revisions"):
         client.ingest(b"x", filename="x.txt", source_version_ref="orphan")
-    for invalid_timestamp in (
-        datetime.now(),
-        datetime.now(tz=timezone(timedelta(hours=1))),
-    ):
-        with pytest.raises(ValueError, match="timezone-aware UTC"):
-            client.ingest(
-                b"x",
-                filename="x.txt",
-                source_kind="custom",
-                source_ref="x",
-                source_modified_at=invalid_timestamp,
-            )
+    with pytest.raises(ValueError, match="source_modified_at must be timezone-aware"):
+        client.ingest(
+            b"x",
+            filename="x.txt",
+            source_kind="custom",
+            source_ref="x",
+            source_modified_at=datetime(2026, 11, 20, 14, 3, 11),
+        )
     with pytest.raises(ValueError, match="credential_ref"):
         ConnectorCreate(
             kind="remote",

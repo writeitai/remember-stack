@@ -186,11 +186,11 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `source_kind` | string | no | 1–128 characters. Give with `source_ref`. |
 | `source_ref` | string | no | 1–512 characters. Give with `source_kind`. The same pair later makes a new version of the same document. |
 | `versioning_mode` | `"snapshot"` or `"living"` | no | Default `"snapshot"`. `"living"` needs `source_kind`/`source_ref`. |
-| `source_modified_at` | string | no | ISO 8601 timestamp in UTC (`Z` or `+00:00`). Needs `source_kind`/`source_ref`. |
+| `source_modified_at` | string | no | ISO 8601 timestamp with `Z` or a numeric UTC offset. Needs `source_kind`/`source_ref`. |
 | `source_version_ref` | string | no | 1–512 characters. Needs `source_kind`/`source_ref`. |
 | `version_key` | string | no | 1–512 characters. A permanent name for this version, unique within the document. A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Needs `source_kind`/`source_ref`. |
-| `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
-| `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
+| `effective_from` | string | no | Inclusive start of the period this version's text is in force, with a UTC offset. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
+| `effective_until` | string | no | Exclusive end of that period with a UTC offset, later than `effective_from`. Without it the period lasts until the next declared start. |
 | `tags` | array of strings | no | At most 64, no repeats, each 1–128 characters after Unicode NFC. Registered tags, by name (any letter case) or `tag_id`, to add to the document. Ingest never removes a tag. An unregistered tag refuses the whole call with `unknown_tag` before anything is stored. See [`list_tags`](#list_tags). |
 | `allow_forgotten` | boolean | no | Default `false`. Add back content of a [forgotten](#forget_document) document. Without it such content is refused with `document_forgotten`; with it, it is refused with `forget_not_complete` while that forget is still erasing, and otherwise comes back under a new `doc_id`. The tool description tells the agent to set it only after the user confirms. |
 

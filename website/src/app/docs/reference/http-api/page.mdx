@@ -226,8 +226,9 @@ Requests with a body send JSON (`Content-Type: application/json`), except
 NDJSON, one JSON object per line (`Content-Type: application/x-ndjson`).
 Every response body is JSON.
 
-Timestamps are ISO 8601 strings. Wherever a timestamp is part of a result, it
-is UTC. Identifiers are UUID strings.
+Send timestamp fields as ISO 8601 strings with `Z` or a numeric UTC offset.
+The API converts them to UTC and returns `422` for a timestamp without
+an offset. Result timestamps are UTC. Identifiers are UUID strings.
 
 ## Errors
 

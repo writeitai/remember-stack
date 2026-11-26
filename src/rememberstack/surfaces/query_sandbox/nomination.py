@@ -29,6 +29,7 @@ from uuid import UUID
 import psycopg
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember._timestamps import parse_iso_timestamp
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -276,15 +277,12 @@ def _typed_filter_value(*, key: str, value: object) -> Any:
                 code=QueryErrorCode.INVALID_PARAMETER, message=f"{key} must be a UUID"
             ) from error
     if key in _INSTANT_FILTERS:
-        text = str(value)
         try:
-            datetime.fromisoformat(text)
+            return parse_iso_timestamp(str(value), field=key).isoformat()
         except ValueError as error:
             raise SandboxRejection(
-                code=QueryErrorCode.INVALID_PARAMETER,
-                message=f"{key} must be an ISO-8601 instant",
+                code=QueryErrorCode.INVALID_PARAMETER, message=str(error)
             ) from error
-        return text
     if key == "section_role" and value not in _SECTION_ROLES:
         raise SandboxRejection(
             code=QueryErrorCode.INVALID_PARAMETER,

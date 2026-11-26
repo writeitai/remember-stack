@@ -193,7 +193,7 @@ for source, (text, date) in rebuild_documents(chunks).items():
         title=source,
         source_kind="vector-import",
         source_ref=source,
-        source_modified_at=date,  # a timezone-aware UTC datetime, or None
+        source_modified_at=date,  # a timezone-aware datetime, or None
     )
     if version.created:
         pending.append(version.version_id)
@@ -261,8 +261,8 @@ with psycopg.connect("postgresql://localhost/app") as conn:
     ).fetchall()
 ```
 
-Make sure the dates you pass are timezone-aware and in UTC; the client
-rejects anything else. For a naive timestamp known to be UTC, use
+Pass timezone-aware dates and the client converts them to UTC.
+For a naive timestamp already known to be UTC, attach that timezone with
 `date.replace(tzinfo=UTC)`.
 
 **Pinecone, Weaviate and other stores** follow the same pattern: page

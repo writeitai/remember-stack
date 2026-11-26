@@ -236,7 +236,10 @@ evidence in [typescript_transport_421.md](typescript_transport_421.md). D141
 now selects a single-transmission Node HTTP/HTTPS adapter, borrowed-agent or
 request-transport injection, and explicit total-deadline/proxy adaptations.
 
-## General datetime inputs: Python client versus the published format
+## General datetime inputs in the October 2026 implementation
+
+This section records the original behavior. [Offset-aware request
+timestamps](#offset-aware-request-timestamps) describes the subsequent change.
 
 Observed 2026-10-02 while reconciling implementation review round 2: Python's
 `lookup_relations`, `graph_neighborhood` and `graph_path` accept naive datetime
@@ -269,6 +272,24 @@ An alternative would permit naive values and add a separate source-runtime
 conformance disposition; it adds ambiguity and weakens the common assertion.
 UTC-only lineage/model fields stay UTC-only. This selects no further client
 UTC-only rule for the general methods.
+
+## Offset-aware request timestamps
+
+A first customer passed Git's committer timestamp `2026-11-20T14:03:11+01:00`
+to ingest and hit the zero-offset check. The offset already identifies the
+instant `2026-11-20T13:03:11Z`. Requiring callers to convert to UTC added work
+without resolving any ambiguity. A timestamp with no offset still lacks the
+information needed to establish an instant.
+
+Both SDKs convert aware inputs to UTC before sending them. The HTTP and MCP
+boundaries also normalize direct inputs. Converting only on the server would
+still fail with older servers that check for zero offset and would leave SDK
+validation inconsistent. Normalizing before period checks lets the client and
+engine recognize the same instant written with different offsets. TypeScript
+preserves the fractional seconds up to Python's microsecond precision when
+converting a string, so a period with distinct submillisecond bounds stays
+distinct. The UTC source instant used by ingestion is the same whether the
+caller provides it directly or uses an offset.
 
 ## Main integration on 2026-10-02
 

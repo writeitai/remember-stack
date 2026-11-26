@@ -59,15 +59,20 @@ What happens:
 Only the edited passages are extracted again. Passages whose text and
 neighbours did not change reuse the claims they already had.
 
-The same with the CLI:
+Pass Git's committer timestamp directly to the CLI. `git log --format=%cI`
+includes the commit's UTC offset.
 
 ```bash
-remember ingest specs/billing-migration-plan.md \
-  --source-kind file --source-ref specs/billing-migration-plan.md \
-  --source-modified-at 2026-09-17T14:00:00+00:00 \
+path=specs/billing-migration-plan.md
+remember ingest "$path" \
+  --source-kind file --source-ref "$path" \
+  --source-modified-at "$(git log -1 --format=%cI -- "$path")" \
   --versioning-mode living \
-  --source-version-ref git:4f2c9e1
+  --source-version-ref "git:$(git log -1 --format=%H -- "$path")"
 ```
+
+For a committed file, `2026-11-20T14:03:11+01:00` is accepted and recorded
+as `2026-11-20T13:03:11Z`.
 
 ## Choose snapshot or living
 
@@ -128,8 +133,9 @@ source](/docs/concepts/updating-sources#two-different-problems).
 
 ## `source_modified_at` and `source_version_ref`
 
-- `source_modified_at` is when the source last changed, as a
-  timezone-aware UTC `datetime`. Claims extracted from the version get it
+- `source_modified_at` is when the source last changed. Pass a
+  timezone-aware `datetime` in Python or an ISO 8601 timestamp with an explicit
+  offset in the CLI. RememberStack converts it to UTC. Claims get that instant
   as `asserted_at`. Send the source's own modification time, not the time you
   uploaded. It is fixed once the version exists; re-sending identical bytes
   with a different `source_modified_at` does not change it.

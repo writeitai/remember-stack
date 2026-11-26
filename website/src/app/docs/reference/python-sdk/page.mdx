@@ -473,15 +473,19 @@ results.
 | `mime` | Media type; an explicit value always wins. Defaults to the type of the extension of the file's real name (for a path) or of `filename` (for bytes): `.md` is `text/markdown`, `.pdf` is `application/pdf`, on every Python installation; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type). An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. The engine converts only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `title` | A human title for the document. |
 | `source_kind`, `source_ref` | The document's stable identity: what kind of source it is and its id within that kind. Always together. Ingesting again with the same pair creates a new version of the same document when the bytes differ. See [Documents, versions and sources](/docs/concepts/documents-and-sources). |
-| `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
+| `source_modified_at` | When the source itself last changed, as a timezone-aware `datetime`. Requires `source_kind`/`source_ref`. |
 | `versioning_mode` | `"snapshot"` (default) or `"living"`. `"living"` requires `source_kind`/`source_ref`. See [Updating a source](/docs/concepts/updating-sources). |
 | `source_version_ref` | The source system's own revision label. Requires `source_kind`/`source_ref`. |
 | `source_path` | Where the file lives at its source, such as a folder path or a URL. Recorded with the version's names; sending the same bytes again with a different `filename`, `title` or `source_path` records the new name without creating a version. See [File names, titles and paths](/docs/reference/http-api/ingest#file-names-titles-and-paths). |
 | `version_key` | Your permanent name for this version, unique within the document (1 to 512 characters). A key new to the document always creates a version; the latest version's key is accepted again only with the same bytes. Requires `source_kind`/`source_ref`. See [Versions in force](/docs/reference/http-api/ingest#versions-in-force). |
-| `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
-| `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
+| `effective_from` | Start (included) of the period this version's text is in force, as a timezone-aware `datetime`. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
+| `effective_until` | End (excluded) of that period, as a timezone-aware `datetime` later than `effective_from`. Omit it for a period that lasts until the next declared start. |
 | `tags` | Registered tags, each a name (any letter case) or `tag_id`, added to the document's tags; at most 64. Ingest only adds tags and they never decide whether a version is created. See [Tags](/docs/reference/http-api/ingest#tags). |
 | `allow_forgotten` | Add back content of a [forgotten](#forget_document) document, for this call only. Without it such content raises `MemoryApiError` 409 with `code` `"document_forgotten"`; while that forget is still erasing, 409 with `code` `"forget_not_complete"`. The content comes back under a new `doc_id`. See [Adding forgotten content back](/docs/reference/http-api/ingest#adding-forgotten-content-back). |
+
+The SDK converts timezone-aware ingest dates, as-of times and date filters
+to UTC. For example, pass `datetime.fromisoformat("2026-11-20T14:03:11+01:00")`
+to send `2026-11-20T13:03:11+00:00`.
 
 Raises `ValueError` when:
 
@@ -489,8 +493,8 @@ Raises `ValueError` when:
 - `source_modified_at`, `source_version_ref`, `versioning_mode="living"`,
   `version_key`, `effective_from` or `effective_until` is given without
   `source_kind`/`source_ref`;
-- `source_modified_at`, `effective_from` or `effective_until` is naive or not
-  UTC;
+- `source_modified_at`, `effective_from` or `effective_until` is a naive
+  `datetime` without timezone information;
 - `effective_until` is given without `effective_from`, or is not later than
   it, or a period is given with `versioning_mode="living"`;
 - neither `source` nor `content` is given;
@@ -926,8 +930,9 @@ MemoryClient.set_effective_periods(
 
 Replaces the periods during which one version's text is in force.
 `periods` is the version's complete set: each `EffectivePeriodInput` has
-`effective_from` and an optional `effective_until`, both timezone-aware UTC
-`datetime` values (or ISO 8601 strings with a zero offset). Periods not
+`effective_from` and an optional `effective_until`, both timezone-aware
+`datetime` values or ISO 8601 strings with an explicit offset. The model
+converts them to UTC. Periods not
 listed are withdrawn and new ones declared, in one step. An empty sequence
 leaves the version with no period while the document keeps reading by
 period. Needs a `write` credential. Raises `pydantic.ValidationError`

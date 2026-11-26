@@ -172,7 +172,8 @@ _INGEST_DESCRIPTION: Final = (
     " version_key names this version for good (a new key always creates a"
     " version; reusing a key is only accepted when re-sending that latest"
     " version's bytes). effective_from/effective_until declare when this"
-    " version's text is in force (UTC; snapshot lineages only); without"
+    " version's text is in force for snapshot lineages. Timestamps require an"
+    " offset and are converted to UTC. Without"
     " effective_until it lasts until the next declared start."
     " tags adds registered tags (see list_tags) to the document; ingest never"
     " removes a tag, and an unregistered tag refuses the ingest with"
@@ -905,7 +906,7 @@ _INGEST_PROPERTIES: Final[dict[str, object]] = {
     "source_modified_at": {
         "type": "string",
         "description": (
-            "Optional ISO-8601 UTC timestamp (timezone-aware). Requires"
+            "Optional ISO 8601 timestamp with a UTC offset. Requires"
             " source_kind/source_ref."
         ),
     },
@@ -932,16 +933,16 @@ _INGEST_PROPERTIES: Final[dict[str, object]] = {
         "type": "string",
         "format": "date-time",
         "description": (
-            "Optional ISO-8601 UTC start (inclusive) of the period this"
+            "Optional start (inclusive) of the period this"
             " version's text is in force. Requires source_kind/source_ref and"
-            " versioning_mode snapshot."
+            " versioning_mode snapshot. Include a UTC offset."
         ),
     },
     "effective_until": {
         "type": "string",
         "format": "date-time",
         "description": (
-            "Optional ISO-8601 UTC end (exclusive) of that period; requires"
+            "Optional end (exclusive) of that period with a UTC offset. Requires"
             " effective_from. Omit it to last until the next declared start."
         ),
     },

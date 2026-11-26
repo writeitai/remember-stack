@@ -7,6 +7,7 @@ API. ``remember ops`` imports the server extra and connects to the spine.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
@@ -31,6 +32,8 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from remember import __version__
+from remember._timestamps import OFFSET_REQUIRED
+from remember._timestamps import parse_iso_timestamp
 from remember.cli_output import CommandFailure
 from remember.cli_output import diagnostic_secrets
 from remember.cli_output import failure
@@ -1715,6 +1718,30 @@ class _ParseFailure(ValueError):
     """A credential-safe command grammar diagnostic."""
 
 
+def _timestamp_argument(value: str) -> datetime:
+    """Report an absent offset without echoing the supplied value."""
+    try:
+        return parse_iso_timestamp(value)
+    except ValueError as error:
+        if str(error).endswith(OFFSET_REQUIRED):
+            raise argparse.ArgumentTypeError(OFFSET_REQUIRED) from error
+        raise
+
+
+def _timestamp_json_argument[T](parse: Callable[[str], T]) -> Callable[[str], T]:
+    """Preserve the offset diagnostic for timestamps inside a JSON argument."""
+
+    def parse_argument(value: str) -> T:
+        try:
+            return parse(value)
+        except ValidationError as error:
+            if any(item["type"] == "timezone_aware" for item in error.errors()):
+                raise argparse.ArgumentTypeError(OFFSET_REQUIRED) from error
+            raise
+
+    return parse_argument
+
+
 class _CliParser(argparse.ArgumentParser):
     """Expose the output option at each command level and report parse failures safely."""
 
@@ -1733,7 +1760,9 @@ class _CliParser(argparse.ArgumentParser):
         """Identify the affected argument without echoing the supplied value."""
         if message.startswith("the following arguments are required:"):
             raise _ParseFailure(f"{message}. See {self.prog} --help.")
-        label, _, _ = message.partition(":")
+        label, _, detail = message.partition(":")
+        if label.startswith("argument ") and detail.strip() == OFFSET_REQUIRED:
+            raise _ParseFailure(f"{label} {OFFSET_REQUIRED}.")
         cause = (
             label + " is invalid"
             if label.startswith("argument ")
@@ -1853,7 +1882,7 @@ def _build_parser(
         default=None,
         help="HTTP request timeout in seconds (overrides REMEMBER_TIMEOUT; default 300)",
     )
-    parse_read_time = TypeAdapter(ReadTime).validate_json
+    parse_read_time = _timestamp_json_argument(TypeAdapter(ReadTime).validate_json)
 
     if include_internal_ops:
         ops = commands.add_parser(
@@ -1890,7 +1919,7 @@ def _build_parser(
             help="additional handler attempts to grant (default: 1)",
         )
         replay.add_argument("--lane", choices=("steady", "backfill"))
-        replay.add_argument("--not-before", type=datetime.fromisoformat)
+        replay.add_argument("--not-before", type=_timestamp_argument)
         graph_catalog = ops_commands.add_parser(
             "graph-catalog", help="inspect or repair PostgreSQL live-graph metadata"
         )
@@ -2041,7 +2070,11 @@ def _build_parser(
     ingest.add_argument("--title")
     ingest.add_argument("--source-kind")
     ingest.add_argument("--source-ref")
-    ingest.add_argument("--source-modified-at", type=datetime.fromisoformat)
+    ingest.add_argument(
+        "--source-modified-at",
+        type=_timestamp_argument,
+        help="when the source last changed (ISO 8601 with a UTC offset)",
+    )
     ingest.add_argument(
         "--versioning-mode", choices=("snapshot", "living"), default="snapshot"
     )
@@ -2052,13 +2085,13 @@ def _build_parser(
     )
     ingest.add_argument(
         "--effective-from",
-        type=datetime.fromisoformat,
-        help="UTC start (inclusive) of the period this version is in force",
+        type=_timestamp_argument,
+        help="start (inclusive) of the period this version is in force, with a UTC offset",
     )
     ingest.add_argument(
         "--effective-until",
-        type=datetime.fromisoformat,
-        help="UTC end (exclusive) of that period; omit for until the next start",
+        type=_timestamp_argument,
+        help="end (exclusive) of that period, with a UTC offset",
     )
     ingest.add_argument(
         "--tag",
@@ -2147,7 +2180,7 @@ def _build_parser(
         )
         search_kind.add_argument(
             "--documents",
-            type=DocumentSearchFilters.model_validate_json,
+            type=_timestamp_json_argument(DocumentSearchFilters.model_validate_json),
             metavar="JSON",
             help="document filters as a JSON object",
         )
@@ -2170,7 +2203,7 @@ def _build_parser(
     relations.add_argument("--object-entity-id", type=UUID)
     relations.add_argument(
         "--valid-at",
-        type=datetime.fromisoformat,
+        type=_timestamp_argument,
         help="an ISO 8601 instant with a timezone",
     )
     relations.add_argument(
@@ -2237,12 +2270,12 @@ def _build_parser(
         )
         traversal.add_argument(
             "--valid-at",
-            type=datetime.fromisoformat,
+            type=_timestamp_argument,
             help="when the facts held, as an ISO 8601 instant",
         )
         traversal.add_argument(
             "--believed-at",
-            type=datetime.fromisoformat,
+            type=_timestamp_argument,
             help="when the engine believed the facts, as an ISO 8601 instant",
         )
     citation_path = graph_commands.add_parser(
@@ -2320,7 +2353,7 @@ def _build_parser(
     for flag in ("--created-from", "--created-to", "--modified-from", "--modified-to"):
         search_documents.add_argument(
             flag,
-            type=datetime.fromisoformat,
+            type=_timestamp_argument,
             help="an ISO 8601 instant with a timezone, inclusive",
         )
     search_documents.add_argument("--language")
@@ -2481,7 +2514,9 @@ def _build_parser(
     set_periods.add_argument(
         "--periods",
         required=True,
-        type=TypeAdapter(tuple[EffectivePeriodInput, ...]).validate_json,
+        type=_timestamp_json_argument(
+            TypeAdapter(tuple[EffectivePeriodInput, ...]).validate_json
+        ),
         metavar="JSON",
         help="array of objects with effective_from and optional effective_until",
     )

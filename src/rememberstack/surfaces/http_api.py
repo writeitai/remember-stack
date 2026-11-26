@@ -25,7 +25,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
-from datetime import timedelta
 import functools
 import inspect
 import json
@@ -52,7 +51,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPBearer
-from pydantic import AfterValidator
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
@@ -69,6 +67,9 @@ from starlette.types import Receive
 from starlette.types import Scope
 from starlette.types import Send
 
+from remember._timestamps import ISODateTime
+from remember._timestamps import optional_utc
+from remember._timestamps import UTCInstant
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
@@ -199,17 +200,6 @@ LOOKUP_K_MAX: Final = 400
 LOOKUP_BROWSE_LIMIT_DEFAULT: Final = 50
 LOOKUP_BROWSE_LIMIT_MAX: Final = 200
 """Largest `k` a fact lookup returns in one call; more is reported as truncated."""
-
-
-def _require_utc(value: datetime) -> datetime:
-    """Refuse naive and non-UTC instants at the boundary (422, never 500)."""
-    if value.tzinfo is None or value.utcoffset() != timedelta(0):
-        raise ValueError("must be timezone-aware UTC (end it with Z)")
-    return value
-
-
-UTCInstant = Annotated[datetime, AfterValidator(_require_utc)]
-"""A request instant: ISO 8601 with a zero UTC offset."""
 
 
 class IngestPort(Protocol):
@@ -1813,9 +1803,9 @@ def _mount_section_history(*, app: FastAPI) -> None:
         doc_id: UUID,
         section_key: str,
         mode: Literal["current", "at", "overlap", "history"] = "history",
-        at: datetime | None = None,
-        from_: Annotated[datetime | None, Query(alias="from")] = None,
-        to: datetime | None = None,
+        at: UTCInstant | None = None,
+        from_: Annotated[UTCInstant | None, Query(alias="from")] = None,
+        to: UTCInstant | None = None,
         limit: Annotated[
             int, Query(ge=1, le=SECTION_HISTORY_MAX_LIMIT)
         ] = SECTION_HISTORY_DEFAULT_LIMIT,
@@ -2595,7 +2585,10 @@ def _mount_ingest(
         title: str | None = None,
         source_kind: Annotated[str | None, Query(min_length=1)] = None,
         source_ref: Annotated[str | None, Query(min_length=1)] = None,
-        source_modified_at: datetime | None = None,
+        source_modified_at: Annotated[
+            ISODateTime | None,
+            Query(description="When the source last changed. Include a UTC offset."),
+        ] = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         source_path: Annotated[
@@ -2624,21 +2617,21 @@ def _mount_ingest(
             ),
         ] = None,
         effective_from: Annotated[
-            datetime | None,
+            ISODateTime | None,
             Query(
                 description=(
-                    "Start (inclusive, UTC) of the period this version's text"
-                    " is in force for. Requires source_kind/source_ref and"
+                    "Start (inclusive) of the period this version's text is in force."
+                    " Include a UTC offset. Requires source_kind/source_ref and"
                     " versioning_mode=snapshot."
                 )
             ),
         ] = None,
         effective_until: Annotated[
-            datetime | None,
+            ISODateTime | None,
             Query(
                 description=(
-                    "Declared end (exclusive, UTC) of that period; without it"
-                    " the period lasts until the next declared start."
+                    "Declared end (exclusive) of that period. Include a UTC offset."
+                    " Without it the period lasts until the next declared start."
                 )
             ),
         ] = None,
@@ -2740,17 +2733,14 @@ def _mount_ingest(
         # An old structural IngestPort has no `ingested_by` keyword; passing it
         # unconditionally would break an unattributed call that used to work.
         attribution = {} if ingested_by is None else {"ingested_by": ingested_by}
-        for name, instant in (
-            ("source_modified_at", source_modified_at),
-            ("effective_from", effective_from),
-            ("effective_until", effective_until),
-        ):
-            if instant is not None and (
-                instant.tzinfo is None or instant.utcoffset() != timedelta(0)
-            ):
-                raise HTTPException(
-                    status_code=422, detail=f"{name} must be timezone-aware UTC"
-                )
+        try:
+            source_modified_at = optional_utc(
+                source_modified_at, field="source_modified_at"
+            )
+            effective_from = optional_utc(effective_from, field="effective_from")
+            effective_until = optional_utc(effective_until, field="effective_until")
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         if effective_until is not None and (
             effective_from is None or effective_until <= effective_from
         ):

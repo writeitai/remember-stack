@@ -105,7 +105,8 @@ source_kind/source_ref`.
 
 `source_modified_at` is when the source says the content was written or last
 changed: the timestamp of the meeting, the send time of a message, the
-last-modified time of a file. It must be timezone-aware UTC.
+last-modified time of a file. Supply a timezone-aware timestamp.
+RememberStack converts it to UTC.
 
 RememberStack copies it onto every claim extracted from that version as
 `asserted_at`, the time the source said it. This is one of the three clocks

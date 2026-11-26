@@ -106,7 +106,7 @@ def test_sdk_sends_query_filters_and_paging(
         filters=DocumentSearchFilters(
             family=("office",),
             authors=("alice@acme.com",),
-            created_from=datetime(2025, 1, 1, tzinfo=UTC),
+            created_from=datetime.fromisoformat("2025-01-01T05:30:00+05:30"),
         ),
         versions="all",
         k=5,
@@ -168,7 +168,7 @@ def test_cli_searches_with_filters(
                 "--author",
                 "bob@acme.com",
                 "--created-from",
-                "2025-01-01T00:00:00+00:00",
+                "2024-12-31T19:00:00-05:00",
                 "--limit",
                 "3",
             ]
@@ -182,7 +182,9 @@ def test_cli_searches_with_filters(
     assert request.limit == 3
     assert request.filters.family == ("pdf",)
     assert request.filters.authors == ("Alice", "bob@acme.com")
-    assert request.filters.created_from == datetime(2025, 1, 1, tzinfo=UTC)
+    created_from = request.filters.created_from
+    assert created_from is not None and created_from.tzinfo is UTC
+    assert created_from == datetime(2025, 1, 1, tzinfo=UTC)
 
     assert cli_main(["documents", "search", "audit report"]) == 0
     capsys.readouterr()
@@ -386,8 +388,8 @@ def test_search_documents_filter_passes_through_sdk_and_http() -> None:
     [
         CurrentReadTime(),
         HistoryReadTime(),
-        AtReadTime(at=_AT),
-        OverlapReadTime.model_validate({"from": _AT, "to": _AT}),
+        AtReadTime(at=datetime.fromisoformat("2026-09-24T14:00:00+02:00")),
+        OverlapReadTime.model_validate({"from": "2026-09-24T07:00:00-05", "to": _AT}),
     ],
 )
 @pytest.mark.parametrize("prepared", [False, True])
@@ -402,6 +404,12 @@ def test_sdk_preserves_time_discriminator_through_real_route(
         page = client.search_documents(time=time)
     assert page.documents[0].doc_id == _DOC
     assert search.requests[-1].time == time
+    if isinstance(time, AtReadTime):
+        assert time.at.tzinfo is UTC
+        assert time.at == _AT
+    elif isinstance(time, OverlapReadTime):
+        assert time.from_.tzinfo is UTC
+        assert time.from_ == time.to == _AT
 
 
 @pytest.mark.parametrize(

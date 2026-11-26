@@ -154,7 +154,8 @@ export default {
         "at": {
           "format": "date-time",
           "title": "At",
-          "type": "string"
+          "type": "string",
+          "x-normalize-utc": true
         },
         "mode": {
           "const": "at",
@@ -1668,7 +1669,8 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
@@ -1681,7 +1683,8 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
@@ -1728,7 +1731,8 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
@@ -1741,7 +1745,8 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
@@ -2598,21 +2603,21 @@ export default {
           "format": "date-time",
           "title": "Effective From",
           "type": "string",
-          "x-utc": true
+          "x-normalize-utc": true
         },
         "effective_until": {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Effective Until",
-          "x-utc": true
+          "title": "Effective Until"
         }
       },
       "required": [
@@ -4527,7 +4532,8 @@ export default {
         "from": {
           "format": "date-time",
           "title": "From",
-          "type": "string"
+          "type": "string",
+          "x-normalize-utc": true
         },
         "mode": {
           "const": "overlap",
@@ -4538,7 +4544,8 @@ export default {
         "to": {
           "format": "date-time",
           "title": "To",
-          "type": "string"
+          "type": "string",
+          "x-normalize-utc": true
         }
       },
       "required": [
@@ -5461,15 +5468,15 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Change Effective From",
-          "x-utc": true
+          "title": "Change Effective From"
         },
         "context": {
           "anyOf": [
