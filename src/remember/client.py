@@ -32,6 +32,7 @@ from pydantic import ValidationError
 from remember.connection import Connection
 from remember.connection import EngineRoute
 from remember.connection import resolve_connection
+from remember.errors import _PipelineReadinessTimeout
 from remember.errors import AccountApiUnavailable
 from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
@@ -935,9 +936,10 @@ class MemoryClient:
                 raise PipelineDeadLettered(dead_lettered=dead_lettered, report=report)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise TimeoutError(
+                raise _PipelineReadinessTimeout(
                     f"Version IDs {list(version_ids)} not ready after {timeout}s:"
-                    f" {report}"
+                    f" {report}",
+                    report=report,
                 )
             time.sleep(min(poll_interval, remaining))
 
