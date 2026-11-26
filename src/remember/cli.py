@@ -7,6 +7,7 @@ API. ``remember ops`` imports the server extra and connects to the spine.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
@@ -31,11 +32,15 @@ from remember.cli_output import diagnostic_secrets
 from remember.cli_output import failure
 from remember.cli_output import report_error
 from remember.cli_output import usage_failure
+from remember.client import AccountApi
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.connection import Connection
+from remember.connection import resolve_connection
 from remember.credentials import CredentialError
 from remember.credentials import DurabilityUnconfirmed
+from remember.errors import AccountApiUnavailable
+from remember.errors import AgentPermissionDisabled
 from remember.errors import redact_diagnostic
 from remember.errors import StoredKeyRefused
 from remember.issuer import DEFAULT_ISSUER
@@ -136,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
             "doctor": _run_doctor,
             "whoami": _run_whoami,
             "switch": _run_switch,
+            "projects": _run_projects,
+            "keys": _run_keys,
             "ops": _run_ops,
             "operations": _run_operations,
             "query": _run_query,
@@ -236,7 +243,30 @@ def _command_error(error: Exception) -> CommandFailure:
             detail=error.detail,
             action="Check the issuer URL and network and retry.",
         )
+    if isinstance(error, AgentPermissionDisabled):
+        action = error.action or "Ask an owner to review Settings → Agent permissions."
+        if error.settings_url:
+            action = f"{action}\n{error.settings_url}"
+        return CommandFailure(
+            error=replace(
+                map_error(error), code="agent_permission_disabled", agent_action=action
+            )
+        )
+    if isinstance(error, AccountApiUnavailable):
+        return failure(
+            code="account_api_unavailable",
+            detail=error.detail,
+            action="Run `remember login` or supply a signed account key from the issuer.",
+        )
     if isinstance(error, MemoryApiError):
+        if error.status_code == 403 and error.code == "owner_only":
+            return CommandFailure(
+                error=replace(
+                    map_error(error),
+                    code="owner_only",
+                    agent_action="Ask an organisation owner to run this command.",
+                )
+            )
         return CommandFailure(error=map_error(error))
     if isinstance(error, httpx.RequestError):
         return CommandFailure(
@@ -488,6 +518,98 @@ def _run_switch(args: argparse.Namespace) -> int:
 
     with _issuer_http() as http:
         switch(project=args.project, http=http, machine=args.json)
+    return 0
+
+
+def _cli_account(*, api_key: str | None, http: httpx.Client) -> AccountApi:
+    """Use the signed key's organisation and issuer for account commands."""
+    connection = resolve_connection(api_key=api_key)
+    if connection.key is None:
+        raise failure(
+            code="missing_credentials",
+            detail="This command needs a signed account key.",
+            action="Run `remember login` or set REMEMBER_API_KEY.",
+        )
+    return AccountApi(connection=connection, http=http)
+
+
+def _run_projects(args: argparse.Namespace) -> int:
+    """Manage projects through the key issuer's account API."""
+    with _issuer_http() as http:
+        account = _cli_account(api_key=args.api_key, http=http)
+        if args.projects_command == "list":
+            result = account.list_projects()
+        elif args.projects_command == "show":
+            result = account.get_project(project_id=args.project_id)
+        elif args.projects_command == "create":
+            result = account.create_project(
+                name=args.name,
+                monthly_subcap_credits=args.monthly_cap,
+                idempotency_key=args.idempotency_key,
+            )
+        elif args.projects_command == "set-cap":
+            result = account.set_project_spend_cap(
+                project_id=args.project_id, monthly_subcap_credits=args.monthly_cap
+            )
+        else:
+            result = account.start_activation_checkout(
+                project_id=args.project_id, idempotency_key=args.idempotency_key
+            )
+    if args.projects_command in {"create", "activate"}:
+        _print_project_checkout(result, machine=args.json)
+    else:
+        print(json.dumps(result, indent=None if args.json else 2))
+    return 0
+
+
+def _print_project_checkout(result: dict[str, object], *, machine: bool) -> None:
+    """Show the hosted Checkout and the remaining payment step."""
+    project = result.get("project")
+    checkout = result.get("checkout")
+    url = checkout.get("url") if isinstance(checkout, dict) else None
+    if not (
+        isinstance(project, dict)
+        and isinstance(project.get("id"), str)
+        and isinstance(project.get("name"), str)
+        and isinstance(url, str)
+        and url
+        and result.get("requires_human_action") is True
+    ):
+        raise MemoryApiError(
+            status_code=200, detail="Account API returned an invalid project Checkout"
+        )
+    if machine:
+        print(json.dumps(result))
+    else:
+        print(f"Project: {project['name']} ({project['id']})")
+        print(f"Checkout: {url}")
+        print("A human must complete payment at this URL.")
+
+
+def _run_keys(args: argparse.Namespace) -> int:
+    """Manage keys through the key issuer's account API."""
+    with _issuer_http() as http:
+        account = _cli_account(api_key=args.api_key, http=http)
+        if args.keys_command == "create":
+            created = account.create_key(
+                name=args.name,
+                permissions=args.permission,
+                projects=args.projects,
+                default_project_id=args.default_project,
+                lifetime_days=args.lifetime_days,
+            )
+            secret = created.get("key")
+            if not isinstance(secret, str) or not secret:
+                raise MemoryApiError(
+                    status_code=201, detail="Account API returned no new key secret"
+                )
+            print(json.dumps(created) if args.json else secret)
+            return 0
+        if args.keys_command == "list":
+            result = account.list_keys()
+        else:
+            result = account.revoke_key(key_id=args.key_id)
+    print(json.dumps(result, indent=None if args.json else 2))
     return 0
 
 
@@ -1352,6 +1474,79 @@ class _CliParser(argparse.ArgumentParser):
         raise _ParseFailure(f"{cause} for {self.prog}. See {self.prog} --help.")
 
 
+def _add_account_commands(commands: argparse._SubParsersAction) -> None:
+    """Add the issuer account commands and their shared key selection flag."""
+    account_flags = _CliParser(add_help=False, add_output_flag=False)
+    account_flags.add_argument(
+        "--api-key",
+        help="signed account key (overrides REMEMBER_API_KEY and stored key)",
+    )
+    parents = [account_flags]
+
+    projects = commands.add_parser("projects", help="manage remember.dev projects")
+    project_commands = projects.add_subparsers(dest="projects_command", required=True)
+    project_commands.add_parser(
+        "list", parents=parents, help="list accessible projects"
+    )
+    show = project_commands.add_parser("show", parents=parents, help="show a project")
+    show.add_argument("project_id", metavar="PROJECT_ID")
+    create = project_commands.add_parser(
+        "create", parents=parents, help="create a project and open Checkout"
+    )
+    create.add_argument("--name", required=True)
+    create.add_argument("--monthly-cap", metavar="CREDITS")
+    set_cap = project_commands.add_parser(
+        "set-cap", parents=parents, help="set or clear a project's monthly cap"
+    )
+    set_cap.add_argument("project_id", metavar="PROJECT_ID")
+    cap = set_cap.add_mutually_exclusive_group(required=True)
+    cap.add_argument("--monthly-cap", metavar="CREDITS")
+    cap.add_argument("--clear", action="store_const", const=None, dest="monthly_cap")
+    activate = project_commands.add_parser(
+        "activate", parents=parents, help="open a fresh Checkout for an unpaid project"
+    )
+    activate.add_argument("project_id", metavar="PROJECT_ID")
+    for command in (create, activate):
+        command.add_argument(
+            "--idempotency-key", help="reuse this value to retry the same request"
+        )
+
+    keys = commands.add_parser("keys", help="manage remember.dev API keys")
+    key_commands = keys.add_subparsers(dest="keys_command", required=True)
+    key_commands.add_parser("list", parents=parents, help="list visible key metadata")
+    create_key = key_commands.add_parser(
+        "create", parents=parents, help="create a key and print its secret once"
+    )
+    create_key.add_argument("--name", required=True)
+    create_key.add_argument(
+        "--permission",
+        metavar="SCOPE",
+        action="append",
+        help="repeat for each permission",
+    )
+    coverage = create_key.add_mutually_exclusive_group()
+    coverage.add_argument(
+        "--project",
+        metavar="PROJECT_ID",
+        action="append",
+        dest="projects",
+        help="repeat for each covered project",
+    )
+    coverage.add_argument(
+        "--all-projects",
+        action="store_const",
+        const="org:*",
+        dest="projects",
+        help="cover every project in the organisation",
+    )
+    create_key.add_argument("--default-project", metavar="PROJECT_ID")
+    create_key.add_argument("--lifetime-days", type=int, choices=(7, 30, 90, 180, 365))
+    revoke = key_commands.add_parser(
+        "revoke", parents=parents, help="revoke a key and its descendants"
+    )
+    revoke.add_argument("key_id", metavar="KEY_ID")
+
+
 def _build_parser(
     *, include_internal_ops: bool = False, machine: bool = False
 ) -> argparse.ArgumentParser:
@@ -1963,6 +2158,8 @@ def _build_parser(
         "switch", help="set the default project for the stored key"
     )
     switch.add_argument("project", help="project id or name")
+
+    _add_account_commands(commands)
 
     return parser
 

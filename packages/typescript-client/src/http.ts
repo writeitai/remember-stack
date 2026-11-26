@@ -1,6 +1,6 @@
 import {Agent as HttpAgent,request as httpRequest} from 'node:http';
 import {Agent as HttpsAgent,request as httpsRequest} from 'node:https';
-import { AbortError, InputValidationError, LayerUnavailable, MemoryApiError, NumericPrecisionError, RateLimited, RequestTimeoutError, UnknownTag } from './errors';
+import { AbortError, AgentPermissionDisabled, InputValidationError, LayerUnavailable, MemoryApiError, NumericPrecisionError, RateLimited, RequestTimeoutError, UnknownTag } from './errors';
 import { parseJson } from './json';
 import constants from './constants.generated';
 
@@ -149,18 +149,38 @@ function diagnosticText({value}:{value:unknown}):string {
   return value!==null&&typeof value==='object'?JSON.stringify(value):String(value);
 }
 /** Decode issuer-account errors independently of engine-specific query envelopes. */
-export async function checkedAccountResponse({response}:{response:Response}):Promise<unknown> {
+export async function checkedAccountResponse({response, authorization}:{response:Response; authorization:string}):Promise<unknown> {
   if(response.ok)return responseJson({response});
   if(response.status===429)return checkedResponse({response,path:''});
   const text=await response.text();let payload:unknown;
   try{payload=parseJson({text,statusCode:response.status});}catch{payload=undefined;}
   const envelope=payload!==null&&typeof payload==='object'&&!Array.isArray(payload)?(payload as Record<string,unknown>).detail:undefined;
-  let detail=text;
-  if(envelope!==null&&typeof envelope==='object'&&!Array.isArray(envelope)) {
-    const fields=envelope as Record<string,unknown>;
-    detail=diagnosticText({value:diagnosticValue({value:fields.message})?fields.message:diagnosticValue({value:fields.code})?fields.code:envelope});
-  }else if(envelope!=null)detail=diagnosticText({value:envelope});
-  throw new MemoryApiError({statusCode:response.status,detail});
+  const fields = envelope !== null && typeof envelope === 'object' && !Array.isArray(envelope)
+    ? envelope as Record<string, unknown> : undefined;
+  const code = typeof fields?.code === 'string' ? fields.code
+    : response.status === 403 && envelope === 'owner_only' ? envelope : undefined;
+  let detail = text;
+  if (fields) {
+    detail = diagnosticText({value: diagnosticValue({value: fields.message}) ? fields.message
+      : diagnosticValue({value: fields.code}) ? fields.code : fields});
+  } else if (envelope != null) {
+    detail = diagnosticText({value: envelope});
+  }
+  /** Remove the presenting key if the provider echoed it in a diagnostic. */
+  const redact = (value: string): string => {
+    for (const secret of [authorization, authorization.slice('Bearer '.length)]) {
+      if (secret) value = value.replaceAll(secret, '[redacted]').replaceAll(encodeURIComponent(secret), '[redacted]');
+    }
+    return value.replace(/(https?:\/\/)[^/\s@]+@/g, '$1[redacted]@');
+  };
+  if (response.status === 403 && code === 'agent_permission_disabled') {
+    throw new AgentPermissionDisabled({
+      detail: redact(detail),
+      action: typeof fields?.action === 'string' ? redact(fields.action) : undefined,
+      settingsUrl: typeof fields?.settings_url === 'string' ? redact(fields.settings_url) : undefined,
+    });
+  }
+  throw new MemoryApiError({statusCode: response.status, detail: redact(detail), code: code === undefined ? undefined : redact(code)});
 }
 
 /** Decode exact public errors at their bound status, without generic retry policy. */

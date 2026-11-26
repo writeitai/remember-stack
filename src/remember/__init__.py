@@ -15,6 +15,7 @@ from remember.client import Client as RememberClient
 from remember.client import MemoryClient
 from remember.connection import resolve_connection
 from remember.errors import AccountApiUnavailable
+from remember.errors import AgentPermissionDisabled
 from remember.errors import ConnectorNotFoundError
 from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
@@ -96,6 +97,7 @@ except PackageNotFoundError:
 __all__ = (
     "AccountApi",
     "AccountApiUnavailable",
+    "AgentPermissionDisabled",
     "CapabilityReadiness",
     "ClaimValidPrecision",
     "Client",

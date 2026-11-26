@@ -47,9 +47,9 @@ with `403` and `route_not_permitted`. A key also needs:
   otherwise);
 - the organisation in the path to be its own (`403`,
   `organisation_not_bound`);
-- for a route naming a deployment, that deployment's project covered by the
-  key and usable by its person now (`403`, `project_not_covered`);
-- for the billing routes marked **owner**, a person who is an owner now
+- for a route naming a project or deployment, coverage for the project and
+  current access for the person (`403`, `project_not_covered`);
+- for key routes marked **owner**, a person who is an owner now
   (`403`, `owner_only`);
 - a person who is still an active member (`403`, `membership_inactive`).
 
@@ -62,6 +62,7 @@ the body.
 |---|---|
 | `{"detail": "<message>"}` | Most routes |
 | `{"detail": {"code": "…", "message": "…", "retryable": true/false}}` | API keys and key checks, MCP consent and connections, browser credentials |
+| `{"detail": {"code": "agent_permission_disabled", "message": "…", "action": "…", "settings_url": "…"}}` | `403` when an owner's agent permission switch blocks a project write |
 | `{"detail": {"code": "…"}}` | `GET /v1/organisations/{org_id}/deployments/{deployment_id}` |
 | `{"detail": [{"loc": […], "msg": "…", "type": "…"}]}` | `422` request validation, on every route |
 | `{"error": "…", "error_description": "…"}` | The OAuth routes: `/oauth/register`, `/oauth/authorize`, `/oauth/token` (including device-flow polling) |
@@ -124,19 +125,32 @@ members with the `remove_member` tool of
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/v1/orgs/{org_id}/projects` | session member | Projects visible to you, plus `project_limit`, `slots_used`, `is_owner` |
-| `POST` | `/v1/orgs/{org_id}/projects` | session owner | Create a project and its activation Checkout. Header `Idempotency-Key` (required, ≤160). Body `name` (≤100). Returns `project` and `checkout` with the Checkout `url` |
-| `GET` | `/v1/orgs/{org_id}/projects/{project_id}` | session member | One project, with `activation_state`, `deployment`, `member_count`, `monthly_subcap_credits` |
+| `GET` | `/v1/orgs/{org_id}/projects` | session member, key `account:read` | Projects visible to you and covered by your key, plus `project_limit`, `slots_used`, `is_owner` |
+| `POST` | `/v1/orgs/{org_id}/projects` | session owner, owner key `account:manage` | Create a project and its activation Checkout. Body `name` (≤100) and optional `monthly_subcap_credits` (decimal string ≥0 or `null`) |
+| `GET` | `/v1/orgs/{org_id}/projects/{project_id}` | session member, key `account:read` | One project, with `activation_state`, `deployment`, `member_count`, `monthly_subcap_credits` |
 | `PATCH` | `/v1/orgs/{org_id}/projects/{project_id}` | session owner | Rename. Body `name` (1–100). The slug does not change |
 | `POST` | `/v1/orgs/{org_id}/projects/{project_id}/archive` | session owner | Archive a project with no deployment and no activation in progress |
 | `POST` | `/v1/orgs/{org_id}/projects/{project_id}/members` | session owner | Assign a member. Body `user_id` |
 | `DELETE` | `/v1/orgs/{org_id}/projects/{project_id}/members/{membership_id}` | session owner | Revoke an assignment |
-| `PUT` | `/v1/orgs/{org_id}/projects/{project_id}/spend-cap` | session owner | Set or clear the monthly sub-cap. Body `monthly_subcap_credits` (≥0 or `null`) |
+| `PUT` | `/v1/orgs/{org_id}/projects/{project_id}/spend-cap` | session owner, owner key `account:manage` | Set or clear the monthly sub-cap. Body `monthly_subcap_credits` (decimal string ≥0 or `null`). Returns the updated project |
+| `POST` | `/v1/orgs/{org_id}/projects/{project_id}/activation-checkout` | owner key `account:manage` | Open a fresh Checkout for an unpaid project. Send an empty request body |
 | `GET` | `/v1/orgs/{org_id}/projects/{project_id}/intake` | session member | Ingest counts for the project: totals, per-day buckets and failure reasons, with no document names. Query `days` (default 14) |
 
 `POST /v1/orgs/{org_id}/projects` answers `409` when billing is not active,
 when the Default project has not been activated, or when
 `Project limit reached (n of m)`.
+
+Both project POST requests require `Idempotency-Key` (1–160 characters).
+Reuse it for a retry of the same request. Each returns `project`, `checkout`
+and `requires_human_action: true`. The `checkout` object includes
+`checkout_session_id`, the hosted `url`, `amount_credits` as a decimal
+string and `client_secret` (`null` for hosted Checkout). A person completes
+payment at the URL. Starting a fresh activation Checkout replaces the
+earlier unpaid Checkout.
+
+Owners can control project creation and spend cap changes in
+**Settings → Agent permissions**. A key creating a project with a cap
+needs both switches enabled. See the [project setup guide](/docs/cloud/setup-project-from-agent).
 
 ## Deployments
 

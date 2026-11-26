@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 from datetime import datetime
 from datetime import timedelta
+import json
 from pathlib import Path
 import time
 from typing import Final
@@ -22,6 +23,7 @@ from typing import Self
 from typing import TypeVar
 from urllib.parse import quote
 from uuid import UUID
+from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel
@@ -33,6 +35,7 @@ from remember.connection import Connection
 from remember.connection import EngineRoute
 from remember.connection import resolve_connection
 from remember.errors import AccountApiUnavailable
+from remember.errors import AgentPermissionDisabled
 from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import PipelineDeadLettered
@@ -42,6 +45,7 @@ from remember.errors import UnknownTag
 from remember.http_routes import is_read_route
 from remember.issuer import fetch_issuer_metadata
 from remember.issuer import IssuerError
+from remember.issuer import same_origin
 from remember.issuer import send_same_origin
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import validate_arguments
@@ -1950,27 +1954,151 @@ class AccountApi:
 
     def whoami(self) -> dict[str, object]:
         """The issuer's view of this key: person, organisation, projects, permissions."""
-        payload = self.get("/v1/keys/self")
-        if not isinstance(payload, dict):
-            raise MemoryApiError(
-                status_code=200, detail="GET /v1/keys/self did not return an object"
-            )
-        return payload
+        return self._object("GET", "/v1/keys/self")
 
     def get(
         self, path: str, *, params: Mapping[str, str | int] | None = None
     ) -> object:
         """``GET`` one account-API path (relative to the account endpoint)."""
+        return self._request("GET", path, params=params)
+
+    def list_projects(self) -> dict[str, object]:
+        """List the key's visible projects and the organisation's slot usage."""
+        return self._object("GET", self._org_path("projects"))
+
+    def get_project(self, *, project_id: str) -> dict[str, object]:
+        """Read a covered project's cap, activation and deployment state."""
+        return self._object("GET", self._project_path(project_id))
+
+    def create_project(
+        self,
+        *,
+        name: str,
+        monthly_subcap_credits: str | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, object]:
+        """Create a project and its hosted Checkout for a person to complete."""
+        return self._object(
+            "POST",
+            self._org_path("projects"),
+            json_body={"name": name, "monthly_subcap_credits": monthly_subcap_credits},
+            idempotency_key=_checkout_idempotency_key(idempotency_key),
+        )
+
+    def set_project_spend_cap(
+        self, *, project_id: str, monthly_subcap_credits: str | None
+    ) -> dict[str, object]:
+        """Set a project's monthly cap in credits, or pass None to clear it."""
+        return self._object(
+            "PUT",
+            self._project_path(project_id) + "/spend-cap",
+            json_body={"monthly_subcap_credits": monthly_subcap_credits},
+        )
+
+    def start_activation_checkout(
+        self, *, project_id: str, idempotency_key: str | None = None
+    ) -> dict[str, object]:
+        """Open a hosted Checkout for an unpaid project. A person completes payment."""
+        return self._object(
+            "POST",
+            self._project_path(project_id) + "/activation-checkout",
+            idempotency_key=_checkout_idempotency_key(idempotency_key),
+        )
+
+    def list_keys(self) -> dict[str, object] | list[object]:
+        """List key metadata visible to the caller, without the secrets."""
+        path = self._org_path("keys")
+        payload = self.get(path)
+        if not isinstance(payload, (dict, list)):
+            raise MemoryApiError(
+                status_code=200, detail=f"GET {path} did not return an object or array"
+            )
+        return payload
+
+    def create_key(
+        self,
+        *,
+        name: str,
+        projects: Sequence[str] | Literal["org:*"] | None = None,
+        permissions: Sequence[str] | None = None,
+        default_project_id: str | None = None,
+        lifetime_days: int | None = None,
+    ) -> dict[str, object]:
+        """Create a child key with the given coverage and return its one-time secret."""
+        if isinstance(projects, str) and projects != "org:*":
+            raise ValueError('projects must be a sequence of project ids or "org:*"')
+        if isinstance(permissions, str):
+            raise ValueError("permissions must be a sequence of permission names")
+        body: dict[str, object] = {"name": name}
+        if projects is not None:
+            body["projects"] = projects if isinstance(projects, str) else list(projects)
+        if permissions is not None:
+            body["permissions"] = list(permissions)
+        if default_project_id is not None:
+            body["default_project_id"] = default_project_id
+        if lifetime_days is not None:
+            body["lifetime_days"] = lifetime_days
+        return self._object("POST", self._org_path("keys"), json_body=body)
+
+    def revoke_key(self, *, key_id: str) -> dict[str, object]:
+        """Revoke a key and any keys that descend from it."""
+        return self._object("DELETE", f"{self._org_path('keys')}/{_account_id(key_id)}")
+
+    def _project_path(self, project_id: str) -> str:
+        """Address one project in the signed key's organisation."""
+        return f"{self._org_path('projects')}/{_account_id(project_id)}"
+
+    def _org_path(self, resource: str) -> str:
+        """Use the organisation claim for routing. The issuer authorizes the call."""
+        claims = self._connection.claims if self._connection else None
+        if claims is None or not claims.org:
+            raise AccountApiUnavailable(
+                detail="this account call needs an organisation-bound signed key"
+            )
+        return f"/v1/orgs/{_account_id(claims.org)}/{resource}"
+
+    def _object(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, object] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, object]:
+        """Check that the account endpoint returned a JSON object."""
+        payload = self._request(
+            method, path, json_body=json_body, idempotency_key=idempotency_key
+        )
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200, detail=f"{method} {path} did not return an object"
+            )
+        return payload
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, str | int] | None = None,
+        json_body: dict[str, object] | None = None,
+        idempotency_key: str | None = None,
+    ) -> object:
+        """Send the request to the signed key's issuer account endpoint."""
         base = self._base_url()
         assert self._connection is not None and self._connection.authorization
+        headers = {
+            "Authorization": self._connection.authorization,
+            "Accept": "application/json",
+        }
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = idempotency_key
         request = self._http.build_request(
-            "GET",
+            method,
             base.rstrip("/") + "/" + path.lstrip("/"),
             params=params,
-            headers={
-                "Authorization": self._connection.authorization,
-                "Accept": "application/json",
-            },
+            headers=headers,
+            json=json_body,
         )
         try:
             response = send_same_origin(self._http, request)
@@ -1981,18 +2109,13 @@ class AccountApi:
         if response.status_code == 429:
             raise _rate_limited(response)
         if not response.is_success:
-            raise MemoryApiError(
-                status_code=response.status_code,
-                detail=redact_diagnostic(
-                    _error_detail(response), secrets=(request.headers["Authorization"],)
-                ),
-            )
+            raise _account_error(response, authorization=headers["Authorization"])
         try:
             return response.json()
         except ValueError as error:
             raise MemoryApiError(
                 status_code=response.status_code,
-                detail=f"GET {path} returned invalid JSON",
+                detail=f"{method} {path} returned invalid JSON",
             ) from error
 
     def _base_url(self) -> str:
@@ -2010,9 +2133,43 @@ class AccountApi:
                 detail=f"issuer {metadata.issuer} advertises no remember_account_endpoint"
             )
         try:
-            return metadata.endpoint("remember_account_endpoint")
+            endpoint = metadata.endpoint("remember_account_endpoint")
         except IssuerError as error:
             raise AccountApiUnavailable(detail=error.detail) from error
+        if not same_origin(connection.claims.iss, endpoint):
+            raise AccountApiUnavailable(
+                detail="account endpoint must share the issuer origin"
+            )
+        return endpoint
+
+
+def _account_id(value: str) -> str:
+    """Encode an opaque account ID as a single non-traversing path segment."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or any(char in value for char in "/\\%")
+    ):
+        raise ValueError("an account id must be a single path segment")
+    return quote(value, safe="")
+
+
+def _checkout_idempotency_key(value: str | None) -> str:
+    """Use the caller's retry key or generate a fresh key for this POST."""
+    if value is None:
+        return str(uuid4())
+    if not (
+        isinstance(value, str)
+        and 1 <= len(value) <= 160
+        and value.isascii()
+        and value.isprintable()
+        and value == value.strip()
+    ):
+        raise ValueError(
+            "Idempotency-Key must be 1 to 160 printable ASCII characters with no surrounding spaces"
+        )
+    return value
 
 
 def _looks_moved(response: httpx.Response) -> bool:
@@ -2057,18 +2214,44 @@ def _rate_limited(response: httpx.Response) -> RateLimited:
     )
 
 
-def _error_detail(response: httpx.Response) -> str:
-    """The message of an error response, whatever envelope it came in."""
+def _account_error(response: httpx.Response, *, authorization: str) -> MemoryApiError:
+    """Keep the issuer's code and any owner instructions, with credentials redacted."""
     try:
         body = response.json()
     except ValueError:
-        return response.text
+        body = None
     envelope = body.get("detail") if isinstance(body, dict) else None
+    fields = envelope if isinstance(envelope, dict) else {}
+    secrets = (authorization,)
+    code = fields.get("code")
+    if envelope == "owner_only" and response.status_code == 403:
+        code = envelope
     if isinstance(envelope, dict):
-        return str(envelope.get("message") or envelope.get("code") or envelope)
-    if envelope is not None:
-        return str(envelope)
-    return response.text
+        detail = str(envelope.get("message") or code or envelope)
+    elif isinstance(envelope, list):
+        detail = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
+    else:
+        detail = response.text if envelope is None else str(envelope)
+    detail = redact_diagnostic(detail, secrets=secrets)
+    if response.status_code == 403 and code == "agent_permission_disabled":
+        action = fields.get("action")
+        settings_url = fields.get("settings_url")
+        return AgentPermissionDisabled(
+            detail=detail,
+            action=redact_diagnostic(action, secrets=secrets)
+            if isinstance(action, str)
+            else None,
+            settings_url=redact_diagnostic(settings_url, secrets=secrets)
+            if isinstance(settings_url, str)
+            else None,
+        )
+    return MemoryApiError(
+        status_code=response.status_code,
+        detail=detail,
+        code=redact_diagnostic(code, secrets=secrets)
+        if isinstance(code, str)
+        else None,
+    )
 
 
 def _retry_after(response: httpx.Response) -> float | None:

@@ -64,10 +64,13 @@ project needs its own activation Checkout:
 Abandoning the Checkout does not create a deployment. The project stays in
 the list, not activated.
 
-An agent can start the same steps with the `create_project` tool of
-[hosted MCP](/docs/cloud/hosted-mcp#account-tools), with an owner's key or
-connection holding `account:manage`. It returns the Checkout link; a person
-completes the payment.
+An agent with a shell can create a project with `remember projects create`
+using an owner's key with `account:manage`. The command returns the Checkout
+link for a person to complete payment. Owners control project creation from
+**Settings → Agent permissions**. [Set up a Project from your agent](/docs/cloud/setup-project-from-agent)
+
+The `create_project` tool also returns a Checkout link for an owner's
+connection with `account:manage`. [Hosted MCP](/docs/cloud/hosted-mcp#account-tools)
 
 You can create another project only when:
 

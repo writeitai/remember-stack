@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type * as Models from './generated';
@@ -430,6 +431,33 @@ export class Client extends MemoryClient {
   /** Infer MIME from the actual path before applying a display filename override. */
   async ingestFile({filePath,...options}:Omit<IngestOptions,'source'|'content'>&{filePath:string}):Promise<Models.OutputIngestedVersion> {return this.ingest({...options,source:filePath});}
 }
+
+type AccountObject = Record<string, Models.JsonValue>;
+type AccountRequest = RequestOptions & {
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  path: string;
+  params?: Record<string, string | number>;
+  body?: AccountObject;
+  idempotencyKey?: string;
+};
+
+/** Encode an opaque account ID as a single non-traversing path segment. */
+function accountId(value: string): string {
+  if (typeof value !== 'string' || !value || value === '.' || value === '..' || /[/\\%]/.test(value)) {
+    throw new InputValidationError({detail: 'an account id must be a single path segment'});
+  }
+  return segment({value});
+}
+
+/** Use the caller's retry key or generate a fresh key for this POST. */
+function checkoutIdempotencyKey(value: string | null | undefined): string {
+  if (value == null) return randomUUID();
+  if (typeof value !== 'string' || !value || value !== value.trim() || value.length > 160 || /[^\x20-\x7e]/.test(value)) {
+    throw new InputValidationError({detail: 'Idempotency-Key must be 1 to 160 printable ASCII characters with no surrounding spaces'});
+  }
+  return value;
+}
+
 /** Issuer account requests are separate from the memory engine API. */
 export class AccountApi {
   readonly #connection:Connection|null;readonly #http:HttpTransport;readonly #timeoutMs:number;readonly #controllers:Set<AbortController>;readonly #assertOpen:()=>void;
@@ -447,18 +475,129 @@ export class AccountApi {
       let next:string;try {next=decodeURIComponent(decoded);}catch {throw new InputValidationError({detail:'account path has invalid percent encoding'});}
       if(next===decoded)break;decoded=next;
     }
+    return this.#request({method: 'GET', path, params, signal});
+  }
+
+  /** List the key's visible projects and the organisation's slot usage. */
+  async listProjects({signal}: RequestOptions = {}): Promise<AccountObject> {
+    return this.#object({method: 'GET', path: this.#orgPath('projects'), signal});
+  }
+
+  /** Read a covered project's cap, activation and deployment state. */
+  async getProject({projectId, signal}: RequestOptions & {projectId: string}): Promise<AccountObject> {
+    return this.#object({method: 'GET', path: this.#projectPath(projectId), signal});
+  }
+
+  /** Create a project and its hosted Checkout for a person to complete. */
+  async createProject({name, monthlySubcapCredits = null, idempotencyKey, signal}: RequestOptions & {
+    name: string;
+    monthlySubcapCredits?: string | null;
+    idempotencyKey?: string | null;
+  }): Promise<AccountObject> {
+    return this.#object({
+      method: 'POST', path: this.#orgPath('projects'), signal,
+      body: {name, monthly_subcap_credits: monthlySubcapCredits},
+      idempotencyKey: checkoutIdempotencyKey(idempotencyKey),
+    });
+  }
+
+  /** Set a project's monthly cap in credits, or pass null to clear it. */
+  async setProjectSpendCap({projectId, monthlySubcapCredits, signal}: RequestOptions & {
+    projectId: string;
+    monthlySubcapCredits: string | null;
+  }): Promise<AccountObject> {
+    return this.#object({
+      method: 'PUT', path: this.#projectPath(projectId) + '/spend-cap', signal,
+      body: {monthly_subcap_credits: monthlySubcapCredits},
+    });
+  }
+
+  /** Open a hosted Checkout for an unpaid project. A person completes payment. */
+  async startActivationCheckout({projectId, idempotencyKey, signal}: RequestOptions & {
+    projectId: string;
+    idempotencyKey?: string | null;
+  }): Promise<AccountObject> {
+    return this.#object({
+      method: 'POST', path: this.#projectPath(projectId) + '/activation-checkout',
+      idempotencyKey: checkoutIdempotencyKey(idempotencyKey), signal,
+    });
+  }
+
+  /** List key metadata visible to the caller, without the secrets. */
+  async listKeys({signal}: RequestOptions = {}): Promise<AccountObject | Models.JsonValue[]> {
+    const value = await this.#request({method: 'GET', path: this.#orgPath('keys'), signal});
+    return Array.isArray(value) ? value : objectResponse({value});
+  }
+
+  /** Create a child key with the given coverage and return its one-time secret. */
+  async createKey({name, projects, permissions, defaultProjectId, lifetimeDays, signal}: RequestOptions & {
+    name: string;
+    projects?: readonly string[] | 'org:*' | null;
+    permissions?: readonly string[] | null;
+    defaultProjectId?: string | null;
+    lifetimeDays?: number | null;
+  }): Promise<AccountObject> {
+    if (projects != null && projects !== 'org:*' && !Array.isArray(projects)) {
+      throw new InputValidationError({detail: 'projects must be a sequence of project ids or "org:*"'});
+    }
+    if (permissions != null && !Array.isArray(permissions)) {
+      throw new InputValidationError({detail: 'permissions must be a sequence of permission names'});
+    }
+    const body: AccountObject = {name};
+    if (projects != null) body.projects = projects === 'org:*' ? projects : [...projects];
+    if (permissions != null) body.permissions = [...permissions];
+    if (defaultProjectId != null) body.default_project_id = defaultProjectId;
+    if (lifetimeDays != null) body.lifetime_days = lifetimeDays;
+    return this.#object({method: 'POST', path: this.#orgPath('keys'), body, signal});
+  }
+
+  /** Revoke a key and any keys that descend from it. */
+  async revokeKey({keyId, signal}: RequestOptions & {keyId: string}): Promise<AccountObject> {
+    return this.#object({method: 'DELETE', path: `${this.#orgPath('keys')}/${accountId(keyId)}`, signal});
+  }
+
+  /** Address one project in the signed key's organisation. */
+  #projectPath(projectId: string): string {
+    return `${this.#orgPath('projects')}/${accountId(projectId)}`;
+  }
+
+  /** Use the organisation claim for routing. The issuer authorizes the call. */
+  #orgPath(resource: 'projects' | 'keys'): string {
+    this.#assertOpen();
+    const organisation = this.#connection?.claims?.org;
+    if (!organisation) throw new AccountApiUnavailable({detail: 'this account call needs an organisation-bound signed key'});
+    return `/v1/orgs/${accountId(organisation)}/${resource}`;
+  }
+
+  /** Check that the account endpoint returned a JSON object. */
+  async #object(request: AccountRequest): Promise<AccountObject> {
+    return objectResponse({value: await this.#request(request)});
+  }
+
+  /** Send the request only to the signed key's issuer account endpoint. */
+  async #request({method, path, params, body, idempotencyKey, signal}: AccountRequest): Promise<Models.JsonValue> {
+    this.#assertOpen();
     const c=this.#connection;
     if(!c?.claims||!c.authorization)throw new AccountApiUnavailable({detail:'connection has no issuer account API'});
+    const authorization = c.authorization;
     return bounded({signal,timeoutMs:this.#timeoutMs,controllers:this.#controllers,work:async activeSignal=>{
       let endpoint:string;
       const metadata=await fetchIssuerMetadata({issuer:c.claims!.iss,http:this.#http,signal:activeSignal,timeoutMs:this.#timeoutMs});
       try {endpoint=metadata.endpoint({name:'remember_account_endpoint'});}
       catch(error) {if(error instanceof AbortError||error instanceof RequestTimeoutError)throw error;throw new AccountApiUnavailable({detail:'issuer has no usable account API'});}
       if(!sameOrigin({left:c.claims!.iss,right:endpoint}))throw new AccountApiUnavailable({detail:'account endpoint must share the issuer origin'});
+      const headers: Record<string, string> = {Authorization: authorization, Accept: 'application/json'};
+      if (body !== undefined) headers['Content-Type'] = 'application/json';
+      if (idempotencyKey !== undefined) headers['Idempotency-Key'] = idempotencyKey;
       let response:Response;
-      try{response=await sendSameOrigin({http:this.#http,request:{method:'GET',url:endpoint.replace(/\/+$/,'')+'/'+path.replace(/^\/+/,''),query:queryParams({params}),headers:{Authorization:c.authorization!,Accept:'application/json'},signal:activeSignal}});}
+      try {
+        response = await sendSameOrigin({http: this.#http, request: {
+          method, url: endpoint.replace(/\/+$/,'')+'/'+path.replace(/^\/+/,''),
+          query: queryParams({params}), headers, body: JSON.stringify(body), signal: activeSignal,
+        }});
+      }
       catch(error){if(activeSignal.aborted)throw activeSignal.reason;throw transportError({error});}
-      return await checkedAccountResponse({response}) as Models.JsonValue;
+      return await checkedAccountResponse({response, authorization}) as Models.JsonValue;
     }});
   }
 }

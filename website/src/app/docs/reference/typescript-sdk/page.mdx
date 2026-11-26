@@ -67,8 +67,8 @@ try {
 `Client`, `MemoryClient`, and the `RememberClient` alias share the memory methods.
 `Client.fromEnv(overrides)` uses the ordinary constructor's precedence;
 `Client.ingestFile` is a file-path convenience, and `client.account` exposes
-`get` and `whoami` for a signed key's issuer account API. Account access fails
-explicitly when that issuer does not advertise an account endpoint.
+`get`, `whoami` and named project and key methods for a signed key's issuer
+account API. Account access requires an endpoint advertised by that issuer.
 
 Explicit `apiKey`, `baseUrl`, and `project` take precedence over
 REMEMBER_API_KEY, REMEMBER_API_URL and REMEMBER_PROJECT, then the existing
@@ -294,6 +294,41 @@ unfiltered calls use GET as the
 Python client does. `searchDocumentsRequest` omits fields equal to model defaults.
 Connector methods configure remote deployment adapters; they do not execute
 npm connector libraries on the client machine.
+
+<Cloud>
+
+## Issuer account
+
+`client.account` uses the signed key's organisation for project and key
+management. Each method takes a named options object and accepts `signal`.
+The results use the account API's snake_case JSON fields.
+
+| Method | Result |
+|---|---|
+| `listProjects()` | Visible projects and slot usage. |
+| `getProject({ projectId })` | A project's details, cap, activation state and deployment. |
+| `createProject({ name, monthlySubcapCredits?, idempotencyKey? })` | The new project and its Checkout. |
+| `setProjectSpendCap({ projectId, monthlySubcapCredits })` | The updated project. Use a decimal string for credits or `null` to clear the cap. |
+| `startActivationCheckout({ projectId, idempotencyKey? })` | A fresh Checkout for an unpaid project. |
+| `listKeys()` | Visible key metadata. |
+| `createKey({ name, projects?, permissions?, defaultProjectId?, lifetimeDays? })` | The new key's metadata and its one-time `key` secret. |
+| `revokeKey({ keyId })` | Metadata for the revoked key. Its descendants are revoked too. |
+
+Project reads require `account:read`. Project writes require an owner key
+with `account:manage` and coverage for an existing project. Key management
+requires `account:manage`. Pass project IDs or `"org:*"` in `projects` to
+choose coverage and an array of scope names in `permissions`.
+
+For `createProject` and `startActivationCheckout`, the client generates a UUID
+unless you pass `idempotencyKey`. Reuse the key to retry the same request.
+Both return `requires_human_action: true` with the URL in the returned
+`checkout` object for a person to complete payment. When an owner's
+**Settings → Agent permissions** switch blocks a call, catch
+`AgentPermissionDisabled` and read `action` and `settingsUrl`. See the
+[account API](/docs/reference/cloud-api) and the
+[project setup guide](/docs/cloud/setup-project-from-agent).
+
+</Cloud>
 
 ## Transport and errors
 
