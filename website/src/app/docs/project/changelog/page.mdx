@@ -27,19 +27,23 @@ release. What it serves is on
 ## 0.22.1 (November 2026)
 
 **New model defaults: GPT 6 Luna everywhere, Jev for facts.** Every chat seat
-now defaults to `openai/gpt-6-luna`: the structure fallback, skeleton check,
-section role and section summary (were `z-ai/glm-4.7-flash`), and claim
+now defaults to `openai/gpt-6-luna`: the skeleton check, section role and
+section summary (were `z-ai/glm-4.7-flash`), and the structure fallback, claim
 extraction, relation normalisation, entity resolution and the `prompt` fact
 engine (were `openai/gpt-5.6-luna`). Fact adjudication now defaults to Jev
 (`REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`), served through OpenRouter on
-your OpenRouter key (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`, the System One
-route added in 0.21.3). No new key is needed. The default route is the one
-`REMEMBERSTACK_OPENROUTER_ZDR=true` accepts, so a deployment with ZDR on runs
-Jev under zero data retention, alongside the embedding ZDR routing and host
-allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) from the same
-release. `GET /deployment` reports `model_bindings.systemone_route` as
-`openrouter`. New work uses the new models; documents already processed are
-not re-run. See [Models](/docs/self-hosting/models).
+your OpenRouter key (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`), the System One
+route added in 0.21.3. No new key is needed. The ZDR start-up rules from
+0.21.3 are unchanged: with `REMEMBERSTACK_OPENROUTER_ZDR=true`, Jev must run
+on the `openrouter` route against `https://openrouter.ai` with
+`REMEMBERSTACK_TYPESAFE_BACKUP=none`, otherwise the deployment refuses to
+start. The new default route meets the first rule, so check the other two
+before you upgrade a ZDR deployment. The embedding ZDR routing and host
+allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) from 0.21.3 are
+unchanged. When Jev runs through OpenRouter, `GET /deployment` reports
+`model_bindings.systemone_route` as `openrouter`. New work uses the new
+models; documents already processed are not re-run. See
+[Models](/docs/self-hosting/models).
 
 **Action needed (self-hosted)** only if you want the previous models. Set them
 in `.env`: `REMEMBERSTACK_STRUCTURER_MODEL`, `REMEMBERSTACK_E2_EXTRACT_MODEL`,
@@ -55,8 +59,9 @@ to keep it.
 `remember readiness VERSION_ID... [--wait]`, `remember graph`, `lookup`,
 `search`, `relation`, `resolve`, `deployment` and `processing-layers`, and the
 document references, section history and effective-period commands. Every
-public HTTP route is now reachable from the Python SDK, the TypeScript SDK
-and the CLI. Agents with a shell should prefer the CLI; the MCP tool list is
+public operation is now reachable from the Python SDK, the TypeScript SDK and
+the CLI (`POST /chunks/adjacent` through its equivalent
+`GET /chunks/{chunk_id}/adjacent`). Agents with a shell should prefer the CLI; the MCP tool list is
 unchanged. See the [CLI reference](/docs/reference/cli).
 
 **Docs and verification.** The LoCoMo results cite each comparator's
