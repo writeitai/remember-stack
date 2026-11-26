@@ -188,8 +188,15 @@ class PipelineDeadLettered(RuntimeError):
 
 
 class _PipelineReadinessTimeout(TimeoutError):
-    """Keep the last report available to callers inside the package."""
+    """Retain the most recent report and retryable request failure, if any."""
 
-    def __init__(self, message: str, *, report: PipelineReadinessReport) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        report: PipelineReadinessReport | None,
+        last_error: MemoryApiError | None,
+    ) -> None:
         super().__init__(message)
         self.report = report
+        self.last_error = last_error

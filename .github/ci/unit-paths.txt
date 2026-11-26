@@ -95,6 +95,7 @@ src/tests/surfaces/test_cli_public_routes.py
 src/tests/surfaces/test_client_account.py
 src/tests/surfaces/test_setup_entries.py
 src/tests/surfaces/test_client_first_run.py
+src/tests/surfaces/test_client_readiness_retries.py
 src/tests/surfaces/test_client_sdk.py
 src/tests/surfaces/test_client_credential_safety.py
 src/tests/surfaces/test_cost_export_contract.py

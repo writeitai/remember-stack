@@ -11,8 +11,8 @@ for(const [name,file,before,after]of [
   ['root resolver','index.ts','Connection,resolveConnection,','Connection,'],
   ['support security helpers','index.ts','isLoopback,requireSecureUrl,',''],
   ['request timeout','client.ts','timeoutMs=300000','timeoutMs=1'],
-  ['readiness timeout','client.ts','timeoutMs=1800000','timeoutMs=1'],
-  ['poll interval','client.ts','pollIntervalMs=15000','pollIntervalMs=1'],
+  ['readiness timeout','client.ts','timeoutMs = 1800000','timeoutMs = 1'],
+  ['poll interval','client.ts','pollIntervalMs = 15000','pollIntervalMs = 1'],
 ])test(`drift rejects missing/changed ${name}`,()=>{
   const directory=mkdtempSync(join(tmpdir(),'remember-surface-mutation-'));
   try{

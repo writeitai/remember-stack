@@ -270,17 +270,22 @@ require publication to the corpus.
 
 Without `--wait` the command checks once, prints the readiness report as JSON
 and exits 0 even if the report says `"ready": false`. With `--wait` it checks
-immediately and then every 15 seconds by default until all requested versions
-are ready. Set a positive `--poll-interval` to change that interval. The polling
-deadline defaults to 1,800 seconds. An explicit `--timeout` sets both the
-polling deadline and HTTP request timeout. `REMEMBER_TIMEOUT` sets the HTTP
-request timeout when you omit the flag.
+immediately and waits 15 seconds between successful checks by default. Set a
+positive `--poll-interval` to change the minimum gap between checks. The wait
+deadline defaults to 1,800 seconds. An explicit `--timeout` sets both the wait
+deadline and the maximum HTTP request timeout. `REMEMBER_TIMEOUT` sets the
+HTTP request timeout when you omit the flag.
 
-A stage marked `failed` can retry, so polling continues. A `dead_letter` stage
-stops the wait with exit status 1 and names the version and stage on stderr.
-When the polling deadline elapses, stdout contains the last report and stderr
-carries the `readiness_timeout` error. The command exits with status 1. Add
-`--json` to read errors as JSON. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
+A stage marked `failed` can retry, so polling continues. Temporary connection
+failures, request timeouts, and retryable server errors such as HTTP `503` or
+`524` also keep the wait going, with backoff within the original deadline.
+A `dead_letter` stage or a non-retryable error such as HTTP `401` stops the
+wait immediately. For a `dead_letter` stage, stderr names the version and stage.
+
+At the deadline the command exits with status 1. Stdout contains the last
+successful report if one was received. Stderr carries `readiness_timeout` and
+includes the last retryable request error if there was one. Add `--json` to
+read errors as JSON. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
 
 ### `remember documents`
 

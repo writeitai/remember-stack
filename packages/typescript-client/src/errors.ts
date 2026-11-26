@@ -84,7 +84,7 @@ export class NumericPrecisionError extends MemoryApiError {}
 /** The request deadline expired; no host refresh or replay is allowed. */
 export class RequestTimeoutError extends MemoryApiError {
   /** Keep timeout distinct from caller cancellation and readiness deadlines. */
-  constructor({cause}:{cause?:unknown}={}) { super({ detail: 'request timed out', statusCode: 0, cause }); }
+  constructor({cause}:{cause?:unknown}={}) { super({ detail: 'request timed out', statusCode: 0, retryable: true, cause }); }
 }
 /** A named input failed validation before HTTP. */
 export class InputValidationError extends TypeError {
@@ -121,14 +121,17 @@ export class PipelineDeadLettered extends Error {
     this.report = report;
   }
 }
-/** Readiness deadline, with the most recent report if a poll completed. */
+/** Readiness deadline with the latest successful report and retryable error, if any. */
 export class TimeoutError extends Error {
   readonly report?: OutputPipelineReadinessReport;
+  readonly lastError?: MemoryApiError;
   /** Distinguish readiness expiry from HTTP request and caller signal timeouts. */
-  constructor({ report }: { report?: OutputPipelineReadinessReport } = {}) {
-    super('timed out waiting for pipeline readiness');
+  constructor({ report, lastError }: { report?: OutputPipelineReadinessReport; lastError?: MemoryApiError } = {}) {
+    const message = 'timed out waiting for pipeline readiness';
+    super(lastError ? `${message}. Last error: ${lastError.message}` : message, { cause: lastError });
     this.name = 'TimeoutError';
     this.report = report;
+    this.lastError = lastError;
   }
 }
 /** Connector lookup failed; outside MemoryApiError as in Python. */
