@@ -3371,12 +3371,13 @@ def _install_spend_lease(*, app: FastAPI) -> None:
             return JSONResponse(
                 status_code=503, content={"detail": "spend_lease_unavailable"}
             )
-        response = None
+        succeeded = False
         try:
             with track_read_embedding_cost() as read_cost:
                 response = await call_next(request)
+            succeeded = 200 <= response.status_code < 300
         finally:
-            if response is None or not 200 <= response.status_code < 300:
+            if not succeeded:
                 try:
                     await _call_spend_lease(
                         spend_lease.release,
@@ -3388,7 +3389,7 @@ def _install_spend_lease(*, app: FastAPI) -> None:
                     SpendLeaseUnavailable,
                 ):  # error-contract: exempt failed-response lease releases expire on TTL
                     pass
-        if 200 <= response.status_code < 300:
+        if succeeded:
             try:
                 await _call_spend_lease(
                     spend_lease.commit,
