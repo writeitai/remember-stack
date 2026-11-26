@@ -405,18 +405,30 @@ def test_invalid_reference_reports_the_line_without_writing(
             None,
         ),
         (["--wait"], ["dead_letter"], [], "pipeline_dead_lettered"),
+        (["--wait", "--timeout", "2"], ["pending"], [2.0], "readiness_timeout"),
+        (["--wait"], [524, "succeeded"], [15.0], None),
         (
-            ["--wait", "--timeout", "2"],
-            ["pending", "failed"],
-            [2.0],
+            ["--wait", "--timeout", "7", "--poll-interval", "1"],
+            ["pending", 503, 503],
+            [1.0, 2.0, 4.0],
             "readiness_timeout",
         ),
+        (["--wait", "--timeout", "3"], [503], [3.0], "readiness_timeout"),
     ],
-    ids=["inspect", "ready", "failed-then-ready", "dead-letter", "timeout"],
+    ids=[
+        "inspect",
+        "ready",
+        "failed-then-ready",
+        "dead-letter",
+        "timeout",
+        "524-then-ready",
+        "503-timeout-with-report",
+        "503-timeout-without-report",
+    ],
 )
 def test_readiness_polls_through_the_real_sdk(
     options: list[str],
-    statuses: list[str],
+    statuses: list[str | int],
     sleeps: list[float],
     error_code: str | None,
     monkeypatch: pytest.MonkeyPatch,
@@ -431,6 +443,8 @@ def test_readiness_polls_through_the_real_sdk(
         assert (request.method, request.url.path) == ("POST", "/readiness")
         bodies.append(json.loads(request.content))
         status = next(replies)
+        if isinstance(status, int):
+            return httpx.Response(status, text="Deployment unavailable")
         ready = status == "succeeded"
         return httpx.Response(
             200,
@@ -490,9 +504,17 @@ def test_readiness_polls_through_the_real_sdk(
             assert _VERSION in error["detail"] and "extract" in error["detail"]
             assert not output.out
             return
+        if isinstance(statuses[-1], int):
+            assert f"Last readiness check error: API {statuses[-1]}" in error["detail"]
+    last_stage = next(
+        (status for status in reversed(statuses) if isinstance(status, str)), None
+    )
+    if last_stage is None:
+        assert not output.out
+        return
     report = json.loads(output.out)
-    assert report["ready"] is (statuses[-1] == "succeeded")
-    assert report["versions"][0]["stages"][0]["status"] == statuses[-1]
+    assert report["ready"] is (last_stage == "succeeded")
+    assert report["versions"][0]["stages"][0]["status"] == last_stage
 
 
 @pytest.mark.parametrize("interval", ["0", "nan", "inf"])

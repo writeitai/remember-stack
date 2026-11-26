@@ -486,8 +486,8 @@ def test_wait_times_out_without_overshooting(monkeypatch: pytest.MonkeyPatch) ->
         clock["now"] += seconds
 
     monkeypatch.setattr(client_module.time, "sleep", fake_sleep)
-    client, bodies = _readiness_client([_report("running")] * 4)
+    client, bodies = _readiness_client([_report("running")] * 3)
     with pytest.raises(TimeoutError, match="not ready after 40"):
         client.wait_for_readiness([_VERSION], timeout=40, poll_interval=15)
-    assert len(bodies) == 4
+    assert len(bodies) == 3
     assert clock["now"] == 40.0

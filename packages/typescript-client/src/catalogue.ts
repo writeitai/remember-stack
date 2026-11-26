@@ -4,6 +4,7 @@ import { InputValidationError } from './errors';
 import { assertJson } from './json';
 import { isTagRef, validateModel, validateSchema, modelDump } from './validation';
 import { inferUploadMime } from './mime';
+import { utcTimestamp } from './timestamps';
 import { ToolError, ToolArgumentError, invalidArguments } from './tool-errors';
 export type Permission = 'memory:read' | 'memory:write';
 export const INGEST_TOOL_NAME='ingest';
@@ -91,12 +92,6 @@ function optionalString({arguments:args,name,nonempty=true,max}:{arguments:Recor
 function bodySize({content,maxBodyBytes}:{content:Uint8Array;maxBodyBytes?:number}):void {
   if(content.length===0)throw new ToolArgumentError({error:new ToolError({code:'empty_body',detail:'Ingest body is empty.',status_code:null,retryable:false,agent_action:'Provide non-empty path / text / content_base64 content.'})});
   if(maxBodyBytes!==undefined&&content.length>maxBodyBytes)throw new ToolArgumentError({error:new ToolError({code:'body_too_large',detail:`Ingest body exceeds the deployment capability limit of ${maxBodyBytes} bytes.`,status_code:null,retryable:false,agent_action:'Split or shorten the document; do not retry the same payload.'})});
-}
-/** Parse an optional timestamp while requiring UTC rather than silently shifting zones. */
-export function utcTimestamp({value,field}:{value:string|Date;field:string}):string {
-  if(value instanceof Date) {if(!Number.isFinite(value.getTime()))throw new InputValidationError({detail:`${field} must be a valid UTC timestamp`});return value.toISOString();}
-  if(typeof value!=='string'||!/(Z|\+00:00|-00:00)$/.test(value)||!Number.isFinite(Date.parse(value)))throw new InputValidationError({detail:`${field} must be timezone-aware UTC`});
-  return value;
 }
 /** Parse all catalogue tools; path resolution is the sole explicit host-I/O injection. */
 export async function validateArguments({name,arguments:args,pathResolver,maxBodyBytes}:{name:string;arguments:Record<string,unknown>;pathResolver?:PathBodyResolver;maxBodyBytes?:number}):Promise<Record<string,unknown>> {

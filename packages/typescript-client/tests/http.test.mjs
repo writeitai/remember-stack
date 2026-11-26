@@ -201,14 +201,11 @@ test('readiness checks immediately, continues failed, and stops on dead letters'
   }finally{client.close();}
 });
 
-test('readiness deadline retains last report, but an earlier HTTP timeout remains distinct',async()=>{
+test('readiness deadline retains the last report while cancelling a poll',async()=>{
   const last=report({status:'running'});let calls=0;
   const client=new MemoryClient({client:{request:async()=>{calls++;return calls===1?Response.json(last):new Promise(()=>{});}}});
   try{await assert.rejects(client.waitForReadiness({versionIds:[id],pollIntervalMs:1,timeoutMs:20}),error=>error instanceof TimeoutError&&error.report.versions[0].stages[0].status==='running');}
   finally{client.close();}
-  const early=new MemoryClient({timeoutMs:5,client:{request:async()=>new Promise(()=>{})}});
-  try{await assert.rejects(early.waitForReadiness({versionIds:[id],timeoutMs:1000}),RequestTimeoutError);}
-  finally{early.close();}
 });
 
 test('account discovery outages retain IssuerError',async()=>{
@@ -267,14 +264,35 @@ test('borrowed account transport failures preserve API status zero and original 
   try{await assert.rejects(client.account.whoami(),error=>error instanceof MemoryApiError&&error.statusCode===0&&error.cause===cause);}finally{client.close();}
 });
 
-test('general API timestamps require offsets before HTTP while UTC-only fields retain their policy',async()=>{
+test('typed request timestamps require offsets before HTTP',async()=>{
   let calls=0;const client=new Client({client:{request:async()=>{calls++;return Response.json(fixtures.envelope);}}});
   try{
     const validAt='2026-10-02T12:00:00';
-    await assert.rejects(client.lookupRelations({validAt}),InputValidationError);
+    await assert.rejects(client.lookupRelations({validAt}),/validAt must be timezone-aware/);
     await assert.rejects(client.graphNeighborhood({entityId:id,validAt}),InputValidationError);
     await assert.rejects(client.graphPath({fromEntityId:id,toEntityId:id,validAt}),InputValidationError);
+    await assert.rejects(client.ingest({content:Buffer.from('note'),filename:'note.md',sourceKind:'git',sourceRef:'note.md',sourceModifiedAt:validAt}),/sourceModifiedAt must be timezone-aware/);
+    await assert.rejects(client.searchDocuments({filters:{modified_from:validAt}}),/modified_from must be timezone-aware/);
+    await assert.rejects(client.searchDocuments({time:{mode:'at',at:validAt}}),/at must be timezone-aware/);
     assert.equal(calls,0);
+  }finally{client.close();}
+});
+
+test('lookup clocks preserve source precision while converting to UTC',async()=>{
+  const instants=[];
+  const client=new Client({client:{request:async request=>{
+    instants.push(new Map(request.query).get('valid_at'));
+    return Response.json(fixtures.envelope);
+  }}});
+  try{
+    await client.lookupRelations({validAt:'2026-01-01T00:00:00.123456+0530'});
+    await client.lookupRelations({validAt:'2025-12-31T19:00:00-05'});
+    await client.lookupRelations({validAt:new Date('2026-01-01T00:00:00.123Z')});
+    assert.deepEqual(instants,[
+      '2025-12-31T18:30:00.123456+00:00',
+      '2026-01-01T00:00:00+00:00',
+      '2026-01-01T00:00:00.123000+00:00',
+    ]);
   }finally{client.close();}
 });
 

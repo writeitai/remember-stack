@@ -4324,7 +4324,7 @@
             ],
             [
               "valid_at",
-              "2026-10-02T12:00:00+02:00"
+              "2026-10-02T10:00:00+00:00"
             ]
           ]
         }
@@ -5829,7 +5829,7 @@
       "wire": [
         {
           "body": {
-            "believed_at": "2026-10-02T12:00:00+02:00",
+            "believed_at": "2026-10-02T10:00:00+00:00",
             "cursor": "fixture-cursor",
             "entity_id": "10000000-0000-0000-0000-000000000001",
             "hops": 3,
@@ -5838,7 +5838,7 @@
             "predicates": [
               "works_at"
             ],
-            "valid_at": "2026-10-02T12:00:00+02:00"
+            "valid_at": "2026-10-02T10:00:00+00:00"
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -6053,14 +6053,14 @@
       "wire": [
         {
           "body": {
-            "believed_at": "2026-10-02T12:00:00+02:00",
+            "believed_at": "2026-10-02T10:00:00+00:00",
             "from_entity_id": "10000000-0000-0000-0000-000000000001",
             "max_hops": 3,
             "predicates": [
               "works_at"
             ],
             "to_entity_id": "10000000-0000-0000-0000-000000000002",
-            "valid_at": "2026-10-02T12:00:00+02:00"
+            "valid_at": "2026-10-02T10:00:00+00:00"
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -6712,7 +6712,7 @@
         "filename": "fixture.md",
         "mime": "text/plain",
         "source_kind": "agent",
-        "source_modified_at": "2026-10-02T12:00:00+00:00",
+        "source_modified_at": "2026-11-20T14:03:11+01:00",
         "source_path": "/upstream/fixture.md",
         "source_ref": "stable/ref",
         "source_version_ref": "etag-2",
@@ -6755,7 +6755,7 @@
         "filename": "fixture.md",
         "mime": "text/plain",
         "sourceKind": "agent",
-        "sourceModifiedAt": "2026-10-02T12:00:00+00:00",
+        "sourceModifiedAt": "2026-11-20T14:03:11+01:00",
         "sourcePath": "/upstream/fixture.md",
         "sourceRef": "stable/ref",
         "sourceVersionRef": "etag-2",
@@ -6797,7 +6797,7 @@
             ],
             [
               "source_modified_at",
-              "2026-10-02T12:00:00+00:00"
+              "2026-11-20T13:03:11+00:00"
             ],
             [
               "source_version_ref",
@@ -6944,12 +6944,12 @@
             "alice"
           ],
           "include_archived": true,
-          "modified_from": "2026-10-02T12:00:00+00:00"
+          "modified_from": "2026-10-02T14:00:00+02:00"
         },
         "k": 3,
         "query": "fixture",
         "time": {
-          "at": "2026-10-02T12:00:00+00:00",
+          "at": "2026-10-02T14:00:00+02:00",
           "mode": "at"
         },
         "versions": "all"
@@ -6979,12 +6979,12 @@
             "alice"
           ],
           "include_archived": true,
-          "modified_from": "2026-10-02T12:00:00+00:00"
+          "modified_from": "2026-10-02T14:00:00+02:00"
         },
         "k": 3,
         "query": "fixture",
         "time": {
-          "at": "2026-10-02T12:00:00+00:00",
+          "at": "2026-10-02T14:00:00+02:00",
           "mode": "at"
         },
         "versions": "all"
@@ -7304,7 +7304,7 @@
             ],
             [
               "from",
-              "2026-10-02T12:00:00+02:00"
+              "2026-10-02T10:00:00+00:00"
             ],
             [
               "to",
@@ -7587,7 +7587,8 @@
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "references": [
           {
-            "change_date_known": false,
+            "change_date_known": true,
+            "change_effective_from": "2026-10-02T05:00:00.123456-07:00",
             "context": "caf\u00e9",
             "kind": "amends",
             "target": {
@@ -7656,7 +7657,8 @@
         "docId": "10000000-0000-0000-0000-000000000001",
         "references": [
           {
-            "change_date_known": false,
+            "change_date_known": true,
+            "change_effective_from": "2026-10-02T05:00:00.123456-07:00",
             "context": "caf\u00e9",
             "kind": "amends",
             "target": {
@@ -7682,7 +7684,7 @@
       "wire": [
         {
           "body": null,
-          "contentBase64": "eyJraW5kIjoiYW1lbmRzIiwidGFyZ2V0Ijp7InNvdXJjZV9raW5kIjoicG9saWN5Iiwic291cmNlX3JlZiI6ImV4cGVuc2VzIn0sImJpbmRpbmciOiJmbG9hdGluZyIsImNoYW5nZV9kYXRlX2tub3duIjpmYWxzZSwiY29udGV4dCI6ImNhZsOpIn0KeyJraW5kIjoicmVmZXJzX3RvIiwiZnJvbV9zZWN0aW9uX2tleSI6InBhcnQvNCIsInRhcmdldCI6eyJzb3VyY2Vfa2luZCI6InBvbGljeSIsInNvdXJjZV9yZWYiOiJleHBlbnNlcyIsInZlcnNpb25fa2V5IjoiZWRpdGlvbi0yIiwic2VjdGlvbl9rZXkiOiJwYXJ0LzQifSwiYmluZGluZyI6InBpbm5lZCJ9Cg==",
+          "contentBase64": "eyJraW5kIjoiYW1lbmRzIiwidGFyZ2V0Ijp7InNvdXJjZV9raW5kIjoicG9saWN5Iiwic291cmNlX3JlZiI6ImV4cGVuc2VzIn0sImJpbmRpbmciOiJmbG9hdGluZyIsImNoYW5nZV9lZmZlY3RpdmVfZnJvbSI6IjIwMjYtMTAtMDJUMTI6MDA6MDAuMTIzNDU2WiIsImNoYW5nZV9kYXRlX2tub3duIjp0cnVlLCJjb250ZXh0IjoiY2Fmw6kifQp7ImtpbmQiOiJyZWZlcnNfdG8iLCJmcm9tX3NlY3Rpb25fa2V5IjoicGFydC80IiwidGFyZ2V0Ijp7InNvdXJjZV9raW5kIjoicG9saWN5Iiwic291cmNlX3JlZiI6ImV4cGVuc2VzIiwidmVyc2lvbl9rZXkiOiJlZGl0aW9uLTIiLCJzZWN0aW9uX2tleSI6InBhcnQvNCJ9LCJiaW5kaW5nIjoicGlubmVkIn0K",
           "contentType": "application/x-ndjson",
           "method": "PUT",
           "path": "/documents/10000000-0000-0000-0000-000000000001/versions/10000000-0000-0000-0000-000000000002/references",
@@ -7925,7 +7927,7 @@
             ],
             "limit": 3,
             "time": {
-              "at": "2026-10-02T12:00:00+02:00",
+              "at": "2026-10-02T10:00:00Z",
               "mode": "at"
             }
           },
@@ -8124,8 +8126,8 @@
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "periods": [
           {
-            "effective_from": "2026-01-01T00:00:00Z",
-            "effective_until": "2026-10-02T12:00:00+00:00"
+            "effective_from": "2026-01-01T05:30:00+05:30",
+            "effective_until": "2026-10-02T14:00:00+02:00"
           },
           {
             "effective_from": "2026-11-01T00:00:00Z"
@@ -8168,8 +8170,8 @@
         "docId": "10000000-0000-0000-0000-000000000001",
         "periods": [
           {
-            "effective_from": "2026-01-01T00:00:00Z",
-            "effective_until": "2026-10-02T12:00:00+00:00"
+            "effective_from": "2026-01-01T05:30:00+05:30",
+            "effective_until": "2026-10-02T14:00:00+02:00"
           },
           {
             "effective_from": "2026-11-01T00:00:00Z"
@@ -11195,8 +11197,8 @@
         "content": {
           "base64": "bm90ZQ=="
         },
-        "effective_from": "2026-01-01T00:00:00+00:00",
-        "effective_until": "2026-10-02T12:00:00+00:00",
+        "effective_from": "2026-01-01T05:30:00.123456+05:30",
+        "effective_until": "2026-10-02T05:00:00.123456-07:00",
         "filename": "fixture.md",
         "source_kind": "policy",
         "source_ref": "expenses",
@@ -11234,8 +11236,8 @@
         "content": {
           "base64": "bm90ZQ=="
         },
-        "effectiveFrom": "2026-01-01T00:00:00+00:00",
-        "effectiveUntil": "2026-10-02T12:00:00+00:00",
+        "effectiveFrom": "2026-01-01T05:30:00.123456+05:30",
+        "effectiveUntil": "2026-10-02T05:00:00.123456-07:00",
         "filename": "fixture.md",
         "sourceKind": "policy",
         "sourceRef": "expenses",
@@ -11276,11 +11278,11 @@
             ],
             [
               "effective_from",
-              "2026-01-01T00:00:00+00:00"
+              "2026-01-01T00:00:00.123456+00:00"
             ],
             [
               "effective_until",
-              "2026-10-02T12:00:00+00:00"
+              "2026-10-02T12:00:00.123456+00:00"
             ]
           ]
         }
@@ -14183,7 +14185,7 @@
         "references": [
           {
             "change_date_known": true,
-            "change_effective_from": "2026-01-01T00:00:00+02:00",
+            "change_effective_from": "2026-01-01T00:00:00",
             "kind": "amends",
             "target": {
               "source_kind": "policy",
@@ -14251,7 +14253,7 @@
         "docId": "10000000-0000-0000-0000-000000000001",
         "periods": [
           {
-            "effective_from": "2026-01-01T00:00:00+02:00"
+            "effective_from": "2026-01-01T00:00:00"
           }
         ],
         "versionId": "10000000-0000-0000-0000-000000000002"
@@ -14281,7 +14283,7 @@
             "effective_from": "2026-01-01T00:00:00Z"
           },
           {
-            "effective_from": "2026-01-01T00:00:00+00:00"
+            "effective_from": "2025-12-31T19:00:00-05:00"
           }
         ],
         "versionId": "10000000-0000-0000-0000-000000000002"
@@ -14332,7 +14334,7 @@
         "content": {
           "base64": "bm90ZQ=="
         },
-        "effectiveFrom": "2026-01-01T00:00:00+02:00",
+        "effectiveFrom": "2026-01-01T00:00:00",
         "filename": "note.md",
         "sourceKind": "policy",
         "sourceRef": "expenses"
@@ -14345,7 +14347,7 @@
         "content": {
           "base64": "bm90ZQ=="
         },
-        "effectiveFrom": "2026-10-02T12:00:00+00:00",
+        "effectiveFrom": "2026-10-02T14:00:00+02:00",
         "effectiveUntil": "2026-10-02T12:00:00+00:00",
         "filename": "note.md",
         "sourceKind": "policy",
@@ -17160,9 +17162,10 @@
     },
     {
       "arguments": {
-        "effective_from": "2026-10-02T12:00:00+00:00",
+        "effective_from": "2026-10-02T14:00:00+02:00",
         "filename": "note.md",
         "source_kind": "policy",
+        "source_modified_at": "2026-11-20T14:03:11+01:00",
         "source_ref": "expenses",
         "text": "note",
         "version_key": "edition-2"
@@ -17178,7 +17181,7 @@
         "filename": "note.md",
         "mime": "text/markdown",
         "source_kind": "policy",
-        "source_modified_at": null,
+        "source_modified_at": "2026-11-20T13:03:11+00:00",
         "source_ref": "expenses",
         "source_version_ref": null,
         "tags": [],

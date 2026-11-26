@@ -21,12 +21,13 @@ from uuid import UUID
 
 from pydantic import AfterValidator
 from pydantic import AliasChoices
-from pydantic import AwareDatetime
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import JsonValue
 from pydantic import model_validator
+
+from remember._timestamps import UTCInstant
 
 # ---------------------------------------------------------------------------
 # Helpers & UTC DateTime
@@ -43,9 +44,6 @@ def _require_utc(value: datetime) -> datetime:
 UTCDateTime: TypeAlias = Annotated[
     datetime, Field(strict=True), AfterValidator(_require_utc)
 ]
-
-UTCInstant: TypeAlias = Annotated[AwareDatetime, AfterValidator(_require_utc)]
-"""A request instant: ISO 8601 text or a datetime, with a zero UTC offset."""
 
 
 class ProjectActivationCheckout(TypedDict):
@@ -476,7 +474,7 @@ class AtReadTime(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
     mode: Literal["at"] = "at"
-    at: AwareDatetime
+    at: UTCInstant
 
 
 class OverlapReadTime(BaseModel):
@@ -486,10 +484,10 @@ class OverlapReadTime(BaseModel):
         frozen=True, extra="forbid", populate_by_name=True, serialize_by_alias=True
     )
     mode: Literal["overlap"] = "overlap"
-    from_: AwareDatetime = Field(
+    from_: UTCInstant = Field(
         validation_alias=AliasChoices("from", "from_"), serialization_alias="from"
     )
-    to: AwareDatetime
+    to: UTCInstant
 
     @model_validator(mode="after")
     def _ordered(self) -> Self:
@@ -579,10 +577,10 @@ class DocumentSearchFilters(BaseModel):
     family: tuple[str, ...] = ()
     authors: tuple[str, ...] = ()
     recipients: tuple[str, ...] = ()
-    created_from: AwareDatetime | None = None
-    created_to: AwareDatetime | None = None
-    modified_from: AwareDatetime | None = None
-    modified_to: AwareDatetime | None = None
+    created_from: UTCInstant | None = None
+    created_to: UTCInstant | None = None
+    modified_from: UTCInstant | None = None
+    modified_to: UTCInstant | None = None
     language: str | None = None
     thread_ref: str | None = None
     doc_ids: tuple[UUID, ...] = ()

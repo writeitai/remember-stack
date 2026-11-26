@@ -7358,7 +7358,7 @@ only through D118 adjudication.
 - **Context:** The owner requested the full Python client scope in TypeScript under rememberdev, separate CLI/MCP packages and Opus 5.5 approval before implementation and merge. Source version strings alone do not identify Python's evolving surface.
 - **Decision:** `@rememberdev/client` lives in `packages/typescript-client`, Node 22+, ESM/CommonJS, a single-send Node HTTP/HTTPS default adapter with Fetch excluded, generated model/request contracts and a complete typed facade. The binding JSON inventory covers same-revision Python methods/signatures/exports and records all language adaptations. The SDK remains issuer-agnostic; private cloud schemas do not enter the public source. API export, deterministic generation, inventory/behavior fixtures, real released-engine compatibility and packed consumers gate it. CLI/MCP are separate libraries dependent only on declared public support exports.
 - **Windows precedence amendment:** Argument or environment signed keys without a URL bypass unavailable stored files and use issuer routing in both clients; POSIX keeps independent-setting precedence. D136 §8.2 records this exception.
-- **Safety amendment:** Both SDKs never replay mutating requests, even after 421 or connection errors; they may refresh the pinned-project host for the next call. Reads are explicitly classified by the engine. Error diagnostics are validated and surfaced, never retry authorization.
+- **Safety amendment:** Both SDKs never replay mutating requests, even after 421 or connection errors; they may refresh the pinned-project host for the next call. Reads are explicitly classified by the engine. Error diagnostics are validated and surfaced. The readiness wait can schedule another read-only check after a retryable failure within its existing deadline.
 - **Alternatives:** Generated-only clients omit routing/files/readiness; handwritten DTOs drift; a separate repository multiplies publisher coordination; browser core and newer generator are viable unselected alternatives with adoption triggers.
 - **Consequences:** No new server/tenant store. Node runtime validation/default filling and explicit numeric-precision refusals protect correctness. One-way issuer compatibility checks belong to providers. Merge does not publish npm or activate connectors. Full CLI/MCP designs/reviews precede their implementation.
 - **Companion design/evidence:** [design](plan/designs/typescript_client_design.md), [inventory](plan/designs/typescript_client_parity.json), [analysis](plan/analysis/typescript_client_parity.md), [delivery](plan/plans/typescript_client.md), [421 transport evidence](plan/analysis/typescript_transport_421.md) (measured 2026-10-02); issue #501; D136 amended only as stated above.
@@ -8675,3 +8675,24 @@ barrier, restore replay and stop-and-remount clauses.
 
 **Design.** [Archive and forget](plan/designs/archive_and_forget_design.md).
 **Analysis.** [Archive and forget](plan/analysis/archive_and_forget.md).
+
+
+## D160. Keep the previous release working through migrations
+
+**Decision (2026-11-26, binding on merge).** A release's migrations must
+preserve the reads and writes of the previous release while it runs. Add
+first. Remove or rename an object in a later release once the running code
+has stopped depending on it. Apply migrations per database before replacing
+the processes.
+
+**Why.** D159 dropped objects that its predecessor still used. Keeping
+the old schema contract through the handoff removes that failure mode.
+A DROP/RENAME lint would flag compatible cleanup and miss other breaks.
+Review the rule in the migration PR.
+
+**Consequences.** Cleanup may have to wait for an intervening release to
+serve. A deliberately incompatible change is a maintenance release. D159
+remains the historical change.
+
+[Design §6.1](plan/designs/packaging_distribution_design.md#61-migration-compatibility) ·
+[Analysis](plan/analysis/expand_contract_migrations.md).

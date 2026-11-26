@@ -26,8 +26,6 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from datetime import timedelta
-from datetime import timezone
 import json
 import logging
 import os
@@ -46,6 +44,7 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from remember._timestamps import parse_iso_timestamp
 from remember.mcp_tools._definitions import ARCHIVE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import ARCHIVE_TOOL_NAMES
 from remember.mcp_tools._definitions import FILENAME_MAX_LEN
@@ -1124,7 +1123,7 @@ def _parse_versioning_mode(value: object) -> Literal["snapshot", "living"]:
 def _parse_source_modified_at(
     value: object, *, key: str = "source_modified_at"
 ) -> datetime | None:
-    """Parse one optional ISO-8601 UTC timestamp argument."""
+    """Parse and normalize one optional ISO 8601 timestamp."""
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
@@ -1134,16 +1133,9 @@ def _parse_source_modified_at(
             )
         )
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_iso_timestamp(value, field=key)
     except ValueError as error:
-        raise ToolArgumentError(
-            error=invalid_arguments(detail=f"{key} must be a valid ISO-8601 timestamp.")
-        ) from error
-    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
-        raise ToolArgumentError(
-            error=invalid_arguments(detail=f"{key} must be timezone-aware UTC.")
-        )
-    return parsed.astimezone(timezone.utc)
+        raise ToolArgumentError(error=invalid_arguments(detail=f"{error}.")) from error
 
 
 def _ingest_success_payload(*, ingested: IngestedVersion) -> dict[str, object]:

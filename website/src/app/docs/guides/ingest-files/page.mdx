@@ -178,9 +178,9 @@ sources](/docs/concepts/documents-and-sources) explains the model.
 
 `source_modified_at` is when the source last changed. It becomes the time
 the document's claims were asserted, which is how RememberStack reads
-"yesterday" or "next week" inside the text. It must be a timezone-aware UTC
-`datetime`; a naive or non-UTC value raises `ValueError`. It requires the
-source pair.
+"yesterday" or "next week" inside the text. Pass a timezone-aware `datetime`.
+The client converts it to UTC and raises `ValueError` for a naive datetime.
+It requires the source pair.
 
 `versioning_mode` and `source_version_ref` also require the pair. They
 matter when a file changes: see [Keep a source up to

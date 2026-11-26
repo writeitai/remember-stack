@@ -34,6 +34,7 @@ from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
+from rememberstack.model import IngestedVersion
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ResolverConfig
@@ -452,16 +453,22 @@ def test_push_ingest_preserves_stable_source_lineage(rig: _ApiRig) -> None:
         source_ref="external/document-42",
         source_version_ref="r1",
     )
-    second_timestamp = datetime(2023, 5, 1, 13, tzinfo=UTC)
-    second = client.ingest(
-        b"second revision\n",
-        filename="stable.md",
-        mime="text/markdown",
-        source_kind="push-test",
-        source_ref="external/document-42",
-        source_modified_at=second_timestamp,
-        source_version_ref="r2",
+    second_timestamp = datetime(2026, 11, 20, 13, 3, 11, tzinfo=UTC)
+    response = rig.client.post(
+        "/ingest",
+        params={
+            "filename": "stable.md",
+            "mime": "text/markdown",
+            "source_kind": "push-test",
+            "source_ref": "external/document-42",
+            "source_modified_at": "2026-11-20T14:03:11+01:00",
+            "source_version_ref": "r2",
+        },
+        content=b"second revision\n",
+        headers={"Content-Type": "application/octet-stream"},
     )
+    assert response.status_code == 200, response.text
+    second = IngestedVersion.model_validate(response.json())
     replay = client.ingest(
         b"second revision\n",
         filename="stable.md",
@@ -519,21 +526,16 @@ def test_push_ingest_preserves_stable_source_lineage(rig: _ApiRig) -> None:
     }
 
 
-@pytest.mark.parametrize(
-    "source_modified_at", ("2023-05-01T13:00:00", "2023-05-01T13:00:00+02:00")
-)
-def test_http_ingest_rejects_non_utc_source_time(
-    rig: _ApiRig, source_modified_at: str
-) -> None:
-    """Direct HTTP callers cannot bypass the SDK's aware-UTC invariant."""
+def test_http_ingest_rejects_naive_source_time(rig: _ApiRig) -> None:
+    """A timestamp without an offset is refused before ingestion."""
     response = rig.client.post(
         "/ingest",
         params={
             "filename": "invalid-time.md",
             "mime": "text/markdown",
             "source_kind": "push-test",
-            "source_ref": f"invalid/{source_modified_at}",
-            "source_modified_at": source_modified_at,
+            "source_ref": "invalid/naive-timestamp",
+            "source_modified_at": "2023-05-01T13:00:00",
         },
         content=b"must not ingest",
         headers={"Content-Type": "application/octet-stream"},
@@ -541,7 +543,7 @@ def test_http_ingest_rejects_non_utc_source_time(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "source_modified_at must be timezone-aware UTC"
+        "source_modified_at must be timezone-aware (include Z or a numeric UTC offset)"
     )
 
 

@@ -56,6 +56,7 @@ class _Ingest:
         """Start with no uploads."""
         self.observed: list[DocumentUpload] = []
         self.anonymous: list[DocumentUpload] = []
+        self.source_modified_at: datetime | None = None
         self._refusal = refusal
 
     def ingest(
@@ -88,12 +89,12 @@ class _Ingest:
             source_kind,
             source_ref,
             versioning_mode,
-            source_modified_at,
             source_version_ref,
             sync_cycle_id,
             ingested_by,
         )
         self.observed.append(upload)
+        self.source_modified_at = source_modified_at
         if self._refusal is not None:
             raise self._refusal
         return _receipt(deployment_id=deployment_id, version_key=upload.version_key)
@@ -207,20 +208,25 @@ def test_ingest_forwards_the_version_key_and_period() -> None:
         "/ingest",
         params=_ingest_params(
             version_key="edition-2",
-            effective_from="2026-01-01T00:00:00Z",
-            effective_until="2026-07-01T00:00:00Z",
+            source_modified_at="2026-11-20T14:03:11+01:00",
+            effective_from="2026-01-01T05:30:00+05:30",
+            effective_until="2026-06-30T20:00:00-04:00",
         ),
         content=b"# Travel",
         headers={"Content-Type": "application/octet-stream"},
     )
 
     assert response.status_code == 200, response.text
+    assert ingest.source_modified_at is not None
+    assert ingest.source_modified_at.isoformat() == "2026-11-20T13:03:11+00:00"
     upload = ingest.observed[0]
     assert (upload.version_key, upload.effective_from, upload.effective_until) == (
         "edition-2",
         _JAN,
         _JUL,
     )
+    assert upload.effective_from is not None and upload.effective_from.tzinfo is UTC
+    assert upload.effective_until is not None and upload.effective_until.tzinfo is UTC
     assert response.json()["version_key"] == "edition-2"
 
 
@@ -251,18 +257,31 @@ def test_version_keys_and_periods_require_a_lineage(extra: dict[str, str]) -> No
         (
             {
                 "effective_from": "2026-07-01T00:00:00Z",
-                "effective_until": "2026-07-01T00:00:00Z",
+                "effective_until": "2026-07-01T02:00:00+02:00",
             },
             "earlier effective_from",
         ),
-        ({"effective_from": "2026-01-01T00:00:00"}, "timezone-aware UTC"),
-        ({"effective_from": "2026-01-01T00:00:00+02:00"}, "timezone-aware UTC"),
+        (
+            {"source_modified_at": "2026-11-20T14:03:11"},
+            "source_modified_at must be timezone-aware",
+        ),
+        (
+            {"effective_from": "2026-01-01T00:00:00"},
+            "effective_from must be timezone-aware",
+        ),
+        (
+            {
+                "effective_from": "2026-01-01T00:00:00Z",
+                "effective_until": "2026-07-01T00:00:00",
+            },
+            "effective_until must be timezone-aware",
+        ),
     ],
 )
 def test_malformed_periods_are_refused_before_e0(
     extra: dict[str, str], fragment: str
 ) -> None:
-    """Living mode, an end without an earlier start, and non-UTC instants are 422."""
+    """Reject invalid periods and timestamps without explicit offsets."""
     ingest = _Ingest()
     response = _client(ingest=ingest).post(
         "/ingest", params=_ingest_params(**extra), content=b"# Travel"
@@ -319,10 +338,10 @@ def test_set_effective_periods_forwards_the_complete_set() -> None:
         _PERIODS_PATH,
         json={
             "periods": [
-                {"effective_from": "2026-01-01T00:00:00Z"},
+                {"effective_from": "2026-01-01T01:00:00+01:00"},
                 {
                     "effective_from": "2027-01-01T00:00:00Z",
-                    "effective_until": "2027-06-30T00:00:00Z",
+                    "effective_until": "2027-06-29T19:00:00-05:00",
                 },
             ]
         },
@@ -341,6 +360,8 @@ def test_set_effective_periods_forwards_the_complete_set() -> None:
         datetime(2027, 1, 1, tzinfo=UTC),
     ]
     assert response.json()["declared"] == 2
+    assert response.json()["periods"][0]["effective_from"] == "2026-01-01T00:00:00Z"
+    assert response.json()["periods"][1]["effective_until"] == "2027-06-30T00:00:00Z"
 
 
 def test_an_empty_set_is_a_valid_replacement() -> None:
@@ -357,7 +378,12 @@ def test_an_empty_set_is_a_valid_replacement() -> None:
 @pytest.mark.parametrize(
     "body",
     [
-        {"periods": [{"effective_from": "2026-01-01T00:00:00Z"}] * 2},
+        {
+            "periods": [
+                {"effective_from": "2026-01-01T00:00:00Z"},
+                {"effective_from": "2025-12-31T19:00:00-05:00"},
+            ]
+        },
         {
             "periods": [
                 {
