@@ -24,6 +24,47 @@ release. What it serves is on
 
 </Cloud>
 
+## 0.22.1 (November 2026)
+
+**New model defaults: GPT 6 Luna everywhere, Jev for facts.** Every chat seat
+now defaults to `openai/gpt-6-luna`: the structure fallback, skeleton check,
+section role and section summary (were `z-ai/glm-4.7-flash`), and claim
+extraction, relation normalisation, entity resolution and the `prompt` fact
+engine (were `openai/gpt-5.6-luna`). Fact adjudication now defaults to Jev
+(`REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`), served through OpenRouter on
+your OpenRouter key (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`, the System One
+route added in 0.21.3). No new key is needed. The default route is the one
+`REMEMBERSTACK_OPENROUTER_ZDR=true` accepts, so a deployment with ZDR on runs
+Jev under zero data retention, alongside the embedding ZDR routing and host
+allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) from the same
+release. `GET /deployment` reports `model_bindings.systemone_route` as
+`openrouter`. New work uses the new models; documents already processed are
+not re-run. See [Models](/docs/self-hosting/models).
+
+**Action needed (self-hosted)** only if you want the previous models. Set them
+in `.env`: `REMEMBERSTACK_STRUCTURER_MODEL`, `REMEMBERSTACK_E2_EXTRACT_MODEL`,
+`REMEMBERSTACK_E3_NORMALIZE_MODEL`, `REMEMBERSTACK_OBS_SMALL_MODEL` and
+`REMEMBERSTACK_FACT_MODEL` to `openai/gpt-5.6-luna`;
+`REMEMBERSTACK_SKELETON_CHECK_MODEL`, `REMEMBERSTACK_ROLE_MODEL` and
+`REMEMBERSTACK_SUMMARY_MODEL` to `z-ai/glm-4.7-flash`; and
+`REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=prompt`. A deployment that already
+runs Jev on the direct route must set `REMEMBERSTACK_TYPESAFE_ROUTE=typesafe`
+to keep it.
+
+**The CLI covers the whole public API.** New commands include
+`remember readiness VERSION_ID... [--wait]`, `remember graph`, `lookup`,
+`search`, `relation`, `resolve`, `deployment` and `processing-layers`, and the
+document references, section history and effective-period commands. Every
+public HTTP route is now reachable from the Python SDK, the TypeScript SDK
+and the CLI. Agents with a shell should prefer the CLI; the MCP tool list is
+unchanged. See the [CLI reference](/docs/reference/cli).
+
+**Docs and verification.** The LoCoMo results cite each comparator's
+published results and run setup. The docs site publishes `robots.txt`, its
+icons and per-page social previews. CI now installs the published `remember`
+package and runs the documented CLI, Python SDK and MCP workflows against
+Compose.
+
 ## 0.22.0 (November 2026)
 
 **Archive and forget replace delete.** Two verbs now take a document out of
