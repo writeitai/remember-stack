@@ -9,7 +9,9 @@ Pagination follows the shared [Pagination and truncation](/docs/reference/http-a
 
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
-MCP (Model Context Protocol) is how coding agents call external tools.
+MCP (Model Context Protocol) lets agents call external tools. Use it for clients
+without a shell. Agents with shell access can use the [CLI](/docs/reference/cli)
+and load command help and results on demand.
 **`remember mcp`** gives an agent access to your memory. It is part of the
 `remember` package, runs next to the agent, and talks to one
 deployment<Cloud>: a self-hosted engine or a remember.dev project</Cloud>. It
@@ -68,10 +70,10 @@ The server offers tools only: no resources and no prompts.
 
 ### How `tools/list` is built
 
-The tool definitions — names, descriptions, input schemas — come from the
-`remember` package itself, so every server that uses the package describes
-the same tools the same way. Each tool has a version number that rises when
-its arguments change in a way an older engine could not handle.
+The `remember` package supplies the tool names, descriptions, input schemas and
+read-only and destructive hints. Tool results arrive when you call a tool.
+Each tool has a version number that rises when its arguments change in a way an
+older engine could not handle.
 
 Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
@@ -92,7 +94,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 24 tools: 12 + 4 + 1 + 7.
+lists 25 tools.
 
 A deployment that does not process the facts
 [layer](/docs/concepts/pipeline#processing-layers) does not report

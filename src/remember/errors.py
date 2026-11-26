@@ -171,3 +171,11 @@ class PipelineDeadLettered(RuntimeError):
         )
         self.dead_lettered = dead_lettered
         self.report = report
+
+
+class _PipelineReadinessTimeout(TimeoutError):
+    """Keep the last report available to callers inside the package."""
+
+    def __init__(self, message: str, *, report: PipelineReadinessReport) -> None:
+        super().__init__(message)
+        self.report = report

@@ -16,6 +16,19 @@ version fails.
 Setup is in the [Quickstart](/docs/start/quickstart). What each stage does
 is in [The pipeline and readiness](/docs/concepts/pipeline).
 
+## Wait from the CLI
+
+Set `VERSION_ID` to the `version_id` returned by `remember ingest`.
+
+```bash
+remember readiness "$VERSION_ID" --wait --timeout 1800
+```
+
+Pass several version IDs to wait on them together. Omit `--wait` for one
+readiness report. Add `--require-p3` if your next step reads the published
+corpus. On timeout stdout contains the last report and the command exits
+with status 1. See [`remember readiness`](/docs/reference/cli#remember-readiness).
+
 ## Wait with the Python client
 
 ```python

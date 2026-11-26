@@ -12,8 +12,10 @@ from datetime import timedelta
 from datetime import UTC
 from importlib import import_module
 import json
+import math
 from pathlib import Path
 import sys
+from typing import get_args
 from typing import NoReturn
 from uuid import UUID
 
@@ -21,6 +23,7 @@ import httpx
 from pydantic import AliasChoices
 from pydantic import Field
 from pydantic import JsonValue
+from pydantic import TypeAdapter
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -36,6 +39,8 @@ from remember.client import MemoryClient
 from remember.connection import Connection
 from remember.credentials import CredentialError
 from remember.credentials import DurabilityUnconfirmed
+from remember.errors import _PipelineReadinessTimeout
+from remember.errors import PipelineDeadLettered
 from remember.errors import redact_diagnostic
 from remember.errors import StoredKeyRefused
 from remember.issuer import DEFAULT_ISSUER
@@ -47,6 +52,11 @@ from remember.mcp_tools import map_error
 from remember.models import ConnectorCreate
 from remember.models import DocumentSearchFilters
 from remember.models import DocumentTagFilter
+from remember.models import EffectivePeriodInput
+from remember.models import ReadinessRequirements
+from remember.models import ReadTime
+from remember.models import ReferenceInput
+from remember.models import ReferenceKind
 
 
 class _InternalOpsSettings(BaseSettings):
@@ -140,6 +150,14 @@ def main(argv: list[str] | None = None) -> int:
             "operations": _run_operations,
             "query": _run_query,
             "ingest": _run_ingest,
+            "readiness": _run_readiness,
+            "deployment": _run_deployment,
+            "processing-layers": _run_processing_layers,
+            "resolve": _run_resolve,
+            "search": _run_search,
+            "lookup": _run_lookup,
+            "graph": _run_graph,
+            "relation": _run_relation,
             "documents": _run_documents,
             "forget": _run_forget,
             "tags": _run_tags,
@@ -626,6 +644,148 @@ def _run_query(args: argparse.Namespace) -> int:
         return _run_open_query(client=client, args=args)
 
 
+def _run_readiness(args: argparse.Namespace) -> int:
+    """Inspect exact version readiness or wait using the SDK's polling rules."""
+    if not math.isfinite(args.poll_interval) or args.poll_interval <= 0:
+        raise usage_failure("--poll-interval must be a finite positive number.")
+    with _cli_memory_client(args) as client:
+        if args.wait:
+            timeout = args.timeout if args.timeout is not None else 1800.0
+            try:
+                report = client.wait_for_readiness(
+                    args.version_ids,
+                    timeout=timeout,
+                    poll_interval=args.poll_interval,
+                    require_p3=args.require_p3,
+                )
+            except PipelineDeadLettered as error:
+                raise failure(
+                    code="pipeline_dead_lettered",
+                    detail=str(error),
+                    action="Ask the deployment operator to inspect the dead-lettered stage.",
+                ) from error
+            except _PipelineReadinessTimeout as error:
+                print(error.report.model_dump_json())
+                raise failure(
+                    code="readiness_timeout",
+                    detail=f"Versions did not become ready after {timeout:g} seconds.",
+                    action="Inspect the last report for pending work before waiting again.",
+                ) from error
+        else:
+            report = client.pipeline_readiness(
+                version_ids=tuple(args.version_ids),
+                require=ReadinessRequirements(
+                    pipeline=True, p1=True, live_graph=True, p3=args.require_p3
+                ),
+            )
+    print(report.model_dump_json())
+    return 0
+
+
+def _run_deployment(args: argparse.Namespace) -> int:
+    with _cli_memory_client(args) as client:
+        print(client.deployment_build_info().model_dump_json())
+    return 0
+
+
+def _run_processing_layers(args: argparse.Namespace) -> int:
+    with _cli_memory_client(args) as client:
+        print(client.processing_layers().model_dump_json())
+    return 0
+
+
+def _run_resolve(args: argparse.Namespace) -> int:
+    with _cli_memory_client(args) as client:
+        result = client.resolve(
+            name=args.name, context_entity_ids=tuple(args.context_entity_id)
+        )
+    print(result.model_dump_json())
+    return 0
+
+
+def _run_search(args: argparse.Namespace) -> int:
+    with _cli_memory_client(args) as client:
+        search = (
+            client.search_claims
+            if args.search_command == "claims"
+            else client.search_chunks
+        )
+        result = search(
+            query=args.query,
+            k=args.k,
+            channel=args.channel,
+            documents=args.documents,
+            time=args.time,
+        )
+    print(result.model_dump_json())
+    return 0
+
+
+def _run_lookup(args: argparse.Namespace) -> int:
+    with _cli_memory_client(args) as client:
+        if args.lookup_command == "observations":
+            result = client.lookup_observations(
+                entity_id=args.entity_id,
+                property_query=args.property_query,
+                k=args.k,
+                limit=args.limit,
+                cursor=args.cursor,
+            )
+        else:
+            result = client.lookup_relations(
+                subject_entity_id=args.subject_entity_id,
+                predicate=args.predicate,
+                object_entity_id=args.object_entity_id,
+                valid_at=args.valid_at,
+                limit=args.limit,
+                cursor=args.cursor,
+            )
+    print(result.model_dump_json())
+    return 0
+
+
+def _run_graph(args: argparse.Namespace) -> int:
+    with _cli_memory_client(args) as client:
+        if args.graph_command == "neighborhood":
+            result = client.graph_neighborhood(
+                entity_id=args.entity_id,
+                hops=args.hops,
+                predicates=tuple(args.predicate),
+                valid_at=args.valid_at,
+                believed_at=args.believed_at,
+                limit=args.limit,
+                cursor=args.cursor,
+                include_paths=args.include_paths,
+            )
+        elif args.graph_command == "path":
+            result = client.graph_path(
+                from_entity_id=args.from_entity_id,
+                to_entity_id=args.to_entity_id,
+                max_hops=args.max_hops,
+                predicates=tuple(args.predicate),
+                valid_at=args.valid_at,
+                believed_at=args.believed_at,
+            )
+        else:
+            result = client.graph_citation_path(
+                from_doc_id=args.from_doc_id,
+                to_doc_id=args.to_doc_id,
+                max_hops=args.max_hops,
+            )
+    print(result.model_dump_json())
+    return 0
+
+
+def _run_relation(args: argparse.Namespace) -> int:
+    with _cli_memory_client(args) as client:
+        if args.relation_command == "hydrate":
+            result = client.hydrate_relation(relation_id=args.relation_id)
+        else:
+            result = client.transcript_relation(relation_id=args.relation_id)
+    print(result.model_dump_json())
+    return 0
+
+
 def _run_operations(args: argparse.Namespace) -> int:
     """List or run the closed assured-operation catalog."""
     with _cli_memory_client(args) as client:
@@ -829,7 +989,7 @@ def _run_ingest(args: argparse.Namespace) -> int:
 
 
 def _run_documents(args: argparse.Namespace) -> int:
-    """List, search, tag, archive, unarchive or forget the deployment's documents."""
+    """Read and manage the deployment's documents and their versions."""
     if args.documents_command == "forget" and not (
         args.yes or (not args.json and _confirmed_forget(doc_id=args.doc_id))
     ):
@@ -910,12 +1070,90 @@ def _run_documents(args: argparse.Namespace) -> int:
         if args.documents_command == "forget":
             print(client.forget_document(doc_id=args.doc_id).model_dump_json())
             return 0
+        if args.documents_command == "section-history":
+            history = client.section_history(
+                doc_id=args.doc_id,
+                section_key=args.section_key,
+                time=args.time,
+                limit=args.limit,
+                cursor=args.cursor,
+            )
+            print(history.model_dump_json())
+            if history.next_cursor is not None:
+                print(f"# next_cursor={history.next_cursor}", file=sys.stderr)
+            return 0
+        if args.documents_command == "references":
+            if args.section_key is not None and args.doc_id is None:
+                raise usage_failure("--section-key requires --doc-id.")
+            references = client.document_references(
+                doc_id=args.doc_id,
+                chunk_id=args.chunk_id,
+                section_key=args.section_key,
+                direction=args.direction,
+                kinds=args.kind,
+                time=args.time,
+                limit=args.limit,
+                cursor=args.cursor,
+            )
+            print(references.model_dump_json())
+            if references.next_cursor is not None:
+                print(f"# next_cursor={references.next_cursor}", file=sys.stderr)
+            return 0
+        if args.documents_command == "reference-generations":
+            print(
+                client.reference_generations(
+                    doc_id=args.doc_id, version_id=args.version_id
+                ).model_dump_json()
+            )
+            return 0
+        if args.documents_command == "set-references":
+            print(
+                client.set_references(
+                    doc_id=args.doc_id,
+                    version_id=args.version_id,
+                    references=_read_references(args.file),
+                ).model_dump_json()
+            )
+            return 0
+        if args.documents_command == "set-effective-periods":
+            print(
+                client.set_effective_periods(
+                    doc_id=args.doc_id, version_id=args.version_id, periods=args.periods
+                ).model_dump_json()
+            )
+            return 0
+        if args.documents_command == "clear-effective-periods":
+            print(client.clear_effective_time(doc_id=args.doc_id).model_dump_json())
+            return 0
         if args.documents_command == "archive":
             result = client.archive_document(doc_id=args.doc_id)
         else:
             result = client.unarchive_document(doc_id=args.doc_id)
     print(result.model_dump_json())
     return 0
+
+
+def _read_references(path: Path) -> list[ReferenceInput]:
+    """Read the complete supplied reference set, one JSON object per line."""
+    references: list[ReferenceInput] = []
+    try:
+        with path.open("rb") as source:
+            for number, line in enumerate(source, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    references.append(ReferenceInput.model_validate_json(line))
+                except ValidationError as error:
+                    raise usage_failure(
+                        f"Invalid reference on line {number} of {path}."
+                    ) from error
+    except OSError as error:
+        raise failure(
+            code="file_unreadable",
+            detail=f"Could not read {path}: {error}",
+            action="Check that the file exists and is readable, then rerun.",
+        ) from error
+    return references
 
 
 def _confirmed_forget(*, doc_id: UUID) -> bool:
@@ -1390,6 +1628,7 @@ def _build_parser(
         default=None,
         help="HTTP request timeout in seconds (overrides REMEMBER_TIMEOUT; default 300)",
     )
+    parse_read_time = TypeAdapter(ReadTime).validate_json
 
     if include_internal_ops:
         ops = commands.add_parser(
@@ -1611,8 +1850,206 @@ def _build_parser(
         ),
     )
 
+    readiness = commands.add_parser(
+        "readiness",
+        parents=[client_flags],
+        help="check whether ingested versions are ready to query",
+        epilog="With --wait, --timeout also sets the polling deadline (default 1800 seconds).",
+    )
+    readiness.add_argument(
+        "version_ids",
+        nargs="+",
+        type=UUID,
+        metavar="VERSION_ID",
+        help="version UUID from ingest",
+    )
+    readiness.add_argument(
+        "--wait", action="store_true", help="poll until all versions are ready"
+    )
+    readiness.add_argument(
+        "--poll-interval",
+        type=float,
+        default=15.0,
+        metavar="SECONDS",
+        help="seconds between checks with --wait (default 15)",
+    )
+    readiness.add_argument(
+        "--require-p3",
+        action="store_true",
+        help="also require publication to the corpus",
+    )
+
+    commands.add_parser(
+        "deployment",
+        parents=[client_flags],
+        help="show the deployment build and model bindings",
+    )
+    commands.add_parser(
+        "processing-layers",
+        parents=[client_flags],
+        help="show which processing layers the deployment serves",
+    )
+
+    resolve = commands.add_parser(
+        "resolve",
+        parents=[client_flags],
+        help="resolve a name to its matching entities",
+    )
+    resolve.add_argument("name", help="name to resolve")
+    resolve.add_argument(
+        "--context-entity-id",
+        type=UUID,
+        action="append",
+        default=[],
+        help="entity UUID to use as context (repeatable, up to 8)",
+    )
+
+    search = commands.add_parser("search", help="search claims or source chunks")
+    search_commands = search.add_subparsers(dest="search_command", required=True)
+    for name, help_text in (
+        ("claims", "search claims"),
+        ("chunks", "search source passages"),
+    ):
+        search_kind = search_commands.add_parser(
+            name, parents=[client_flags], help=help_text
+        )
+        search_kind.add_argument("query", help="search text")
+        search_kind.add_argument(
+            "--k", type=int, default=10, help="maximum results (1-400, default 10)"
+        )
+        search_kind.add_argument(
+            "--channel", choices=("semantic", "bm25"), default="semantic"
+        )
+        search_kind.add_argument(
+            "--documents",
+            type=DocumentSearchFilters.model_validate_json,
+            metavar="JSON",
+            help="document filters as a JSON object",
+        )
+        search_kind.add_argument(
+            "--time",
+            type=parse_read_time,
+            metavar="JSON",
+            help="time scope (default current)",
+        )
+
+    lookup = commands.add_parser("lookup", help="look up relations or observations")
+    lookup_commands = lookup.add_subparsers(dest="lookup_command", required=True)
+    relations = lookup_commands.add_parser(
+        "relations",
+        parents=[client_flags],
+        help="page relations matching an optional pattern",
+    )
+    relations.add_argument("--subject-entity-id", type=UUID)
+    relations.add_argument("--predicate")
+    relations.add_argument("--object-entity-id", type=UUID)
+    relations.add_argument(
+        "--valid-at",
+        type=datetime.fromisoformat,
+        help="an ISO 8601 instant with a timezone",
+    )
+    relations.add_argument(
+        "--limit", type=int, default=50, help="relations per page (1-200, default 50)"
+    )
+    relations.add_argument("--cursor", help="pass a previous page's next_cursor")
+    observations = lookup_commands.add_parser(
+        "observations",
+        parents=[client_flags],
+        help="browse or rank observations for one entity",
+    )
+    observations.add_argument("entity_id", type=UUID)
+    observation_scope = observations.add_mutually_exclusive_group()
+    observation_scope.add_argument(
+        "--property-query", help="rank observations by this text"
+    )
+    observation_scope.add_argument(
+        "--cursor", help="pass a previous browse page's next_cursor"
+    )
+    observations.add_argument(
+        "--k", type=int, default=10, help="ranked results (1-400, default 10)"
+    )
+    observations.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="observations per browse page (1-200, default 50)",
+    )
+
+    graph = commands.add_parser("graph", help="traverse the entity or citation graph")
+    graph_commands = graph.add_subparsers(dest="graph_command", required=True)
+    neighborhood = graph_commands.add_parser(
+        "neighborhood",
+        parents=[client_flags],
+        help="read a bounded neighborhood around one entity",
+    )
+    neighborhood.add_argument("entity_id", type=UUID)
+    neighborhood.add_argument(
+        "--hops", type=int, default=2, help="maximum hops (1-4, default 2)"
+    )
+    neighborhood.add_argument(
+        "--limit", type=int, default=100, help="page size (1-500, default 100)"
+    )
+    neighborhood.add_argument("--cursor", help="pass a previous page's next_cursor")
+    neighborhood.add_argument(
+        "--include-paths",
+        action="store_true",
+        help="include paths to the returned neighbors",
+    )
+    graph_path = graph_commands.add_parser(
+        "path", parents=[client_flags], help="find shortest paths between two entities"
+    )
+    graph_path.add_argument("from_entity_id", type=UUID)
+    graph_path.add_argument("to_entity_id", type=UUID)
+    graph_path.add_argument(
+        "--max-hops", type=int, default=4, help="maximum hops (1-6, default 4)"
+    )
+    for traversal in (neighborhood, graph_path):
+        traversal.add_argument(
+            "--predicate",
+            action="append",
+            default=[],
+            help="traverse only this predicate (repeatable)",
+        )
+        traversal.add_argument(
+            "--valid-at",
+            type=datetime.fromisoformat,
+            help="when the facts held, as an ISO 8601 instant",
+        )
+        traversal.add_argument(
+            "--believed-at",
+            type=datetime.fromisoformat,
+            help="when the engine believed the facts, as an ISO 8601 instant",
+        )
+    citation_path = graph_commands.add_parser(
+        "citation-path",
+        parents=[client_flags],
+        help="follow directed citations between two documents",
+    )
+    citation_path.add_argument("from_doc_id", type=UUID)
+    citation_path.add_argument("to_doc_id", type=UUID)
+    citation_path.add_argument(
+        "--max-hops", type=int, default=6, help="maximum hops (1-6, default 6)"
+    )
+
+    relation = commands.add_parser(
+        "relation", help="read evidence or decisions for a relation"
+    )
+    relation_commands = relation.add_subparsers(dest="relation_command", required=True)
+    hydrate = relation_commands.add_parser(
+        "hydrate",
+        parents=[client_flags],
+        help="follow a relation's evidence to its source documents",
+    )
+    hydrate.add_argument("relation_id", type=UUID)
+    transcript = relation_commands.add_parser(
+        "transcript",
+        parents=[client_flags],
+        help="read a relation's decision transcript",
+    )
+    transcript.add_argument("relation_id", type=UUID)
+
     documents = commands.add_parser(
-        "documents", help="list, search, tag, archive, unarchive or forget documents"
+        "documents", help="read and manage documents and their versions"
     )
     documents_commands = documents.add_subparsers(
         dest="documents_command", required=True
@@ -1743,6 +2180,92 @@ def _build_parser(
             " --remove. --set '' clears the tags"
         ),
     )
+
+    section_history = documents_commands.add_parser(
+        "section-history",
+        parents=[client_flags],
+        help="follow a keyed section across a document's versions",
+    )
+    section_history.add_argument("doc_id", type=UUID)
+    section_history.add_argument("section_key")
+    section_history.add_argument(
+        "--time",
+        type=parse_read_time,
+        metavar="JSON",
+        help="time scope (default history)",
+    )
+    section_history.add_argument(
+        "--limit", type=int, default=50, help="versions per page (1-200, default 50)"
+    )
+    section_history.add_argument("--cursor", help="pass a previous page's next_cursor")
+    references = documents_commands.add_parser(
+        "references",
+        parents=[client_flags],
+        help="read incoming or outgoing references for a document, section or chunk",
+    )
+    reference_source = references.add_mutually_exclusive_group(required=True)
+    reference_source.add_argument("--doc-id", type=UUID)
+    reference_source.add_argument("--chunk-id", type=UUID)
+    references.add_argument(
+        "--section-key",
+        help="only this section and its descendants (requires --doc-id)",
+    )
+    references.add_argument(
+        "--direction", choices=("incoming", "outgoing", "both"), default="both"
+    )
+    references.add_argument(
+        "--kind",
+        choices=get_args(ReferenceKind),
+        action="append",
+        help="reference kind to keep (repeatable)",
+    )
+    references.add_argument(
+        "--time",
+        type=parse_read_time,
+        metavar="JSON",
+        help="select source versions by time",
+    )
+    references.add_argument(
+        "--limit", type=int, default=50, help="references per page (1-200, default 50)"
+    )
+    references.add_argument("--cursor", help="pass a previous page's next_cursor")
+    reference_generations = documents_commands.add_parser(
+        "reference-generations",
+        parents=[client_flags],
+        help="list a version's reference generations and their statuses",
+    )
+    reference_generations.add_argument("doc_id", type=UUID)
+    reference_generations.add_argument("version_id", type=UUID)
+    set_references = documents_commands.add_parser(
+        "set-references",
+        parents=[client_flags],
+        help="replace a version's complete set of supplied references",
+    )
+    set_references.add_argument("doc_id", type=UUID)
+    set_references.add_argument("version_id", type=UUID)
+    set_references.add_argument(
+        "file", type=Path, help="NDJSON file with one reference per line"
+    )
+    set_periods = documents_commands.add_parser(
+        "set-effective-periods",
+        parents=[client_flags],
+        help="replace a version's complete set of effective periods",
+    )
+    set_periods.add_argument("doc_id", type=UUID)
+    set_periods.add_argument("version_id", type=UUID)
+    set_periods.add_argument(
+        "--periods",
+        required=True,
+        type=TypeAdapter(tuple[EffectivePeriodInput, ...]).validate_json,
+        metavar="JSON",
+        help="array of objects with effective_from and optional effective_until",
+    )
+    clear_periods = documents_commands.add_parser(
+        "clear-effective-periods",
+        parents=[client_flags],
+        help="retract all declared effective periods for a document",
+    )
+    clear_periods.add_argument("doc_id", type=UUID)
 
     forget = commands.add_parser("forget", help="follow document forgets")
     forget_commands = forget.add_subparsers(dest="forget_command", required=True)
