@@ -138,6 +138,18 @@ for (const status of [401, 503]) {
   });
 }
 
+test('readiness wait stops immediately on an invalid engine URL', async () => {
+  const client = new MemoryClient({ apiKey: 'synthetic', baseUrl: 'not-a-url' });
+  try {
+    await assert.rejects(
+      client.waitForReadiness({ versionIds: [versionId], timeoutMs: 500 }),
+      error => error instanceof MemoryApiError && error.statusCode === 0 && error.retryable === false,
+    );
+  } finally {
+    client.close();
+  }
+});
+
 test('cancelling a readiness wait during backoff stops polling immediately', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const controller = new AbortController();

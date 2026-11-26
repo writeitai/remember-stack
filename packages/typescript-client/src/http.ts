@@ -82,7 +82,8 @@ export function transportError({ error }: { error: unknown }): MemoryApiError | 
   const code=(error as {cause?:{code?:string};code?:string})?.cause?.code ?? (error as {code?:string})?.code;
   if(['ETIMEDOUT','ESOCKETTIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT'].includes(code??'')
     ||(error instanceof Error && error.name==='TimeoutError'))return new RequestTimeoutError({cause:error});
-  return new MemoryApiError({statusCode:0,detail:'network request failed',retryable:true,cause:error});
+  const retryable = !(error instanceof InputValidationError) && code !== 'ERR_INVALID_URL';
+  return new MemoryApiError({statusCode:0,detail:'network request failed',retryable,cause:error});
 }
 
 /** Bound routing, network and body reads; a caller abort keeps its own identity. */

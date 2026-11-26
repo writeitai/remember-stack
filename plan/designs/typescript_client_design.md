@@ -211,7 +211,7 @@ forget or DELETE, including on 421. Refresh the host mapping after a write netwo
 without replay; surface the original error. For reads, use the source-owned
 _READ_ROUTES table in `src/rememberstack/surfaces/route_scope.py` (not the
 separate spend-gate table in http_api.py), not HTTP method alone: POST readiness, graph and queries
-remain eligible. Timeout and caller abort never trigger retry or re-resolution.
+remain eligible. Timeout and caller abort never trigger host re-resolution.
 The Fetch standard automatically repeats reusable requests after 421; manual
 redirects cannot disable that behavior. The default therefore uses Node HTTP/HTTPS requests,
 not global fetch. The SDK invokes an adapter at most once per write, and its default/supplied-agent
