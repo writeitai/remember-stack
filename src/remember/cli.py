@@ -36,6 +36,7 @@ from remember.client import MemoryClient
 from remember.connection import Connection
 from remember.credentials import CredentialError
 from remember.credentials import DurabilityUnconfirmed
+from remember.errors import PipelineDeadLettered
 from remember.errors import redact_diagnostic
 from remember.errors import StoredKeyRefused
 from remember.issuer import DEFAULT_ISSUER
@@ -44,9 +45,12 @@ from remember.issuer import fetch_issuer_metadata
 from remember.issuer import IssuerError
 from remember.issuer import same_origin
 from remember.mcp_tools import map_error
+from remember.mcp_tools import ToolError
 from remember.models import ConnectorCreate
 from remember.models import DocumentSearchFilters
 from remember.models import DocumentTagFilter
+from remember.models import PipelineReadinessReport
+from remember.models import ReadinessRequirements
 
 
 class _InternalOpsSettings(BaseSettings):
@@ -142,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             "ingest": _run_ingest,
             "documents": _run_documents,
             "forget": _run_forget,
+            "readiness": _run_readiness,
             "tags": _run_tags,
             "connectors": _run_connectors,
             "mcp": _run_mcp,
@@ -938,6 +943,88 @@ def _run_forget(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Exit status of ``remember readiness`` when the versions are not ready yet.
+_NOT_READY_EXIT = 3
+
+
+def _run_readiness(args: argparse.Namespace) -> int:
+    """Check, or wait for, the pipeline readiness of ingested versions."""
+    with _cli_memory_client(args) as client:
+        if args.wait:
+            try:
+                report = client.wait_for_readiness(
+                    args.version_ids,
+                    timeout=args.wait_timeout,
+                    poll_interval=args.poll_interval,
+                    require_p3=args.require_p3,
+                )
+            except PipelineDeadLettered as error:
+                print(error.report.model_dump_json())
+                raise _dead_lettered(error.report) from error
+            except TimeoutError as error:
+                raise failure(
+                    code="readiness_timeout",
+                    detail=(
+                        f"Not ready after {args.wait_timeout:g}s and no stage is"
+                        " dead_letter."
+                    ),
+                    action=(
+                        "Escalate to the deployment operator with the version_ids"
+                        " and the last stages; rerun with a larger --wait-timeout"
+                        " for bulk loads."
+                    ),
+                    exit_code=_NOT_READY_EXIT,
+                ) from error
+            print(report.model_dump_json())
+            return 0
+        report = client.pipeline_readiness(
+            version_ids=tuple(args.version_ids),
+            require=ReadinessRequirements(
+                pipeline=True, p1=True, live_graph=True, p3=args.require_p3
+            ),
+        )
+    print(report.model_dump_json())
+    if report.ready:
+        return 0
+    if any(
+        stage.status == "dead_letter"
+        for version in report.versions
+        for stage in version.stages
+    ):
+        raise _dead_lettered(report)
+    raise CommandFailure(
+        error=ToolError(
+            code="not_ready",
+            detail="At least one version or capability is not ready yet.",
+            status_code=None,
+            retryable=True,
+            agent_action=(
+                "Check again later, or rerun with --wait. A failed stage is"
+                " retrying; only dead_letter is final."
+            ),
+        ),
+        exit_code=_NOT_READY_EXIT,
+    )
+
+
+def _dead_lettered(report: PipelineReadinessReport) -> CommandFailure:
+    """The failure for a version whose stage used up its retries."""
+    stages = "; ".join(
+        f"version {version.version_id} stage {stage.stage}"
+        for version in report.versions
+        for stage in version.stages
+        if stage.status == "dead_letter"
+    )
+    return failure(
+        code="pipeline_dead_letter",
+        detail=f"Processing stopped: {stages} is dead_letter and will not become ready.",
+        action=(
+            "Report the version_id and stage to the deployment operator; waiting"
+            " or re-sending the same bytes does not help."
+        ),
+    )
+
+
 def _run_tags(args: argparse.Namespace) -> int:
     """List, create, update or delete the deployment's tags (D156)."""
     with _cli_memory_client(args) as client:
@@ -1139,6 +1226,17 @@ def _layer_list(value: str) -> tuple[str, ...]:
             "--layers takes a comma-separated subset of sources,claims,facts"
         )
     return layers
+
+
+def _positive_seconds(value: str) -> float:
+    """Parse a finite, positive number of seconds."""
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = 0.0
+    if not 0 < seconds < float("inf"):
+        raise argparse.ArgumentTypeError("expected a positive number of seconds")
+    return seconds
 
 
 def operations_list(*, client: httpx.Client) -> int:
@@ -1753,6 +1851,50 @@ def _build_parser(
         "status", parents=[client_flags], help="one forget record and its progress"
     )
     forget_status.add_argument("forget_id", type=UUID)
+
+    readiness = commands.add_parser(
+        "readiness",
+        parents=[client_flags],
+        help="check, or wait until, ingested versions are queryable",
+        description=(
+            "Print the readiness report for the versions (pipeline, search index"
+            " and live graph; --require-p3 adds published corpus folders). Exit"
+            " status: 0 ready, 1 a stage is dead_letter (it will never become"
+            " ready) or the request failed, 3 not ready yet (or --wait timed"
+            " out). A failed stage is retrying, so --wait keeps waiting through it."
+        ),
+    )
+    readiness.add_argument(
+        "version_ids",
+        nargs="+",
+        type=UUID,
+        metavar="VERSION_ID",
+        help="version ids that ingest returned (at most 1000)",
+    )
+    readiness.add_argument(
+        "--wait",
+        action="store_true",
+        help="poll until ready, a dead_letter stage, or --wait-timeout",
+    )
+    readiness.add_argument(
+        "--wait-timeout",
+        type=_positive_seconds,
+        default=1800.0,
+        metavar="SECONDS",
+        help="how long --wait waits in total (default 1800)",
+    )
+    readiness.add_argument(
+        "--poll-interval",
+        type=_positive_seconds,
+        default=15.0,
+        metavar="SECONDS",
+        help="seconds between --wait checks (default 15)",
+    )
+    readiness.add_argument(
+        "--require-p3",
+        action="store_true",
+        help="also require the published corpus folders (p3)",
+    )
 
     tags = commands.add_parser("tags", help="list, create, update or delete tags")
     tags_commands = tags.add_subparsers(dest="tags_command", required=True)

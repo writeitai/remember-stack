@@ -47,6 +47,7 @@ CLI_COMMANDS = {
     "GET /forgets": "forget list",
     "GET /forgets/{forget_id}": "forget status {id}",
     "POST /ingest": "ingest {file} --title fixture",
+    "POST /readiness": "readiness {id} --require-p3",
     "GET /operations": "operations list",
     "POST /operations/{name}": "operations run facts_context --arg query=fixture",
     "GET /query/saved": "query list-saved --namespace examples",
@@ -61,49 +62,74 @@ CLI_COMMANDS = {
     "PATCH /tags/{tag_id}": "tags update {id} --description Fixture",
     "DELETE /tags/{tag_id}": "tags delete {id}",
 }
-# Exclusions are checked against the actual schema and runtime catalogue.
-CLI_OMISSIONS = {
-    "alternative": {"POST /chunks/adjacent"},
-    "sdk_diagnostics": {"GET /processing-layers", "POST /readiness"},
-    "sdk_retrieval": {
-        "GET /hydrate/relation/{relation_id}",
-        "GET /lookup/observations",
-        "GET /lookup/relations",
-        "GET /resolve",
-        "GET /search/chunks",
-        "GET /search/claims",
-        "GET /transcript/relation/{relation_id}",
-        "POST /search/chunks",
-        "POST /search/claims",
-        "POST /graph/citation-path",
-        "POST /graph/neighborhood",
-        "POST /graph/path",
-    },
-    "sdk_history": {
-        "DELETE /documents/{doc_id}/effective-periods",
-        "GET /documents/{doc_id}/sections/{section_key}/history",
-        "GET /documents/{doc_id}/versions/{version_id}/references",
-        "POST /documents/references",
-        "PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
-        "PUT /documents/{doc_id}/versions/{version_id}/references",
-    },
+# Every tagged route is either reached by a command or tool above/below or
+# excluded here with a one-line reason; a new route fails this check until it
+# is mapped. Exclusions are checked against the schema and runtime catalogue.
+_ADJACENT_POST = (
+    "Same bounded window as GET /chunks/{chunk_id}/adjacent, which this surface"
+    " calls; the POST form serves HTTP callers that prefer a body."
+)
+_CLI_PENDING = "TODO(cli-mcp-parity): CLI command follows in the next PR."
+_MCP_PENDING = "TODO(cli-mcp-parity): MCP tool follows in the next PR."
+CLI_EXCLUSIONS = {
+    "POST /chunks/adjacent": _ADJACENT_POST,
+    **dict.fromkeys(
+        (
+            "GET /processing-layers",
+            "GET /hydrate/relation/{relation_id}",
+            "GET /lookup/observations",
+            "GET /lookup/relations",
+            "GET /resolve",
+            "GET /search/chunks",
+            "GET /search/claims",
+            "GET /transcript/relation/{relation_id}",
+            "POST /search/chunks",
+            "POST /search/claims",
+            "POST /graph/citation-path",
+            "POST /graph/neighborhood",
+            "POST /graph/path",
+            "DELETE /documents/{doc_id}/effective-periods",
+            "GET /documents/{doc_id}/sections/{section_key}/history",
+            "GET /documents/{doc_id}/versions/{version_id}/references",
+            "POST /documents/references",
+            "PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
+            "PUT /documents/{doc_id}/versions/{version_id}/references",
+        ),
+        _CLI_PENDING,
+    ),
 }
-MCP_OMISSIONS = {
-    "alternative": CLI_OMISSIONS["alternative"],
-    "sdk_retrieval": CLI_OMISSIONS["sdk_retrieval"],
-    "sdk_history": CLI_OMISSIONS["sdk_history"]
-    - {
-        "GET /documents/{doc_id}/sections/{section_key}/history",
-        "POST /documents/references",
-    },
-    "workspace": {
-        "GET /deployment",
-        "GET /documents",
-        "GET /forgets",
-        "GET /forgets/{forget_id}",
-        "GET /processing-layers",
-    },
-    "discovery": {"GET /operations"},
+MCP_EXCLUSIONS = {
+    "POST /chunks/adjacent": _ADJACENT_POST,
+    "GET /operations": (
+        "MCP tools/list is the discovery call, and each assured operation is its"
+        " own tool."
+    ),
+    **dict.fromkeys(
+        (
+            "GET /hydrate/relation/{relation_id}",
+            "GET /lookup/observations",
+            "GET /lookup/relations",
+            "GET /resolve",
+            "GET /search/chunks",
+            "GET /search/claims",
+            "GET /transcript/relation/{relation_id}",
+            "POST /search/chunks",
+            "POST /search/claims",
+            "POST /graph/citation-path",
+            "POST /graph/neighborhood",
+            "POST /graph/path",
+            "DELETE /documents/{doc_id}/effective-periods",
+            "GET /documents/{doc_id}/versions/{version_id}/references",
+            "PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
+            "PUT /documents/{doc_id}/versions/{version_id}/references",
+            "GET /deployment",
+            "GET /documents",
+            "GET /forgets",
+            "GET /forgets/{forget_id}",
+            "GET /processing-layers",
+        ),
+        _MCP_PENDING,
+    ),
 }
 
 
@@ -295,7 +321,7 @@ def verify_clients(
         surface="CLI",
         routes=routes,
         covered=set(CLI_COMMANDS),
-        excluded=set().union(*CLI_OMISSIONS.values()),
+        excluded=set(CLI_EXCLUSIONS),
     )
     tools = {
         definition.name: match_route(routes=routes, method=method, path=path)
@@ -306,7 +332,7 @@ def verify_clients(
         surface="MCP",
         routes=routes,
         covered=set(tools.values()),
-        excluded=set().union(*MCP_OMISSIONS.values()),
+        excluded=set(MCP_EXCLUSIONS),
     )
 
     responses = fixture["responses"]

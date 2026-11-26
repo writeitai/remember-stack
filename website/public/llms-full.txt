@@ -5002,6 +5002,19 @@ A version with `created=False` needs no new processing, but wait on it
 anyway: the earlier run of the same bytes may still be going, and a
 finished one returns ready on the first check.
 
+## Wait from the command line
+
+```bash
+remember readiness 6f1c2d0e-8a3b-4d5e-9f10-2a3b4c5d6e7f --wait
+```
+
+`remember readiness VERSION_ID... --wait` follows the same rules as
+`wait_for_readiness`: it waits through `failed`, stops at once on
+`dead_letter` with exit status 1, and stops after `--wait-timeout` seconds
+(default 1800) with exit status 3. It prints the last report as JSON and
+exits 0 when ready. Without `--wait` it checks once and exits 3 if the
+versions are not ready yet. See [`remember readiness`](https://remember.dev/docs/reference/cli#remember-readiness).
+
 ## Stop on failure
 
 A stage that is `failed` has a retry scheduled and can still succeed, so
@@ -20182,6 +20195,7 @@ standalone tool; `uvx remember …` runs it without installing.
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
 | | [`documents`](#remember-documents) | List and search documents, archive, unarchive or forget one, or change its tags. |
 | | [`forget`](#remember-forget) | List forget records, or show one. |
+| | [`readiness`](#remember-readiness) | Check, or wait until, ingested versions are queryable. |
 | | [`tags`](#remember-tags) | List, register, change and delete document tags. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
@@ -20276,6 +20290,7 @@ JSON mode exits with `confirmation_required` before sending the request.
 | 0 | Success. |
 | 1 | The request failed (network, HTTP error, rejected key), the credential file is unusable, or a check in `doctor` failed. |
 | 2 | Usage error: unknown command or flag, missing argument, or an argument the CLI could not parse (for example `--parameters` that is not a JSON array). Also a stored key refused for the address you named. |
+| 3 | `remember readiness`: the versions are not ready yet, or `--wait` ran out of time. |
 
 ## Memory commands
 
@@ -20487,6 +20502,41 @@ still cite the document) or `complete`. An unknown `FORGET_ID` prints
 
 ```bash
 remember forget status 6c1d2e3f-4a5b-4c3d-9e8f-7a6b5c4d3e2f | jq -r .status
+```
+
+### `remember readiness`
+
+```text
+remember readiness VERSION_ID... [--wait] [--wait-timeout SECONDS] [--poll-interval SECONDS]
+                   [--require-p3] [--api-url URL] [--api-key KEY] [--project PROJECT]
+```
+
+Checks whether the versions that `remember ingest` returned have finished
+processing and can be found by queries. It requires the pipeline stages,
+the search index (`p1`) and the live graph; `--require-p3` also requires
+the published corpus folders. It prints the last
+[readiness report](https://remember.dev/docs/guides/wait-for-readiness#read-the-report) as one
+line of JSON, also when the versions are not ready.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | Every version and capability is ready. |
+| 1 | A stage is `dead_letter`: it used all its retries and will never become ready (error `pipeline_dead_letter`, naming the version and stage). Also any failed request. |
+| 3 | Not ready yet (error `not_ready`, retryable), or `--wait` reached `--wait-timeout` without a dead letter (error `readiness_timeout`). |
+
+Without `--wait` it checks once. With `--wait` it checks at once, then every
+`--poll-interval` seconds (default 15), until the versions are ready, a stage
+is `dead_letter`, or `--wait-timeout` seconds pass (default 1800). A `failed`
+stage has a retry scheduled, so `--wait` keeps waiting through it. These are
+the rules of the SDK's `wait_for_readiness`; see
+[Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
+`--timeout` stays the limit for each HTTP request. A version ID that is not a
+UUID exits with status 2.
+
+```bash
+version=$(remember ingest notes/standup.md --source-kind file \
+  --source-ref notes/standup.md | jq -r .version_id)
+remember readiness "$version" --wait --wait-timeout 3600 || echo "not queryable"
 ```
 
 ### `remember tags`
@@ -23500,9 +23550,6 @@ absent from the current release; nothing here has a date.
   `ingest`; neither can change periods later or supply references. The CLI
   has no section history or references command; the MCP server has the
   `section_history` and `document_references` tools.
-- **Waiting for readiness from the CLI.** No `remember` command waits for a
-  document to be processed; use the SDK's `wait_for_readiness` or the MCP
-  `pipeline_readiness` tool.
 
 ## Knowledge
 

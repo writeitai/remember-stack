@@ -58,25 +58,19 @@ schemas. If a route or shape changes, review the affected clients and extend the
 behavior cases, regenerate the applicable artifacts, then refresh the fingerprints
 with `uv run --locked python scripts/check_client_api.py --write`.
 
-The exclusions are enumerated in `scripts/check_client_api.py`:
+Every tagged route must be reached by the SDKs, by a `remember` command
+(`CLI_COMMANDS`) and by an MCP tool (each tool's `http_route`), or appear in
+`SDK_EXCLUSIONS`, `CLI_EXCLUSIONS` or `MCP_EXCLUSIONS` in
+`scripts/check_client_api.py` with a one-line reason. A new route fails the
+check until it is mapped or excluded. Keep the exclusion lists short: exclude a
+route only when it genuinely does not belong on that surface.
 
-- The guarded export covers the supported client API, including client diagnostics.
-  Process liveness, the optional operator connector API and cost export are outside
-  the inventory. The SDK's optional connector methods retain their separate
-  conformance cases.
-- Both SDKs, the CLI and MCP use the GET adjacent-chunks route for bounded windows.
-  The equivalent POST form is available through HTTP.
-- Fine-grained entity, claim, source and graph retrieval has typed SDK methods.
-  CLI and MCP offer assured operations and open query for these workflows.
-- The CLI uses `doctor` for deployment connectivity and version information.
-  Structured layer and per-ingest readiness diagnostics are SDK features. CLI
-  users can query section and reference history through the query space. Typed
-  history and reference requests and effective-period maintenance use the SDK.
-- MCP uses its own `tools/list` for discovery. It provides readiness, document
-  search with filter-only browsing, section history and document references.
-  Host diagnostics, direct list/forget inventory routes, version-specific
-  reference maintenance and effective-period maintenance use CLI or SDK
-  workflows as enumerated in the checker.
+- The process liveness route, the optional operator connector API and cost
+  export are outside the tagged inventory. The SDK's optional connector
+  methods retain their separate conformance cases.
+- Both SDKs, the CLI and MCP use the GET adjacent-chunks route for bounded
+  windows. The equivalent POST form is available through HTTP.
+- MCP uses its own `tools/list` for discovery instead of `GET /operations`.
 
 ## Object-store integration tests
 

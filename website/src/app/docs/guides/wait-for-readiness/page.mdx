@@ -53,6 +53,19 @@ A version with `created=False` needs no new processing, but wait on it
 anyway: the earlier run of the same bytes may still be going, and a
 finished one returns ready on the first check.
 
+## Wait from the command line
+
+```bash
+remember readiness 6f1c2d0e-8a3b-4d5e-9f10-2a3b4c5d6e7f --wait
+```
+
+`remember readiness VERSION_ID... --wait` follows the same rules as
+`wait_for_readiness`: it waits through `failed`, stops at once on
+`dead_letter` with exit status 1, and stops after `--wait-timeout` seconds
+(default 1800) with exit status 3. It prints the last report as JSON and
+exits 0 when ready. Without `--wait` it checks once and exits 3 if the
+versions are not ready yet. See [`remember readiness`](/docs/reference/cli#remember-readiness).
+
 ## Stop on failure
 
 A stage that is `failed` has a retry scheduled and can still succeed, so
