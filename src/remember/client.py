@@ -109,6 +109,7 @@ _ModelT = TypeVar("_ModelT", bound=BaseModel)
 #: D156 refusals that keep their code: a duplicate name and a tag limit.
 _TAG_ERROR_CODES: Final = frozenset({"conflict", "tag_limit_exceeded"})
 _FORGET_ERROR_CODES: Final = frozenset({"document_forgotten", "forget_not_complete"})
+_READINESS_RETRYABLE_STATUSES: Final = frozenset({502, 503, 504, 524})
 
 _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "saved_query_not_found": 404,
@@ -168,6 +169,10 @@ class _SavedQuerySummary(BaseModel):
     assurance: str | None
     query_hash: str = Field(min_length=1)
     validated_surface_manifest_hash: str = Field(min_length=1)
+
+
+class _ReadinessDeadlineExpired(Exception):
+    """The readiness budget ran out before another HTTP request could start."""
 
 
 class MemoryClient:
@@ -881,6 +886,15 @@ class MemoryClient:
         self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements
     ) -> PipelineReadinessReport:
         """Inspect exact pipeline and explicitly requested capabilities."""
+        return self._pipeline_readiness(version_ids=version_ids, require=require)
+
+    def _pipeline_readiness(
+        self,
+        *,
+        version_ids: tuple[UUID, ...],
+        require: ReadinessRequirements,
+        deadline: float | None = None,
+    ) -> PipelineReadinessReport:
         if not version_ids:
             raise ValueError("pipeline readiness requires at least one version_id")
         return _validated(
@@ -892,6 +906,7 @@ class MemoryClient:
                     "version_ids": [str(version_id) for version_id in version_ids],
                     "require": require.model_dump(mode="json"),
                 },
+                deadline=deadline,
             ),
             endpoint="POST /readiness",
         )
@@ -908,7 +923,8 @@ class MemoryClient:
 
         The first check is immediate, so a version that is already processed
         (for example one whose ingest returned ``created=False``) returns at
-        once. Later checks are ``poll_interval`` seconds apart.
+        once. Later checks wait at least ``poll_interval`` seconds. Retryable
+        request failures back off from 2 to 30 seconds within the same wait.
 
         The defaults — ``timeout`` 30 minutes, ``poll_interval`` 15 seconds —
         are starting points sized for single documents, where processing takes
@@ -917,34 +933,62 @@ class MemoryClient:
         A stage whose status is ``failed`` has a retry scheduled and can still
         succeed, so waiting continues. A stage that is ``dead_letter`` has used
         all its retries and never becomes ready, so the wait stops at once with
-        :class:`~remember.errors.PipelineDeadLettered`. ``TimeoutError`` is
-        raised when ``timeout`` seconds pass first.
+        :class:`~remember.errors.PipelineDeadLettered`. Non-retryable request
+        failures also stop the wait. ``TimeoutError`` carries the last
+        successful report and last retryable error, when available.
         """
         deadline = time.monotonic() + timeout
         req_ids = tuple(UUID(str(v)) for v in version_ids)
         require = ReadinessRequirements(
             pipeline=True, p1=True, live_graph=True, p3=require_p3
         )
+        # A nonpositive timeout has always meant one immediate check.
+        request_deadline = deadline if timeout > 0 else None
+        report: PipelineReadinessReport | None = None
+        last_error: MemoryApiError | None = None
+        retry_delay = 0.0
         while True:
-            report = self.pipeline_readiness(version_ids=req_ids, require=require)
-            if report.ready:
-                return report
-            dead_lettered = tuple(
-                (version.version_id, stage.stage, stage.status)
-                for version in report.versions
-                for stage in version.stages
-                if stage.status == "dead_letter"
-            )
-            if dead_lettered:
-                raise PipelineDeadLettered(dead_lettered=dead_lettered, report=report)
+            try:
+                report = self._pipeline_readiness(
+                    version_ids=req_ids, require=require, deadline=request_deadline
+                )
+            except _ReadinessDeadlineExpired:
+                break
+            except MemoryApiError as error:
+                if error.retryable is not True:
+                    raise
+                last_error = error
+                retry_delay = min(30.0, max(2.0, retry_delay * 2))
+            else:
+                if report.ready:
+                    if request_deadline is None or time.monotonic() < deadline:
+                        return report
+                    break
+                dead_lettered = tuple(
+                    (version.version_id, stage.stage, stage.status)
+                    for version in report.versions
+                    for stage in version.stages
+                    if stage.status == "dead_letter"
+                )
+                if dead_lettered:
+                    raise PipelineDeadLettered(
+                        dead_lettered=dead_lettered, report=report
+                    )
+                retry_delay = 0.0
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise _PipelineReadinessTimeout(
-                    f"Version IDs {list(version_ids)} not ready after {timeout}s:"
-                    f" {report}",
-                    report=report,
-                )
-            time.sleep(min(poll_interval, remaining))
+                break
+            time.sleep(min(max(poll_interval, retry_delay), remaining))
+            if time.monotonic() >= deadline:
+                break
+        message = f"Version IDs {list(version_ids)} not ready after {timeout}s."
+        if last_error is not None:
+            message += f" Last error: {last_error}"
+        if report is not None:
+            message += f" Last report: {report}"
+        raise _PipelineReadinessTimeout(
+            message, report=report, last_error=last_error
+        ) from last_error
 
     def ingest(
         self,
@@ -1581,6 +1625,7 @@ class MemoryClient:
         json: object | None = None,
         content: bytes | None = None,
         headers: dict[str, str] | None = None,
+        deadline: float | None = None,
     ) -> httpx.Response:
         """Send once; only classified reads may replay after a changed host.
 
@@ -1589,16 +1634,32 @@ class MemoryClient:
         Timeouts never trigger discovery or replay.
         """
         merged: dict[str, str] = dict(headers or {})
+
+        def request_once(url: str) -> httpx.Response:
+            timeout = httpx.USE_CLIENT_DEFAULT
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise _ReadinessDeadlineExpired()
+                timeout = httpx.Timeout(
+                    **{
+                        phase: remaining if value is None else min(value, remaining)
+                        for phase, value in self._http.timeout.as_dict().items()
+                    }
+                )
+            return self._http.request(
+                method,
+                url,
+                params=params,
+                json=json,
+                content=content,
+                headers=merged,
+                timeout=timeout,
+            )
+
         if self._route is None:
             try:
-                return self._http.request(
-                    method,
-                    path,
-                    params=params,
-                    json=json,
-                    content=content,
-                    headers=merged,
-                )
+                return request_once(path)
             except httpx.HTTPError as error:
                 raise _transport_failure(
                     error, authorization=self._http.headers.get("Authorization", "")
@@ -1608,16 +1669,8 @@ class MemoryClient:
             base, authorization = self._route.target()
             if authorization is not None:
                 merged["Authorization"] = authorization
-            url = base.rstrip("/") + path
             try:
-                response = self._http.request(
-                    method,
-                    url,
-                    params=params,
-                    json=json,
-                    content=content,
-                    headers=merged,
-                )
+                response = request_once(base.rstrip("/") + path)
             except httpx.TimeoutException as error:
                 raise _transport_failure(
                     error, authorization=authorization or ""
@@ -1651,6 +1704,7 @@ class MemoryClient:
         json_body: object | None = None,
         content: bytes | None = None,
         headers: dict[str, str] | None = None,
+        deadline: float | None = None,
     ) -> object:
         """Send one request, map typed HTTP failure, and decode JSON."""
         response = self._send(
@@ -1660,6 +1714,7 @@ class MemoryClient:
             json=json_body,
             content=content,
             headers=headers,
+            deadline=deadline,
         )
         if response.status_code == 429:
             raise _rate_limited(response)
@@ -1667,7 +1722,14 @@ class MemoryClient:
             secrets = (response.request.headers.get("Authorization", ""),)
             detail = f"Deployment answered HTTP {response.status_code}."
             code: str | None = None
-            retryable: bool | None = None
+            readiness_failure = (
+                path == "/readiness" and 500 <= response.status_code < 600
+            )
+            retryable: bool | None = (
+                response.status_code in _READINESS_RETRYABLE_STATUSES
+                if readiness_failure
+                else None
+            )
             request_id: str | None = None
             try:
                 body = response.json()
@@ -1687,6 +1749,16 @@ class MemoryClient:
                         code, detail, retryable, request_id = structured
                     elif path.startswith("/query/"):
                         detail = "deployment API returned a malformed structured error"
+                    elif readiness_failure:
+                        detail = str(public_detail.get("message") or public_detail)
+                        if isinstance(public_detail.get("code"), str):
+                            code = redact_diagnostic(
+                                public_detail["code"], secrets=secrets
+                            )
+                        if isinstance(public_detail.get("retryable"), bool):
+                            retryable = public_detail["retryable"]
+                        if isinstance(public_detail.get("request_id"), str):
+                            request_id = public_detail["request_id"]
                     elif public_detail.get("code") == "layer_unavailable":
                         raise LayerUnavailable(
                             detail=redact_diagnostic(
@@ -2194,7 +2266,14 @@ def _looks_moved(response: httpx.Response) -> bool:
 def _transport_failure(error: httpx.HTTPError, *, authorization: str) -> MemoryApiError:
     """Keep the network cause while removing any echoed Authorization value."""
     detail = redact_diagnostic(str(error), secrets=(authorization,))
-    return MemoryApiError(status_code=0, detail=detail)
+    return MemoryApiError(
+        status_code=0,
+        detail=detail,
+        retryable=isinstance(
+            error,
+            (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError),
+        ),
+    )
 
 
 def _rate_limited(response: httpx.Response) -> RateLimited:

@@ -4,6 +4,8 @@ import { AbortError, AgentPermissionDisabled, InputValidationError, LayerUnavail
 import { parseJson } from './json';
 import constants from './constants.generated';
 
+const readinessRetryableStatuses = new Set([502, 503, 504, 524]);
+
 /** Fields of one request; every adapter must send once and honor cancellation. */
 export type HttpHeaders = Headers | Record<string,string> | [string,string][];
 export interface RequestFields { method:string; query?:URLSearchParams; headers?:HttpHeaders; body?:string|Uint8Array; signal?:AbortSignal; }
@@ -80,7 +82,8 @@ export function transportError({ error }: { error: unknown }): MemoryApiError | 
   const code=(error as {cause?:{code?:string};code?:string})?.cause?.code ?? (error as {code?:string})?.code;
   if(['ETIMEDOUT','ESOCKETTIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT'].includes(code??'')
     ||(error instanceof Error && error.name==='TimeoutError'))return new RequestTimeoutError({cause:error});
-  return new MemoryApiError({statusCode:0,detail:'network request failed',cause:error});
+  const retryable = !(error instanceof InputValidationError) && code !== 'ERR_INVALID_URL';
+  return new MemoryApiError({statusCode:0,detail:'network request failed',retryable,cause:error});
 }
 
 /** Bound routing, network and body reads; a caller abort keeps its own identity. */
@@ -202,7 +205,8 @@ export async function checkedResponse({ response, path }: { response: Response; 
   }
   let detail = text;
   let code: string | undefined;
-  let retryable: boolean | undefined;
+  const readinessFailure = path === '/readiness' && response.status >= 500 && response.status < 600;
+  let retryable = readinessFailure ? readinessRetryableStatuses.has(response.status) : undefined;
   let requestId: string | undefined;
   if (envelope && 'detail' in envelope) {
     if (Object.keys(envelope).length !== 1) detail = 'deployment API returned a malformed error envelope';
@@ -218,6 +222,11 @@ export async function checkedResponse({ response, path }: { response: Response; 
           code = detailObject.code as string; detail = detailObject.message as string;
           retryable = detailObject.retryable as boolean | undefined; requestId = detailObject.request_id as string | undefined;
         } else detail = 'deployment API returned a malformed structured error';
+      } else if (readinessFailure) {
+        detail = typeof detailObject.message === 'string' && detailObject.message ? detailObject.message : JSON.stringify(detailObject);
+        if (typeof detailObject.code === 'string') code = detailObject.code;
+        if (typeof detailObject.retryable === 'boolean') retryable = detailObject.retryable;
+        if (typeof detailObject.request_id === 'string') requestId = detailObject.request_id;
       } else if (detailObject.code === 'layer_unavailable') {
         throw new LayerUnavailable({ detail: detailObject.message ? String(detailObject.message) : '', layer: detailObject.layer ? String(detailObject.layer) : '' });
       } else if (detailObject.code === 'unknown_tag' && Array.isArray(detailObject.tags)) {

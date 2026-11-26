@@ -4982,8 +4982,9 @@ remember readiness "$VERSION_ID" --wait --timeout 1800
 
 Pass several version IDs to wait on them together. Omit `--wait` for one
 readiness report. Add `--require-p3` if your next step reads the published
-corpus. On timeout stdout contains the last report and the command exits
-with status 1. See [`remember readiness`](https://remember.dev/docs/reference/cli#remember-readiness).
+corpus. On timeout the command exits with status 1. It prints the last
+successful report to stdout if a check returned one, and includes the last
+request error on stderr if a check failed. See [`remember readiness`](https://remember.dev/docs/reference/cli#remember-readiness).
 
 ## Wait with the Python client
 
@@ -5003,12 +5004,12 @@ print(report.ready)
 ```
 
 `wait_for_readiness(version_ids, *, timeout=1800.0, poll_interval=15.0,
-require_p3=False)` checks the deployment at once, then every
-`poll_interval` seconds, until every listed version is ready, and returns
-the last report. The defaults, 30 minutes and 15 seconds, are starting
-points sized for single documents, where processing takes minutes. Raise
-`timeout` for bulk loads. If `timeout` seconds pass first, it raises
-`TimeoutError`, whose message includes the last report.
+require_p3=False)` checks the deployment at once and returns the report
+when every listed version is ready. It waits `poll_interval` seconds
+between successful checks. The defaults are 30 minutes and 15 seconds.
+Raise `timeout` for bulk loads. If the deadline passes first, `TimeoutError`
+carries the last successful report in `report` and the last retryable request
+error in `last_error`. Each is `None` when there is no corresponding result.
 
 It checks three capabilities for you: the pipeline stages for your
 versions, the search index (`p1`) and the live graph (`live_graph`). Pass
@@ -5022,7 +5023,31 @@ A version with `created=False` needs no new processing, but wait on it
 anyway: the earlier run of the same bytes may still be going, and a
 finished one returns ready on the first check.
 
+## Wait with the TypeScript client
+
+Pass the `version_id` from ingest to [`waitForReadiness`](https://remember.dev/docs/reference/typescript-sdk).
+
+```typescript
+const report = await client.waitForReadiness({ versionIds: [versionId] });
+```
+
+The options `timeoutMs` and `pollIntervalMs` take milliseconds. On timeout,
+`TimeoutError` carries `report` and `lastError` when available.
+
+## Poll through temporary outages
+
+Both SDKs and `remember readiness --wait` keep polling through temporary
+connection failures, request timeouts, and HTTP `502`, `503`, `504`, and
+`524`. They also retry a server error that explicitly sets `retryable: true`.
+Consecutive failures double the retry delay from 2 seconds up to 30 seconds.
+The configured poll interval is the minimum gap between checks. A successful
+check restores the normal interval. All retries count toward the original
+deadline.
+
 ## Stop on failure
+
+Non-retryable errors, such as HTTP `401` or a server error that sets
+`retryable: false`, stop the wait immediately.
 
 A stage that is `failed` has a retry scheduled and can still succeed, so
 `wait_for_readiness` keeps waiting through it. A stage that is
@@ -11520,10 +11545,11 @@ report = memory.pipeline_readiness(
 report = memory.wait_for_readiness([version.version_id])
 ```
 
-`wait_for_readiness` polls every `poll_interval` seconds (default 15) and
-raises `TimeoutError` after `timeout` seconds (default 1800). It keeps
-polling through a `failed` stage and raises `PipelineDeadLettered` at once
-on a `dead_letter` stage. See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
+`wait_for_readiness` waits at least `poll_interval` seconds between polls
+(default 15) and raises `TimeoutError` after `timeout` seconds (default 1800).
+It keeps polling through a `failed` stage or a retryable request error and
+raises `PipelineDeadLettered` at once on a `dead_letter` stage. See
+[Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
 
 ## GET /documents
 
@@ -18573,21 +18599,23 @@ MemoryClient.wait_for_readiness(
 ) -> PipelineReadinessReport
 ```
 
-Calls `pipeline_readiness` at once and then every `poll_interval` seconds
-until the report says `ready`, requiring `pipeline`, `p1` and `live_graph`
-(and `p3` when `require_p3=True`). Returns the ready report. The defaults,
-30 minutes and 15 seconds, are starting points sized for single documents;
-raise `timeout` for bulk loads.
+Checks readiness at once and then waits at least `poll_interval` seconds
+between checks. It requires `pipeline`, `p1` and `live_graph` (and `p3` when
+`require_p3=True`) and returns the ready report. The defaults are 30 minutes
+and 15 seconds. Raise `timeout` for bulk loads.
 
 A stage that is `failed` has a retry scheduled, so the method keeps
 polling. A stage that is `dead_letter` has used all its attempts and never
-becomes ready, so the method stops at once.
+becomes ready, so the method stops at once. The method backs off after
+retryable transport and server errors, within the same deadline.
 
 Raises:
 
 - [`PipelineDeadLettered`](#pipelinedeadlettered) when any stage of any
-  listed version is `dead_letter`;
-- `TimeoutError` when `timeout` seconds pass first;
+  listed version is `dead_letter`.
+- `TimeoutError` when `timeout` seconds pass first. Its `report` and `last_error`
+  attributes hold the last successful report and retryable error, if available.
+- [`MemoryApiError`](#memoryapierror) immediately for a non-retryable request error.
 - `ValueError` when an id is not a UUID.
 
 See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
@@ -19948,6 +19976,9 @@ record; `listForgets()` and `getForget({forgetId})` follow the erasure. See
 
 Readiness polling starts immediately, including after `created: false` receipts.
 Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
+`waitForReadiness` backs off after retryable transport and server errors.
+`pollIntervalMs` sets the minimum delay between checks. A `dead_letter` stage
+or a non-retryable error stops the wait immediately.
 When requested, `p3` checks the nullable publication marker of each served
 version. An unrelated successful publication cannot satisfy it. A ready
 single-version request exposes its export digest as `version`; aggregate
@@ -20052,8 +20083,10 @@ npm connector libraries on the client machine.
 ## Transport and errors
 
 Ordinary requests default to `timeoutMs: 300_000`. Caller cancellation raises
-AbortError with the signal reason; an HTTP deadline raises RequestTimeoutError;
-readiness expiry raises TimeoutError with its last report. These are distinct.
+`AbortError` with the signal reason. An HTTP deadline raises `RequestTimeoutError`,
+which `waitForReadiness` treats as a retryable poll failure. The overall readiness
+deadline raises `TimeoutError`. Its `report` and `lastError` properties hold the
+most recent successful report and retryable error when available.
 
 Writes are never automatically replayed. A classified read can replay once
 only after issuer resolution changes its deployment URL. Network failure/421
@@ -20396,17 +20429,22 @@ require publication to the corpus.
 
 Without `--wait` the command checks once, prints the readiness report as JSON
 and exits 0 even if the report says `"ready": false`. With `--wait` it checks
-immediately and then every 15 seconds by default until all requested versions
-are ready. Set a positive `--poll-interval` to change that interval. The polling
-deadline defaults to 1,800 seconds. An explicit `--timeout` sets both the
-polling deadline and HTTP request timeout. `REMEMBER_TIMEOUT` sets the HTTP
-request timeout when you omit the flag.
+immediately and waits 15 seconds between successful checks by default. Set a
+positive `--poll-interval` to change the minimum gap between checks. The wait
+deadline defaults to 1,800 seconds. An explicit `--timeout` sets both the wait
+deadline and the maximum HTTP request timeout. `REMEMBER_TIMEOUT` sets the
+HTTP request timeout when you omit the flag.
 
-A stage marked `failed` can retry, so polling continues. A `dead_letter` stage
-stops the wait with exit status 1 and names the version and stage on stderr.
-When the polling deadline elapses, stdout contains the last report and stderr
-carries the `readiness_timeout` error. The command exits with status 1. Add
-`--json` to read errors as JSON. See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
+A stage marked `failed` can retry, so polling continues. Temporary connection
+failures, request timeouts, and retryable server errors such as HTTP `503` or
+`524` also keep the wait going, with backoff within the original deadline.
+A `dead_letter` stage or a non-retryable error such as HTTP `401` stops the
+wait immediately. For a `dead_letter` stage, stderr names the version and stage.
+
+At the deadline the command exits with status 1. Stdout contains the last
+successful report if one was received. Stderr carries `readiness_timeout` and
+includes the last retryable request error if there was one. Add `--json` to
+read errors as JSON. See [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
 
 ### `remember documents`
 

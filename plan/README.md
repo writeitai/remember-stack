@@ -5,6 +5,10 @@ architecture lives in `designs/`; research in `analysis/` is non-binding.
 `plans/` owns build order. The canonical numbered authority log is
 [decisions.md](../decisions.md). Design acceptance does not establish shipped behavior.
 
+For schema upgrades while the previous release serves, see
+[migration compatibility in §6.1](designs/packaging_distribution_design.md#61-migration-compatibility)
+and [D160](../decisions.md#d160-keep-the-previous-release-working-through-migrations).
+
 For package and release identity, start with [D108's unified distribution
 design](designs/unified_remember_distribution_design.md). The
 [release-identity analysis](analysis/remember_release_identity_and_pypi_retirement.md)

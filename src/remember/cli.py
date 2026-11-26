@@ -814,11 +814,17 @@ def _run_readiness(args: argparse.Namespace) -> int:
                     action="Ask the deployment operator to inspect the dead-lettered stage.",
                 ) from error
             except _PipelineReadinessTimeout as error:
-                print(error.report.model_dump_json())
+                if error.report is not None:
+                    print(error.report.model_dump_json())
+                detail = f"Versions did not become ready after {timeout:g} seconds."
+                action = (
+                    "Inspect the last report for pending work before waiting again."
+                )
+                if error.last_error is not None:
+                    detail += f" Last readiness check error: {error.last_error}"
+                    action = "Check deployment connectivity before waiting again."
                 raise failure(
-                    code="readiness_timeout",
-                    detail=f"Versions did not become ready after {timeout:g} seconds.",
-                    action="Inspect the last report for pending work before waiting again.",
+                    code="readiness_timeout", detail=detail, action=action
                 ) from error
         else:
             report = client.pipeline_readiness(

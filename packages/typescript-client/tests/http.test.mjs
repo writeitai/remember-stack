@@ -201,14 +201,11 @@ test('readiness checks immediately, continues failed, and stops on dead letters'
   }finally{client.close();}
 });
 
-test('readiness deadline retains last report, but an earlier HTTP timeout remains distinct',async()=>{
+test('readiness deadline retains the last report while cancelling a poll',async()=>{
   const last=report({status:'running'});let calls=0;
   const client=new MemoryClient({client:{request:async()=>{calls++;return calls===1?Response.json(last):new Promise(()=>{});}}});
   try{await assert.rejects(client.waitForReadiness({versionIds:[id],pollIntervalMs:1,timeoutMs:20}),error=>error instanceof TimeoutError&&error.report.versions[0].stages[0].status==='running');}
   finally{client.close();}
-  const early=new MemoryClient({timeoutMs:5,client:{request:async()=>new Promise(()=>{})}});
-  try{await assert.rejects(early.waitForReadiness({versionIds:[id],timeoutMs:1000}),RequestTimeoutError);}
-  finally{early.close();}
 });
 
 test('account discovery outages retain IssuerError',async()=>{

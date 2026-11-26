@@ -211,7 +211,7 @@ forget or DELETE, including on 421. Refresh the host mapping after a write netwo
 without replay; surface the original error. For reads, use the source-owned
 _READ_ROUTES table in `src/rememberstack/surfaces/route_scope.py` (not the
 separate spend-gate table in http_api.py), not HTTP method alone: POST readiness, graph and queries
-remain eligible. Timeout and caller abort never trigger retry or re-resolution.
+remain eligible. Timeout and caller abort never trigger host re-resolution.
 The Fetch standard automatically repeats reusable requests after 421; manual
 redirects cannot disable that behavior. The default therefore uses Node HTTP/HTTPS requests,
 not global fetch. The SDK invokes an adapter at most once per write, and its default/supplied-agent
@@ -236,17 +236,28 @@ replay it automatically.
 Readiness waits poll immediately, including after `created=false`, validate
 every report, continue through retry-scheduled `failed` stages and stop on
 `dead_letter`. Default wait timeout is 1800 seconds and interval 15 seconds;
-these are overridable starting values. The deadline bounds network and sleep,
-and timeout preserves the last report. `requireP3` matches Python's requirement
-set. Input version IDs are required and validated before HTTP.
+these are overridable starting values. A temporary transport failure or a
+retryable server error schedules the next read-only poll under the original
+deadline. This lets a wait survive a deployment restart and continue checking
+the same versions. HTTP 502, 503, 504 and 524 are retryable by default. An
+explicit boolean `retryable` in a structured readiness server error overrides
+that default. On consecutive failures, the retry delay doubles from 2 to 30
+seconds, with the configured poll interval as the minimum. A valid report
+resets the backoff. Non-retryable errors stop immediately.
+
+The TypeScript deadline bounds network and sleep. Python clips the sleep and
+the engine's per-phase HTTP timeouts to the remaining budget. Timeout preserves
+the last successful report and last retryable request error, when available.
+`requireP3` matches Python's requirement set. Input version IDs are required
+and validated before HTTP.
 
 Caller cancellation produces an exported `AbortError` class, preserving the
 signal's reason as its cause. SDK request deadlines produce `RequestTimeoutError`;
-readiness deadlines produce the SDK's `TimeoutError` with the last report.
-These are distinct classes, even when a caller's signal reason is a DOMException
-named TimeoutError. None permits moved-host retry. Optional retryable/requestId
-diagnostics are populated only by valid structured query errors; other routes
-keep Python's ordinary HTTP status/detail behavior.
+readiness deadlines produce the SDK's `TimeoutError`. These are distinct classes,
+even when a caller's signal reason is a DOMException named TimeoutError. None
+permits moved-host retry. Optional retryable/requestId diagnostics carry valid
+structured query and readiness server error fields. Transport errors expose
+their retryability for readiness polling.
 
 ## 5. Uploads, queries and input contracts
 
@@ -366,7 +377,7 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | Pin never refreshes merely on TTL expiry | Refresh pinned project mapping every 600 seconds; never changed default | Expiry and concurrency |
 | Secure cross-origin metadata endpoints allowed | Issuer-origin authenticated endpoints required | Hostile metadata |
 | Arbitrary account path strings | Relative paths without traversal/absolute origin | Encoded/double-encoded traversal |
-| Wait deadline checked between polls, including one poll for zero timeout | Request/readiness timeouts and poll intervals must be finite, greater than zero and at most 2,147,483,647 ms. InputValidationError refuses invalid values before HTTP. A zero in-flight deadline cannot complete Python's single poll; pipelineReadiness is the one-poll API. Larger values overflow Node timers to 1 ms. Valid deadlines also bound calls/sleep; TimeoutError retains the last report | Zero/negative/nonfinite/upper-bound refusal, accepted maximum, slow HTTP and cancellation |
+| Wait deadline checked between polls and applied to per-phase engine timeouts, including one poll for zero timeout | Request/readiness timeouts and poll intervals must be finite, greater than zero and at most 2,147,483,647 ms. InputValidationError refuses invalid values before HTTP. Use pipelineReadiness for one poll. Larger values overflow Node timers to 1 ms. Valid deadlines bound calls and sleep. Both SDKs back off on retryable poll failures and retain the last report and request error in TimeoutError | Invalid and maximum durations, slow HTTP, transient recovery, persistent outage, authorization refusal and cancellation |
 | MCP validate_arguments path_ingest/settings implicitly reads host files/environment | validateArguments uses an explicit injected PathBodyResolver; no resolver refuses path; separate MCP package owns settings and Python-equivalent root/regular-file/size checks | Resolver opt-in, disabled path, empty/oversize body; host security fixtures required before MCP release |
 | TypeScript-only cancellation/precision errors | mapError reports AbortError as cancelled (no HTTP status, not retryable), NumericPrecisionError as local_backend_error (not retryable), reusing published codes | Structured error fields and no automatic retry |
 | Unknown MIME uses host database | Known Python map plus fixed mime-db version; octet-stream for unknown | Known/unknown/name override |
@@ -400,7 +411,7 @@ redact them; deliberate authorization access is explicit.
 | ConnectorNotFoundError | ConnectorNotFoundError | Error, outside MemoryApiError |
 | ValueError, Pydantic ValidationError, SandboxRejection invalid_parameter | InputValidationError, code=invalid_parameter | TypeError |
 | CredentialError | CredentialError | InputValidationError |
-| TimeoutError from wait | TimeoutError: report (last report or undefined) | Error |
+| TimeoutError from wait | TimeoutError with optional report and lastError | Error |
 | Caller cancellation | AbortError: cause is signal reason | Error |
 | HTTP request deadline | RequestTimeoutError: statusCode=0 | MemoryApiError |
 | Unsafe JSON integer | NumericPrecisionError on response; InputValidationError code=numeric.precision on input | Respectively MemoryApiError and TypeError |
@@ -408,8 +419,8 @@ redact them; deliberate authorization access is explicit.
 Compare failure class/code/status/fields, not Python dictionary repr messages.
 Query failures accept the exact public code/message shape at its bound status,
 or that shape plus correctly typed retryable/request_id diagnostic fields.
-Malformed fields, unknown codes and mismatched statuses fail closed. Diagnostics
-are carried, never interpreted as automatic-retry permission.
+Malformed query fields, unknown query codes and mismatched statuses fail closed.
+Readiness polling uses the server error rules above to schedule subsequent polls.
 
 ### Support exports for executable libraries
 

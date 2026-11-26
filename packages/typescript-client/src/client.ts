@@ -250,21 +250,48 @@ export class MemoryClient {
     if(!versionIds.length)throw new InputValidationError({detail:'pipeline readiness requires at least one version_id'});
     return validateModel({name:'PipelineReadinessReport',value:await this.json({method:'POST',path:'/readiness',body:{version_ids:versionIds.map(value=>uuid({value,field:'versionId'})),require:modelDump({name:'ReadinessRequirements',value:require})},signal}),response:true});
   }
-  /** Poll immediately, stop on dead letters, and bound HTTP/routing/sleep by the readiness deadline. */
-  async waitForReadiness({versionIds,timeoutMs=1800000,pollIntervalMs=15000,requireP3=false,signal}:{versionIds:string[];timeoutMs?:number;pollIntervalMs?:number;requireP3?:boolean;signal?:AbortSignal}):Promise<Models.OutputPipelineReadinessReport> {
-    if(!Number.isFinite(pollIntervalMs)||pollIntervalMs<=0||pollIntervalMs>2147483647)throw new InputValidationError({detail:'pollIntervalMs must be positive, finite and at most 2147483647'});
-    let report:Models.OutputPipelineReadinessReport|undefined;
-    let readinessSignal:AbortSignal|undefined;
-    try {return await bounded({signal,timeoutMs,controllers:this.controllers,work:async activeSignal=>{
-      readinessSignal=activeSignal;
-      while(true) {
-        report=await this.pipelineReadiness({versionIds,require:{pipeline:true,p1:true,live_graph:true,p3:requireP3},signal:activeSignal});
-        if(report.ready)return report;
-        const deadLettered=report.versions.flatMap(version=>version.stages.filter(stage=>stage.status==='dead_letter').map(stage=>[version.version_id,stage.stage,stage.status] as const));
-        if(deadLettered.length)throw new PipelineDeadLettered({deadLettered,report});
-        await sleep({milliseconds:pollIntervalMs,signal:activeSignal});
+  /** Poll immediately and back off on retryable failures until the readiness deadline. */
+  async waitForReadiness({ versionIds, timeoutMs = 1800000, pollIntervalMs = 15000, requireP3 = false, signal }: {
+    versionIds: string[]; timeoutMs?: number; pollIntervalMs?: number; requireP3?: boolean; signal?: AbortSignal;
+  }): Promise<Models.OutputPipelineReadinessReport> {
+    if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0 || pollIntervalMs > 2147483647) {
+      throw new InputValidationError({ detail: 'pollIntervalMs must be positive, finite and at most 2147483647' });
+    }
+    const require = { pipeline: true, p1: true, live_graph: true, p3: requireP3 };
+    let report: Models.OutputPipelineReadinessReport | undefined;
+    let lastError: MemoryApiError | undefined;
+    let readinessSignal: AbortSignal | undefined;
+    try {
+      return await bounded({ signal, timeoutMs, controllers: this.controllers, work: async activeSignal => {
+        readinessSignal = activeSignal;
+        let retryDelayMs = 0;
+        while (true) {
+          try {
+            report = await this.pipelineReadiness({ versionIds, require, signal: activeSignal });
+          } catch (error) {
+            if (!(error instanceof MemoryApiError) || error.retryable !== true) throw error;
+            if (activeSignal.aborted) throw activeSignal.reason;
+            lastError = error;
+            retryDelayMs = Math.min(30000, Math.max(2000, retryDelayMs * 2));
+            await sleep({ milliseconds: Math.max(pollIntervalMs, retryDelayMs), signal: activeSignal });
+            continue;
+          }
+
+          if (report.ready) return report;
+          const deadLettered = report.versions.flatMap(version => version.stages
+            .filter(stage => stage.status === 'dead_letter')
+            .map(stage => [version.version_id, stage.stage, stage.status] as const));
+          if (deadLettered.length) throw new PipelineDeadLettered({ deadLettered, report });
+          retryDelayMs = 0;
+          await sleep({ milliseconds: pollIntervalMs, signal: activeSignal });
+        }
+      } });
+    } catch (error) {
+      if (error instanceof RequestTimeoutError && readinessSignal?.aborted && readinessSignal.reason === error) {
+        throw new TimeoutError({ report, lastError });
       }
-    }});}catch(error) {if(error instanceof RequestTimeoutError&&readinessSignal?.aborted&&readinessSignal.reason===error)throw new TimeoutError({report});throw error;}
+      throw error;
+    }
   }
   /** Ingest bytes or a file path with optional stable document lineage. */
   async ingest(options:IngestOptions):Promise<Models.OutputIngestedVersion> {
