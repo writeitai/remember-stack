@@ -51,6 +51,8 @@ cases invoke the normal entry points using offline HTTP success and refusal
 fixtures. The checker validates observed parameters, bodies and successful
 replies against the fresh OpenAPI schemas. `check:parity` regenerates the SDK
 fixtures in memory, and the Node suite replays them against the TypeScript client.
+The surface inventory test reuses the checker with the committed `openapi.json`
+and checks the MCP allow-list and serialized descriptor budget.
 
 The per-operation fingerprints in `scripts/client_api_contract.json` include
 parameters, request body, success and error responses, security and referenced
@@ -66,17 +68,10 @@ The exclusions are enumerated in `scripts/check_client_api.py`:
   conformance cases.
 - Both SDKs, the CLI and MCP use the GET adjacent-chunks route for bounded windows.
   The equivalent POST form is available through HTTP.
-- Fine-grained entity, claim, source and graph retrieval has typed SDK methods.
-  CLI and MCP offer assured operations and open query for these workflows.
-- The CLI uses `doctor` for deployment connectivity and version information.
-  Structured layer and per-ingest readiness diagnostics are SDK features. CLI
-  users can query section and reference history through the query space. Typed
-  history and reference requests and effective-period maintenance use the SDK.
 - MCP uses its own `tools/list` for discovery. It provides readiness, document
   search with filter-only browsing, section history and document references.
-  Host diagnostics, direct list/forget inventory routes, version-specific
-  reference maintenance and effective-period maintenance use CLI or SDK
-  workflows as enumerated in the checker.
+  Diagnostics, forget audits, version-specific maintenance and fine-grained
+  retrieval have CLI and SDK commands as enumerated in the checker.
 
 ## Object-store integration tests
 

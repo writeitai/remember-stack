@@ -19,7 +19,9 @@ from unittest.mock import patch
 from urllib.parse import unquote
 
 from export_openapi import build_document
+from export_typescript_parity import camel
 from export_typescript_parity import ID
+from export_typescript_parity import OTHER_ID
 from export_typescript_parity import select_response
 from export_typescript_parity import TARGET
 import httpx
@@ -31,24 +33,47 @@ from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import memory_tools
 
 CONTRACT = Path(__file__).with_name("client_api_contract.json")
-# SDK coverage is computed from executable Python/TypeScript recordings.
-SDK_EXCLUSIONS = {
-    "POST /chunks/adjacent": "SDKs use the equivalent GET route with a bounded window."
+PARITY = TARGET.parents[2] / "contracts/parity.json"
+# The same exclusion applies to both SDKs and the CLI.
+SURFACE_EXCLUSIONS = {
+    "POST /chunks/adjacent": "The GET form accepts the same chunk ID and window and returns the same envelope."
 }
 CLI_COMMANDS = {
     "GET /chunks/{chunk_id}/adjacent": "query adjacent-chunks {id} --window 2",
-    "GET /deployment": "doctor",
+    "GET /deployment": "deployment",
     "GET /documents": "documents list --limit 7",
+    "POST /documents/references": "documents references --doc-id {id} --kind cites",
     "POST /documents/search": "documents search --limit 7",
     "POST /documents/{doc_id}/archive": "documents archive {id}",
+    "DELETE /documents/{doc_id}/effective-periods": "documents clear-effective-periods {id}",
     "POST /documents/{doc_id}/forget": "documents forget {id} --yes",
+    "GET /documents/{doc_id}/sections/{section_key}/history": (
+        "documents section-history {id} part/4:approvals --limit 7"
+    ),
     "POST /documents/{doc_id}/tags": "documents tag {id} --add fixture",
     "POST /documents/{doc_id}/unarchive": "documents unarchive {id}",
+    "PUT /documents/{doc_id}/versions/{version_id}/effective-periods": (
+        "documents set-effective-periods {id} {other_id} --periods "
+        """'[{{"effective_from":"2026-10-02T12:00:00Z"}}]'"""
+    ),
+    "GET /documents/{doc_id}/versions/{version_id}/references": (
+        "documents reference-generations {id} {other_id}"
+    ),
+    "PUT /documents/{doc_id}/versions/{version_id}/references": (
+        "documents set-references {id} {other_id} {references}"
+    ),
     "GET /forgets": "forget list",
     "GET /forgets/{forget_id}": "forget status {id}",
+    "POST /graph/citation-path": "graph citation-path {id} {other_id} --max-hops 2",
+    "POST /graph/neighborhood": "graph neighborhood {id} --limit 40 --include-paths",
+    "POST /graph/path": "graph path {id} {other_id} --predicate leads",
+    "GET /hydrate/relation/{relation_id}": "relation hydrate {id}",
     "POST /ingest": "ingest {file} --title fixture",
+    "GET /lookup/observations": "lookup observations {id} --property-query team --k 7",
+    "GET /lookup/relations": "lookup relations --subject-entity-id {id} --limit 7",
     "GET /operations": "operations list",
     "POST /operations/{name}": "operations run facts_context --arg query=fixture",
+    "GET /processing-layers": "processing-layers",
     "GET /query/saved": "query list-saved --namespace examples",
     "GET /query/saved/{namespace}/{name}": "query describe-saved examples safe --version 2",
     "POST /query/saved/{namespace}/{name}/run": "query run-saved examples safe --max-rows 7",
@@ -56,16 +81,21 @@ CLI_COMMANDS = {
     "GET /query/space/search": "query search-space fixture --k 7",
     "POST /query/sql": "query sql 'SELECT 1' --max-rows 7",
     "POST /query/sql/explain": "query explain-sql 'SELECT 1'",
+    "POST /readiness": "readiness {id} {other_id} --require-p3",
+    "GET /resolve": "resolve Dana --context-entity-id {id}",
+    "GET /search/chunks": "search chunks fixture --channel bm25",
+    "POST /search/chunks": """search chunks fixture --documents '{{"family":["text"]}}'""",
+    "GET /search/claims": "search claims fixture --k 7",
+    "POST /search/claims": """search claims fixture --time '{{"mode":"history"}}'""",
     "GET /tags": "tags list --query fixture",
     "POST /tags": "tags create fixture --description Fixture",
     "PATCH /tags/{tag_id}": "tags update {id} --description Fixture",
     "DELETE /tags/{tag_id}": "tags delete {id}",
+    "GET /transcript/relation/{relation_id}": "relation transcript {id}",
 }
-# Exclusions are checked against the actual schema and runtime catalogue.
-CLI_OMISSIONS = {
-    "alternative": {"POST /chunks/adjacent"},
-    "sdk_diagnostics": {"GET /processing-layers", "POST /readiness"},
-    "sdk_retrieval": {
+MCP_OMISSIONS = {
+    "The GET form covers the same bounded window.": set(SURFACE_EXCLUSIONS),
+    "Shell-less clients use assured context and the query space for retrieval.": {
         "GET /hydrate/relation/{relation_id}",
         "GET /lookup/observations",
         "GET /lookup/relations",
@@ -79,32 +109,32 @@ CLI_OMISSIONS = {
         "POST /graph/neighborhood",
         "POST /graph/path",
     },
-    "sdk_history": {
+    "Version-specific writes and generation tracking belong in CLI or SDK workflows.": {
         "DELETE /documents/{doc_id}/effective-periods",
-        "GET /documents/{doc_id}/sections/{section_key}/history",
         "GET /documents/{doc_id}/versions/{version_id}/references",
-        "POST /documents/references",
         "PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
         "PUT /documents/{doc_id}/versions/{version_id}/references",
     },
-}
-MCP_OMISSIONS = {
-    "alternative": CLI_OMISSIONS["alternative"],
-    "sdk_retrieval": CLI_OMISSIONS["sdk_retrieval"],
-    "sdk_history": CLI_OMISSIONS["sdk_history"]
-    - {
-        "GET /documents/{doc_id}/sections/{section_key}/history",
-        "POST /documents/references",
-    },
-    "workspace": {
+    "Deployment diagnostics and forget audits are operator workflows.": {
         "GET /deployment",
-        "GET /documents",
         "GET /forgets",
         "GET /forgets/{forget_id}",
         "GET /processing-layers",
     },
-    "discovery": {"GET /operations"},
+    "The document search tool also browses documents.": {"GET /documents"},
+    "MCP discovery uses tools/list.": {"GET /operations"},
 }
+
+
+def public_operations(document: dict[str, Any]) -> dict[str, Any]:
+    """Read HTTP operations from the exported public paths."""
+    return {
+        f"{method.upper()} {path}": operation
+        for path, methods in document["paths"].items()
+        for method, operation in methods.items()
+        if method
+        in {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
+    }
 
 
 def validate_inventory(
@@ -262,12 +292,24 @@ def validate_sample(
 
 
 def verify_clients(
-    *, document: dict[str, Any], operations: dict[str, Any], fixture: dict[str, Any]
+    *,
+    document: dict[str, Any],
+    operations: dict[str, Any],
+    fixture: dict[str, Any],
+    parity: dict[str, Any],
 ) -> None:
     """Join recorded SDK traffic and executable CLI/MCP cases to the tagged routes."""
     routes = set(operations)
+    sdk_methods = parity["classes"]["MemoryClient"] | parity["classes"]["Client"]
     sdk_routes = set()
     for case in fixture["cases"]:
+        method = case["method"]
+        assert callable(getattr(Client, method, None)), (
+            f"Missing Python method {method}"
+        )
+        assert method in sdk_methods and case["typescriptMethod"] == camel(
+            value=method
+        ), f"Missing or mismatched TypeScript parity method for {method}"
         for wire, response in zip(case["wire"], case["responses"], strict=True):
             # The optional operator connector methods have their own SDK parity cases.
             if (wire["method"], wire["path"].split("/")[1]) in {
@@ -289,13 +331,13 @@ def verify_clients(
         surface="Python and TypeScript SDK",
         routes=routes,
         covered=sdk_routes,
-        excluded=set(SDK_EXCLUSIONS),
+        excluded=set(SURFACE_EXCLUSIONS),
     )
     validate_inventory(
         surface="CLI",
         routes=routes,
         covered=set(CLI_COMMANDS),
-        excluded=set().union(*CLI_OMISSIONS.values()),
+        excluded=set(SURFACE_EXCLUSIONS),
     )
     tools = {
         definition.name: match_route(routes=routes, method=method, path=path)
@@ -326,8 +368,22 @@ def verify_clients(
     with TemporaryDirectory(prefix="remember-cli-contract-") as directory:
         upload = Path(directory) / "fixture.md"
         upload.write_text("fixture", encoding="utf-8")
+        references = Path(directory) / "references.ndjson"
+        references.write_text(
+            json.dumps(
+                {
+                    "kind": "cites",
+                    "target": {"source_kind": "file", "source_ref": "fixture.md"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         for route, command in CLI_COMMANDS.items():
-            argv = [arg.format(id=ID, file=upload) for arg in shlex.split(command)]
+            argv = [
+                arg.format(id=ID, other_id=OTHER_ID, file=upload, references=references)
+                for arg in shlex.split(command)
+            ]
             for probe in check_cli(argv=argv, responses=responses):
                 probe.verify(
                     document=document, route=route, operation=operations[route]
@@ -422,21 +478,20 @@ def check_cli(*, argv: list[str], responses: dict[str, Any]) -> Iterator[WirePro
             probe.client() as client,
             patch.object(cli, "_cli_memory_client", return_value=client),
             patch.object(cli, "_settle_journal"),
-            patch.object(cli, "MemoryClient", return_value=client),
-            patch.object(cli, "_tool_version_mismatches", return_value=[]),
-            patch.object(cli, "_check_harness_file", return_value=(True, "")),
             patch("remember.credentials.load_credentials", return_value=None),
-            patch("shutil.which", return_value="/test/remember"),
             redirect_stdout(stdout),
             redirect_stderr(stderr),
         ):
-            code = cli.main(argv)
+            code = cli.main([*argv, "--json"])
         assert code == int(refuses), (argv, code, stdout.getvalue(), stderr.getvalue())
-        assert stdout.getvalue() or refuses or argv == ["operations", "list"], argv
         if refuses:
+            assert not stdout.getvalue(), argv
             assert (
-                "contract credential refused" in stdout.getvalue() + stderr.getvalue()
+                "contract credential refused"
+                in json.loads(stderr.getvalue())["error"]["detail"]
             ), argv
+        else:
+            json.loads(stdout.getvalue())
 
         yield probe
 
@@ -447,14 +502,12 @@ def main() -> None:
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     document = build_document()
-    operations = {
-        f"{method.upper()} {path}": operation
-        for path, methods in document["paths"].items()
-        for method, operation in methods.items()
-        if isinstance(operation, dict) and "client" in operation.get("tags", [])
-    }
+    operations = public_operations(document)
     fixture = json.loads(TARGET.read_text(encoding="utf-8"))
-    verify_clients(document=document, operations=operations, fixture=fixture)
+    parity = json.loads(PARITY.read_text(encoding="utf-8"))
+    verify_clients(
+        document=document, operations=operations, fixture=fixture, parity=parity
+    )
     new = {
         route: wire_shape(document=document, operation=operation)
         for route, operation in operations.items()
