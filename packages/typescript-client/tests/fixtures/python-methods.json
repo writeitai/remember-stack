@@ -1,4 +1,526 @@
 {
+  "accountCases": [
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "list_projects",
+      "reply": {
+        "is_owner": true,
+        "project_limit": 4,
+        "projects": [
+          {
+            "id": "10000000-0000-0000-0000-000000000002",
+            "monthly_subcap_credits": "25.00",
+            "name": "Research"
+          }
+        ],
+        "slots_used": 2
+      },
+      "result": {
+        "is_owner": true,
+        "project_limit": 4,
+        "projects": [
+          {
+            "id": "10000000-0000-0000-0000-000000000002",
+            "monthly_subcap_credits": "25.00",
+            "name": "Research"
+          }
+        ],
+        "slots_used": 2
+      },
+      "status": 200,
+      "typescriptMethod": "listProjects",
+      "typescriptOptions": {},
+      "wire": {
+        "body": null,
+        "contentType": null,
+        "idempotencyKey": null,
+        "method": "GET",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "get_project",
+      "reply": {
+        "id": "10000000-0000-0000-0000-000000000002",
+        "monthly_subcap_credits": "25.00",
+        "name": "Research"
+      },
+      "result": {
+        "id": "10000000-0000-0000-0000-000000000002",
+        "monthly_subcap_credits": "25.00",
+        "name": "Research"
+      },
+      "status": 200,
+      "typescriptMethod": "getProject",
+      "typescriptOptions": {
+        "projectId": "10000000-0000-0000-0000-000000000002"
+      },
+      "wire": {
+        "body": null,
+        "contentType": null,
+        "idempotencyKey": null,
+        "method": "GET",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects/10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "create_project",
+      "reply": {
+        "checkout": {
+          "amount_credits": "10.00",
+          "checkout_session_id": "checkout-fixture",
+          "client_secret": null,
+          "url": "https://payments.invalid/checkout"
+        },
+        "payment": "checkout",
+        "project": {
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": true
+      },
+      "result": {
+        "checkout": {
+          "amount_credits": "10.00",
+          "checkout_session_id": "checkout-fixture",
+          "client_secret": null,
+          "url": "https://payments.invalid/checkout"
+        },
+        "payment": "checkout",
+        "project": {
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": true
+      },
+      "status": 200,
+      "typescriptMethod": "createProject",
+      "typescriptOptions": {
+        "name": "Research"
+      },
+      "wire": {
+        "body": {
+          "monthly_subcap_credits": null,
+          "name": "Research"
+        },
+        "contentType": "application/json",
+        "idempotencyKey": "<uuid4>",
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "create_project",
+      "reply": {
+        "checkout": null,
+        "payment": "credits",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "result": {
+        "checkout": null,
+        "payment": "credits",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "status": 200,
+      "typescriptMethod": "createProject",
+      "typescriptOptions": {
+        "idempotencyKey": "attempt",
+        "monthlySubcapCredits": "25.00",
+        "name": "Research"
+      },
+      "wire": {
+        "body": {
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "contentType": "application/json",
+        "idempotencyKey": "attempt",
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "create_project",
+      "reply": {
+        "payment": "saved_card",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "result": {
+        "payment": "saved_card",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "status": 200,
+      "typescriptMethod": "createProject",
+      "typescriptOptions": {
+        "name": "Research"
+      },
+      "wire": {
+        "body": {
+          "monthly_subcap_credits": null,
+          "name": "Research"
+        },
+        "contentType": "application/json",
+        "idempotencyKey": "<uuid4>",
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "set_project_spend_cap",
+      "reply": {
+        "id": "10000000-0000-0000-0000-000000000002",
+        "monthly_subcap_credits": "25.00",
+        "name": "Research"
+      },
+      "result": {
+        "id": "10000000-0000-0000-0000-000000000002",
+        "monthly_subcap_credits": "25.00",
+        "name": "Research"
+      },
+      "status": 200,
+      "typescriptMethod": "setProjectSpendCap",
+      "typescriptOptions": {
+        "monthlySubcapCredits": "25.00",
+        "projectId": "10000000-0000-0000-0000-000000000002"
+      },
+      "wire": {
+        "body": {
+          "monthly_subcap_credits": "25.00"
+        },
+        "contentType": "application/json",
+        "idempotencyKey": null,
+        "method": "PUT",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects/10000000-0000-0000-0000-000000000002/spend-cap"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "set_project_spend_cap",
+      "reply": {
+        "id": "10000000-0000-0000-0000-000000000002",
+        "monthly_subcap_credits": null,
+        "name": "Research"
+      },
+      "result": {
+        "id": "10000000-0000-0000-0000-000000000002",
+        "monthly_subcap_credits": null,
+        "name": "Research"
+      },
+      "status": 200,
+      "typescriptMethod": "setProjectSpendCap",
+      "typescriptOptions": {
+        "monthlySubcapCredits": null,
+        "projectId": "10000000-0000-0000-0000-000000000002"
+      },
+      "wire": {
+        "body": {
+          "monthly_subcap_credits": null
+        },
+        "contentType": "application/json",
+        "idempotencyKey": null,
+        "method": "PUT",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects/10000000-0000-0000-0000-000000000002/spend-cap"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "start_activation_checkout",
+      "reply": {
+        "checkout": {
+          "amount_credits": "10.00",
+          "checkout_session_id": "checkout-fixture",
+          "client_secret": null,
+          "url": "https://payments.invalid/checkout"
+        },
+        "payment": "checkout",
+        "project": {
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": true
+      },
+      "result": {
+        "checkout": {
+          "amount_credits": "10.00",
+          "checkout_session_id": "checkout-fixture",
+          "client_secret": null,
+          "url": "https://payments.invalid/checkout"
+        },
+        "payment": "checkout",
+        "project": {
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": true
+      },
+      "status": 200,
+      "typescriptMethod": "startActivationCheckout",
+      "typescriptOptions": {
+        "projectId": "10000000-0000-0000-0000-000000000002"
+      },
+      "wire": {
+        "body": null,
+        "contentType": null,
+        "idempotencyKey": "<uuid4>",
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects/10000000-0000-0000-0000-000000000002/activation-checkout"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "start_activation_checkout",
+      "reply": {
+        "checkout": null,
+        "payment": "credits",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "result": {
+        "checkout": null,
+        "payment": "credits",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "status": 200,
+      "typescriptMethod": "startActivationCheckout",
+      "typescriptOptions": {
+        "idempotencyKey": "attempt",
+        "projectId": "10000000-0000-0000-0000-000000000002"
+      },
+      "wire": {
+        "body": null,
+        "contentType": null,
+        "idempotencyKey": "attempt",
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects/10000000-0000-0000-0000-000000000002/activation-checkout"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "start_activation_checkout",
+      "reply": {
+        "payment": "saved_card",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "result": {
+        "payment": "saved_card",
+        "project": {
+          "activation_state": "requested",
+          "id": "10000000-0000-0000-0000-000000000002",
+          "monthly_subcap_credits": "25.00",
+          "name": "Research"
+        },
+        "requires_human_action": false
+      },
+      "status": 200,
+      "typescriptMethod": "startActivationCheckout",
+      "typescriptOptions": {
+        "projectId": "10000000-0000-0000-0000-000000000002"
+      },
+      "wire": {
+        "body": null,
+        "contentType": null,
+        "idempotencyKey": "<uuid4>",
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/projects/10000000-0000-0000-0000-000000000002/activation-checkout"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "list_keys",
+      "reply": [
+        {
+          "id": "key-fixture",
+          "name": "Memory",
+          "state": "active"
+        }
+      ],
+      "result": [
+        {
+          "id": "key-fixture",
+          "name": "Memory",
+          "state": "active"
+        }
+      ],
+      "status": 200,
+      "typescriptMethod": "listKeys",
+      "typescriptOptions": {},
+      "wire": {
+        "body": null,
+        "contentType": null,
+        "idempotencyKey": null,
+        "method": "GET",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/keys"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "create_key",
+      "reply": {
+        "id": "key-fixture",
+        "key": "rmb_fixture",
+        "name": "Memory",
+        "state": "active"
+      },
+      "result": {
+        "id": "key-fixture",
+        "key": "rmb_fixture",
+        "name": "Memory",
+        "state": "active"
+      },
+      "status": 201,
+      "typescriptMethod": "createKey",
+      "typescriptOptions": {
+        "name": "Memory",
+        "projects": "org:*"
+      },
+      "wire": {
+        "body": {
+          "name": "Memory",
+          "projects": "org:*"
+        },
+        "contentType": "application/json",
+        "idempotencyKey": null,
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/keys"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "create_key",
+      "reply": {
+        "id": "key-fixture",
+        "key": "rmb_fixture",
+        "name": "Memory",
+        "state": "active"
+      },
+      "result": {
+        "id": "key-fixture",
+        "key": "rmb_fixture",
+        "name": "Memory",
+        "state": "active"
+      },
+      "status": 201,
+      "typescriptMethod": "createKey",
+      "typescriptOptions": {
+        "defaultProjectId": "10000000-0000-0000-0000-000000000002",
+        "lifetimeDays": 30,
+        "name": "Memory",
+        "permissions": [
+          "memory:read"
+        ],
+        "projects": [
+          "10000000-0000-0000-0000-000000000002"
+        ]
+      },
+      "wire": {
+        "body": {
+          "default_project_id": "10000000-0000-0000-0000-000000000002",
+          "lifetime_days": 30,
+          "name": "Memory",
+          "permissions": [
+            "memory:read"
+          ],
+          "projects": [
+            "10000000-0000-0000-0000-000000000002"
+          ]
+        },
+        "contentType": "application/json",
+        "idempotencyKey": null,
+        "method": "POST",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/keys"
+      }
+    },
+    {
+      "issuer": "https://account-methods.invalid",
+      "key": "rmb_eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LW1ldGhvZHMuaW52YWxpZCIsICJvcmciOiAiMTAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwMDAxIn0.fixture",
+      "method": "revoke_key",
+      "reply": {
+        "id": "key-fixture",
+        "name": "Memory",
+        "state": "revoked"
+      },
+      "result": {
+        "id": "key-fixture",
+        "name": "Memory",
+        "state": "revoked"
+      },
+      "status": 200,
+      "typescriptMethod": "revokeKey",
+      "typescriptOptions": {
+        "keyId": "key-fixture"
+      },
+      "wire": {
+        "body": null,
+        "contentType": null,
+        "idempotencyKey": null,
+        "method": "DELETE",
+        "url": "https://account-methods.invalid/app/api/v1/orgs/10000000-0000-0000-0000-000000000001/keys/key-fixture"
+      }
+    }
+  ],
   "accountErrors": [
     {
       "body": {
@@ -9,7 +531,7 @@
       },
       "error": {
         "class": "MemoryApiError",
-        "code": null,
+        "code": "forbidden",
         "detail": "Key revoked",
         "statusCode": 403
       },
@@ -37,13 +559,76 @@
     {
       "body": {
         "detail": {
+          "code": "owner_only",
+          "message": "Owner required"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": "owner_only",
+        "detail": "Owner required",
+        "statusCode": 403
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/orgs/o1/projects",
+      "status": 403
+    },
+    {
+      "body": {
+        "detail": {
+          "action": "Ask an owner to enable project creation",
+          "code": "agent_permission_disabled",
+          "message": "Project creation is disabled",
+          "settings_url": "https://account-fixture.invalid/settings/agent-permissions"
+        }
+      },
+      "error": {
+        "action": "Ask an owner to enable project creation",
+        "class": "AgentPermissionDisabled",
+        "code": "agent_permission_disabled",
+        "detail": "Project creation is disabled",
+        "settingsUrl": "https://account-fixture.invalid/settings/agent-permissions",
+        "statusCode": 403
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/orgs/o1/projects",
+      "status": 403
+    },
+    {
+      "body": {
+        "detail": [
+          {
+            "loc": [
+              "body",
+              "name"
+            ],
+            "msg": "Field required"
+          }
+        ]
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "[{\"loc\":[\"body\",\"name\"],\"msg\":\"Field required\"}]",
+        "statusCode": 422
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/orgs/o1/projects",
+      "status": 422
+    },
+    {
+      "body": {
+        "detail": {
           "code": "bad_argument",
           "message": "Fix argument"
         }
       },
       "error": {
         "class": "MemoryApiError",
-        "code": null,
+        "code": "bad_argument",
         "detail": "Fix argument",
         "statusCode": 400
       },

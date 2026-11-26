@@ -13,10 +13,50 @@ export default {
         "property": false,
         "returns": "None"
       },
+      "create_key": {
+        "arguments": "self, *, name: str, projects: Sequence[str] | Literal['org:*'] | None=None, permissions: Sequence[str] | None=None, default_project_id: str | None=None, lifetime_days: int | None=None",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "create_project": {
+        "arguments": "self, *, name: str, monthly_subcap_credits: str | None=None, idempotency_key: str | None=None",
+        "property": false,
+        "returns": "ProjectActivationResult"
+      },
       "get": {
         "arguments": "self, path: str, *, params: Mapping[str, str | int] | None=None",
         "property": false,
         "returns": "object"
+      },
+      "get_project": {
+        "arguments": "self, *, project_id: str",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "list_keys": {
+        "arguments": "self",
+        "property": false,
+        "returns": "dict[str, object] | list[object]"
+      },
+      "list_projects": {
+        "arguments": "self",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "revoke_key": {
+        "arguments": "self, *, key_id: str",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "set_project_spend_cap": {
+        "arguments": "self, *, project_id: str, monthly_subcap_credits: str | None",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "start_activation_checkout": {
+        "arguments": "self, *, project_id: str, idempotency_key: str | None=None",
+        "property": false,
+        "returns": "ProjectActivationResult"
       },
       "whoami": {
         "arguments": "self",
@@ -343,6 +383,7 @@ export default {
   "exports": [
     "AccountApi",
     "AccountApiUnavailable",
+    "AgentPermissionDisabled",
     "CapabilityReadiness",
     "ClaimOccurrence",
     "ClaimValidPrecision",
@@ -389,6 +430,8 @@ export default {
     "PipelineStageReadiness",
     "ProcessingLayer",
     "ProcessingLayerStates",
+    "ProjectActivationCheckout",
+    "ProjectActivationResult",
     "ProjectResolutionError",
     "QueryResultDict",
     "RateLimited",

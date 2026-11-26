@@ -19,7 +19,8 @@
 > and spend-ceiling inspection (`budget`) are retired from public client surfaces; autonomous bitemporal
 > adjudication (D3/D43/D107) is the sole engine truth authority. The `remember` CLI operates as a developer
 > and data-plane tool supporting authentication and project context (`login`, `whoami`, `switch`) and data-plane
-> operations (`setup`, `ingest`, `query`, `mcp`), while administrative management tasks (`projects create`, `members list|invite`, `balance` billing top-ups) provide direct web console guidance to `https://remember.dev/app/...`.
+> operations (`setup`, `ingest`, `query`, `mcp`). Project setup and key
+> management use the issuer account API (Autoboard D55 and remember.dev D117).
 >
 > **D108 release-identity clarification (2026-09-22).** The repository remains
 > `writeitai/remember-stack`, and all existing GitHub tags and releases remain
@@ -101,16 +102,21 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
 The `remember` binary becomes the single command-line interface for the entire Remember platform. Commands are categorized strictly by **authority and transport**.
 
 ### 3.1 Account Commands (the key issuer)
-All commands use the one signed key stored by `remember login` (D136). The key issuer
-is discovered from its OAuth metadata; the default issuer is `https://remember.dev`
-and `--issuer` / `REMEMBER_ISSUER` selects another. Account behaviour itself is
-defined by the issuer (for remember.dev, the cloud design).
+`remember login` stores one signed key (D136). Sign-in defaults to
+`https://remember.dev` and accepts `--issuer` or `REMEMBER_ISSUER`. The key's
+issuer advertises its account endpoint in its OAuth metadata. Account behaviour
+is defined by the issuer. `projects` and `keys` also accept `--api-key` or
+`REMEMBER_API_KEY` ahead of the stored key.
 - **`remember login`**: Runs the device grant against the issuer, lets the person choose projects and permissions on the issuer's consent page, and stores the one key in the owner-only `0600` credential file (`~/.config/remember/credentials.json`, version 2).
 - **`remember logout`**: Revokes the stored key at the issuer and removes the file.
 - **`remember whoami`**: Displays the key's issuer, id, expiry, default project and permissions, then the issuer's account view when the key has `account:read`.
 - **`remember balance`** (or `remember billing`): Directs operators to the cloud console at `https://remember.dev/app/billing` to view balances and top up credits.
-- **`remember projects list`**: Enumerates the projects the key covers.
-- **`remember projects create <name>`**: Directs operators to the cloud console at `https://remember.dev/app/projects` to provision new projects (exit code 1).
+- **`remember projects list|show|create|set-cap|activate`**: Read covered projects,
+  create one, change its monthly cap or activate an unpaid project. Creation and
+  activation report how the issuer paid or show a Checkout URL for a person to
+  complete payment.
+- **`remember keys list|create|revoke`**: Read visible key metadata, issue a key
+  with selected permissions and coverage, or revoke a key and its descendants.
 - **`remember switch <project>`**: Sets the default project in local configuration; no new credential is minted, because the one key already covers its projects.
 - **`remember members list`** / **`remember members invite <email>`**: Directs operators to the cloud console at `https://remember.dev/app/team` to manage team organization seats (exit code 1).
 

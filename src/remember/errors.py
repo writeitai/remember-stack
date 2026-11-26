@@ -139,6 +139,20 @@ class AccountApiUnavailable(MemoryApiError):
     """
 
 
+class AgentPermissionDisabled(MemoryApiError):
+    """An organisation owner's agent permission switch refused the call (``403``)."""
+
+    def __init__(
+        self, *, detail: str, action: str | None, settings_url: str | None
+    ) -> None:
+        """Carry the issuer's instructions and Settings link for the owner."""
+        super().__init__(
+            status_code=403, detail=detail, code="agent_permission_disabled"
+        )
+        self.action = action
+        self.settings_url = settings_url
+
+
 class ConnectorNotFoundError(Exception):
     """A connector id is not present in this deployment."""
 

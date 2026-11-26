@@ -1,0 +1,73 @@
+export const metadata = {
+  title: "Set up a Project from your agent",
+  description: "Use the remember CLI to create and activate a project with a spend cap and issue a project-scoped memory key.",
+};
+
+# Set up a Project from your agent
+
+<AppliesTo products={["remember.dev"]} />
+
+Your agent can create and activate a project, set its monthly cap and issue
+a memory key using the `remember` CLI. A person approves sign-in. Your agent
+normally completes activation using the organisation's credit balance or
+saved card. To add a project, you need an organisation owner, active billing,
+a paid Default project activation and a free project slot.
+
+## Sign in and create the project
+
+```bash
+remember login
+```
+
+On the approval page, choose organisation-wide project coverage so the key
+also covers the new project. Enable `account:manage` for project writes and
+key management. Keep `account:read` for inspecting the project. The owner can
+enable project creation and cap changes in **Settings → Agent permissions**.
+Both switches are required when creating a project with a cap.
+
+```bash
+remember projects create --name "Billing migration" --monthly-cap 25.00
+```
+
+The command prints the new project ID. Use that ID as `PROJECT_ID` in the
+commands below.
+
+## Check activation
+
+When `create` pays from the credit balance or saved card, it reports the
+payment method and remember.dev starts provisioning immediately. If the
+organisation has neither enough credits nor a saved card, `create` prints a
+Checkout URL. Give the URL to a person to open in a browser and complete
+payment.
+
+Use `activate` to retry payment for a project that's still unpaid.
+
+```bash
+remember projects activate "$PROJECT_ID"
+```
+
+If `activate` prints a new Checkout URL, it replaces the previous unpaid
+link. After payment, use `show` to check `activation_state` and `deployment`.
+
+```bash
+remember projects show "$PROJECT_ID"
+```
+
+Wait for the deployment to become active before sending memory requests.
+
+## Create and use a memory key
+
+Give the new key access to this project and the memory permissions the agent
+needs. This example issues a 30-day key for reading and writing memory. The
+child key's expiry must fit within the lifetime remaining on your login key.
+
+```bash
+MEMORY_KEY=$(remember keys create --name "Billing migration memory" \
+  --project "$PROJECT_ID" --permission memory:read --permission memory:write \
+  --default-project "$PROJECT_ID" --lifetime-days 30)
+REMEMBER_API_KEY="$MEMORY_KEY" remember ingest billing-migration.md --project "$PROJECT_ID"
+```
+
+The issuer returns the secret once. Store it where the agent reads its
+credentials and use `REMEMBER_API_KEY` for subsequent memory commands.
+See the [CLI reference](/docs/reference/cli#remember-keys).

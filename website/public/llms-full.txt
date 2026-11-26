@@ -19808,8 +19808,8 @@ try {
 `Client`, `MemoryClient`, and the `RememberClient` alias share the memory methods.
 `Client.fromEnv(overrides)` uses the ordinary constructor's precedence;
 `Client.ingestFile` is a file-path convenience, and `client.account` exposes
-`get` and `whoami` for a signed key's issuer account API. Account access fails
-explicitly when that issuer does not advertise an account endpoint.
+`get`, `whoami` and named project and key methods for a signed key's issuer
+account API. Account access requires an endpoint advertised by that issuer.
 
 Explicit `apiKey`, `baseUrl`, and `project` take precedence over
 REMEMBER_API_KEY, REMEMBER_API_URL and REMEMBER_PROJECT, then the existing

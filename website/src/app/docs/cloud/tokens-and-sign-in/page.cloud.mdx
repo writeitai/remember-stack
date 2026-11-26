@@ -50,7 +50,7 @@ create a new key and revoke the old one.
 | `memory:read` | Every read of a project's memory: search, the assured operations, the graph, SQL queries, the document list, readiness |
 | `memory:write` | Ingest, archiving and unarchiving documents, and changing tags. It includes reading, so choosing it also adds `memory:read` |
 | `account:read` | Who am I, projects and their status, usage and billing links; for owners also the balance, ledger and statements |
-| `account:manage` | Create, list and revoke keys; through [hosted MCP](/docs/cloud/hosted-mcp#account-tools), also create projects and invite or remove members (owners only) |
+| `account:manage` | Create, list and revoke keys. Owners can also create and activate projects and change project caps through the CLI and account API. [Hosted MCP](/docs/cloud/hosted-mcp#account-tools) offers owner tools for member invitations and removal. |
 
 A key never has more authority than its person has now. If you lose a
 project assignment or leave the organisation, your keys lose that access
@@ -111,7 +111,7 @@ permissions.
 
 ## Keys created by programs
 
-A key with `account:manage` can create more keys, through
+A key with `account:manage` can create more keys through `remember keys create`,
 `POST /v1/orgs/{org_id}/keys` or the `create_api_key` MCP tool. Such a key:
 
 - covers at most the projects, and holds at most the permissions, of the

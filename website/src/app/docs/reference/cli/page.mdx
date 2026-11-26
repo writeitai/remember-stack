@@ -62,6 +62,8 @@ For remember.dev:
 | | [`logout`](#remember-logout) | Revoke the stored key and delete the credential file. |
 | | [`whoami`](#remember-whoami) | Show the stored key's projects, permissions and expiry. |
 | | [`switch`](#remember-switch) | Choose the default project for the stored key. |
+| | [`projects`](#remember-projects) | List, create, cap and start activation for projects. |
+| | [`keys`](#remember-keys) | List, create and revoke API keys. |
 
 </Cloud>
 
@@ -948,6 +950,71 @@ Makes `PROJECT` (an id or a name) the default project for the stored key.
 It asks remember.dev once to check that the key covers the project, then
 stores the project's id. No new key is created. Exit status 1 when the key
 does not cover the project.
+
+### `remember projects`
+
+| Command | Result |
+|---|---|
+| `remember projects list` | Covered projects you can access, with project slot usage and the `is_owner` flag. |
+| `remember projects show PROJECT_ID` | One project's details, including its monthly cap, activation state and deployment. |
+| `remember projects create --name NAME [--monthly-cap CREDITS] [--idempotency-key KEY]` | The new project ID and its activation payment outcome. Omit the cap for no project limit. |
+| `remember projects set-cap PROJECT_ID (--monthly-cap CREDITS \| --clear)` | The project with its new cap or with the cap cleared. |
+| `remember projects activate PROJECT_ID [--idempotency-key KEY]` | The activation payment outcome for an unpaid project. |
+
+Use `account:read` for `list` and `show`. Writes require an organisation
+owner's key with `account:manage`. The key must cover an existing project
+to change its cap or activate it. Pass credit amounts as decimals
+such as `25.00`.
+
+`create` and `activate` use the organisation's credit balance when it covers
+activation, or charge its saved card. The command reports the payment method
+and remember.dev starts provisioning immediately. If the organisation has
+neither enough credits nor a saved card, the command prints a Checkout URL
+for a person to complete payment. Both outcomes exit 0.
+
+With `--json`, both print the issuer's response. It includes `project`,
+`payment` (`credits`, `saved_card` or `checkout`), and
+`requires_human_action`. Only `checkout` payments set that flag to `true`
+and provide a payment URL in `checkout.url`. The `checkout` field may be
+null or omitted for automatic payments.
+
+Use the same `--idempotency-key` to retry the same request. Each invocation
+without it generates a fresh key. When `activate` opens a new Checkout,
+it replaces the earlier unpaid link.
+
+An organisation owner controls project creation and cap changes in
+**Settings → Agent permissions**. Creating with a cap requires both
+switches. If a switch blocks the request, the command exits 1 with
+`agent_permission_disabled`. The JSON error's `agent_action` includes the
+issuer's instruction and Settings URL.
+
+### `remember keys`
+
+```text
+remember keys list
+remember keys create --name NAME [--permission SCOPE]... [--project PROJECT_ID]...
+remember keys create --name NAME --all-projects
+remember keys revoke KEY_ID
+```
+
+All three commands require `account:manage`. List shows key metadata. A
+member sees their own keys and an owner sees the organisation's keys.
+Revoke returns the revoked key's metadata. It also revokes its descendants.
+
+Repeat `--permission` and `--project` to choose scopes and coverage.
+`--all-projects` requests `org:*` coverage from an owner key that covers the
+whole organisation. The issuer constrains a child key's coverage,
+permissions and expiry to its parent. Omit the flags to use the parent's
+coverage and permissions excluding `account:manage`. You can also pass
+`--default-project PROJECT_ID` and `--lifetime-days` (7, 30, 90, 180 or 365).
+
+Create prints the new secret on its own line. With `--json`, it returns the
+metadata and the secret in `key`. Capture it at creation to use it later.
+
+`projects` and `keys` use the credential from `remember login` by default.
+Each subcommand also accepts `--api-key`, ahead of `REMEMBER_API_KEY` and the
+stored key. The signed key determines the issuer and organisation. See the
+[project setup guide](/docs/cloud/setup-project-from-agent).
 
 </Cloud>
 

@@ -7,6 +7,7 @@
   "exports": [
     "AccountApi",
     "AccountApiUnavailable",
+    "AgentPermissionDisabled",
     "CapabilityReadiness",
     "ClaimOccurrence",
     "ClaimValidPrecision",
@@ -53,6 +54,8 @@
     "PipelineStageReadiness",
     "ProcessingLayer",
     "ProcessingLayerStates",
+    "ProjectActivationCheckout",
+    "ProjectActivationResult",
     "ProjectResolutionError",
     "QueryResultDict",
     "RateLimited",
@@ -412,6 +415,46 @@
       "get": {
         "arguments": "self, path: str, *, params: Mapping[str, str | int] | None=None",
         "returns": "object",
+        "property": false
+      },
+      "list_projects": {
+        "arguments": "self",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "get_project": {
+        "arguments": "self, *, project_id: str",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "create_project": {
+        "arguments": "self, *, name: str, monthly_subcap_credits: str | None=None, idempotency_key: str | None=None",
+        "returns": "ProjectActivationResult",
+        "property": false
+      },
+      "set_project_spend_cap": {
+        "arguments": "self, *, project_id: str, monthly_subcap_credits: str | None",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "start_activation_checkout": {
+        "arguments": "self, *, project_id: str, idempotency_key: str | None=None",
+        "returns": "ProjectActivationResult",
+        "property": false
+      },
+      "list_keys": {
+        "arguments": "self",
+        "returns": "dict[str, object] | list[object]",
+        "property": false
+      },
+      "create_key": {
+        "arguments": "self, *, name: str, projects: Sequence[str] | Literal['org:*'] | None=None, permissions: Sequence[str] | None=None, default_project_id: str | None=None, lifetime_days: int | None=None",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "revoke_key": {
+        "arguments": "self, *, key_id: str",
+        "returns": "dict[str, object]",
         "property": false
       }
     }

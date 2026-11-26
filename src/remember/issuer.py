@@ -195,7 +195,7 @@ def send_same_origin(
     """
     current = request
     for _ in range(max_redirects + 1):
-        response = http.send(current, stream=stream)
+        response = http.send(current, stream=stream, follow_redirects=False)
         if not response.is_redirect:
             return response
         location = response.headers.get("location")

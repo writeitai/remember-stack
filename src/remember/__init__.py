@@ -15,6 +15,7 @@ from remember.client import Client as RememberClient
 from remember.client import MemoryClient
 from remember.connection import resolve_connection
 from remember.errors import AccountApiUnavailable
+from remember.errors import AgentPermissionDisabled
 from remember.errors import ConnectorNotFoundError
 from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
@@ -63,6 +64,8 @@ from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
 from remember.models import ProcessingLayer
 from remember.models import ProcessingLayerStates
+from remember.models import ProjectActivationCheckout
+from remember.models import ProjectActivationResult
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
 from remember.models import ReadTime
@@ -96,6 +99,7 @@ except PackageNotFoundError:
 __all__ = (
     "AccountApi",
     "AccountApiUnavailable",
+    "AgentPermissionDisabled",
     "CapabilityReadiness",
     "ClaimValidPrecision",
     "Client",
@@ -156,6 +160,8 @@ __all__ = (
     "PipelineStageReadiness",
     "ProcessingLayer",
     "ProcessingLayerStates",
+    "ProjectActivationCheckout",
+    "ProjectActivationResult",
     "ProjectResolutionError",
     "QueryResultDict",
     "RateLimited",

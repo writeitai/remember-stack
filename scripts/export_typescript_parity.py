@@ -28,6 +28,7 @@ from remember.client import Client
 from remember.connection import clear_host_cache
 from remember.connection import Connection
 from remember.connection import resolve_project
+from remember.errors import AgentPermissionDisabled
 from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import RateLimited
@@ -1911,6 +1912,150 @@ def error_mapping_fixtures() -> list[dict[str, Any]]:
     return cases
 
 
+def account_method_fixtures() -> list[dict[str, Any]]:
+    """Record the named account calls through synthetic issuer discovery."""
+    issuer = "https://account-methods.invalid"
+    endpoint = issuer + "/app/api"
+    claims = base64.urlsafe_b64encode(json.dumps({"iss": issuer, "org": ID}).encode())
+    key = "rmb_eyJhbGciOiJFUzI1NiJ9." + claims.rstrip(b"=").decode() + ".fixture"
+    project = {"id": OTHER_ID, "name": "Research", "monthly_subcap_credits": "25.00"}
+    checkout = {
+        "project": project,
+        "payment": "checkout",
+        "checkout": {
+            "checkout_session_id": "checkout-fixture",
+            "url": "https://payments.invalid/checkout",
+            "amount_credits": "10.00",
+            "client_secret": None,
+        },
+        "requires_human_action": True,
+    }
+    automatic_activation = {
+        "project": {**project, "activation_state": "requested"},
+        "requires_human_action": False,
+    }
+    credits_result = {**automatic_activation, "payment": "credits", "checkout": None}
+    saved_card_result = {**automatic_activation, "payment": "saved_card"}
+    key_info = {"id": "key-fixture", "name": "Memory", "state": "active"}
+    scenarios = [
+        (
+            "list_projects",
+            {},
+            {
+                "projects": [project],
+                "project_limit": 4,
+                "slots_used": 2,
+                "is_owner": True,
+            },
+        ),
+        ("get_project", {"project_id": OTHER_ID}, project),
+        ("create_project", {"name": "Research"}, checkout),
+        (
+            "create_project",
+            {
+                "name": "Research",
+                "monthly_subcap_credits": "25.00",
+                "idempotency_key": "attempt",
+            },
+            credits_result,
+        ),
+        ("create_project", {"name": "Research"}, saved_card_result),
+        (
+            "set_project_spend_cap",
+            {"project_id": OTHER_ID, "monthly_subcap_credits": "25.00"},
+            project,
+        ),
+        (
+            "set_project_spend_cap",
+            {"project_id": OTHER_ID, "monthly_subcap_credits": None},
+            {**project, "monthly_subcap_credits": None},
+        ),
+        ("start_activation_checkout", {"project_id": OTHER_ID}, checkout),
+        (
+            "start_activation_checkout",
+            {"project_id": OTHER_ID, "idempotency_key": "attempt"},
+            credits_result,
+        ),
+        ("start_activation_checkout", {"project_id": OTHER_ID}, saved_card_result),
+        ("list_keys", {}, [key_info]),
+        (
+            "create_key",
+            {"name": "Memory", "projects": "org:*"},
+            {**key_info, "key": "rmb_fixture"},
+        ),
+        (
+            "create_key",
+            {
+                "name": "Memory",
+                "projects": [OTHER_ID],
+                "permissions": ["memory:read"],
+                "default_project_id": OTHER_ID,
+                "lifetime_days": 30,
+            },
+            {**key_info, "key": "rmb_fixture"},
+        ),
+        ("revoke_key", {"key_id": key_info["id"]}, {**key_info, "state": "revoked"}),
+    ]
+    cases = []
+    for method, options, reply in scenarios:
+        wire: list[dict[str, Any]] = []
+        status = 201 if method == "create_key" else 200
+
+        def answer(
+            request: httpx.Request,
+            *,
+            wire: list[dict[str, Any]] = wire,
+            options: dict[str, Any] = options,
+            reply: Any = reply,
+            status: int = status,
+        ) -> httpx.Response:
+            """Keep exact JSON bodies and headers while normalizing fresh UUIDs."""
+            if request.url.path.startswith("/.well-known/"):
+                assert "authorization" not in request.headers
+                return httpx.Response(
+                    200, json={"issuer": issuer, "remember_account_endpoint": endpoint}
+                )
+            assert request.headers["authorization"] == f"Bearer {key}"
+            attempt = request.headers.get("idempotency-key")
+            if attempt is not None and "idempotency_key" not in options:
+                assert UUID(attempt).version == 4
+                attempt = "<uuid4>"
+            wire.append(
+                {
+                    "method": request.method,
+                    "url": str(request.url),
+                    "contentType": request.headers.get("content-type"),
+                    "idempotencyKey": attempt,
+                    "body": json.loads(request.content) if request.content else None,
+                }
+            )
+            return httpx.Response(status, json=reply)
+
+        with Client(
+            api_key=key,
+            base_url="https://engine-fixture.invalid",
+            transport=httpx.MockTransport(answer),
+        ) as client:
+            result = getattr(client.account, method)(**options)
+        (request,) = wire
+        cases.append(
+            {
+                "method": method,
+                "typescriptMethod": camel(value=method),
+                "typescriptOptions": {
+                    camel(value=name): value for name, value in options.items()
+                },
+                "issuer": issuer,
+                "key": key,
+                "status": status,
+                "wire": request,
+                "reply": reply,
+                "result": result,
+            }
+        )
+    return cases
+
+
 def account_error_fixtures() -> list[dict[str, Any]]:
     """Execute the issuer account decoder separately from the deployment decoder."""
     issuer = "https://account-fixture.invalid"
@@ -1930,6 +2075,28 @@ def account_error_fixtures() -> list[dict[str, Any]]:
             {"detail": {"code": "forbidden", "message": "Key revoked"}},
         ),
         ("/v1/keys/self", 403, {"detail": "x", "extra": 1}),
+        (
+            "/v1/orgs/o1/projects",
+            403,
+            {"detail": {"code": "owner_only", "message": "Owner required"}},
+        ),
+        (
+            "/v1/orgs/o1/projects",
+            403,
+            {
+                "detail": {
+                    "code": "agent_permission_disabled",
+                    "message": "Project creation is disabled",
+                    "action": "Ask an owner to enable project creation",
+                    "settings_url": issuer + "/settings/agent-permissions",
+                }
+            },
+        ),
+        (
+            "/v1/orgs/o1/projects",
+            422,
+            {"detail": [{"loc": ["body", "name"], "msg": "Field required"}]},
+        ),
         (
             "/query/foo",
             400,
@@ -1963,6 +2130,11 @@ def account_error_fixtures() -> list[dict[str, Any]]:
             try:
                 client.account.get(path)
             except MemoryApiError as error:
+                owner_settings = (
+                    {"action": error.action, "settingsUrl": error.settings_url}
+                    if isinstance(error, AgentPermissionDisabled)
+                    else {}
+                )
                 cases.append(
                     {
                         "issuer": issuer,
@@ -1975,6 +2147,7 @@ def account_error_fixtures() -> list[dict[str, Any]]:
                             "detail": error.detail,
                             "statusCode": error.status_code,
                             "code": error.code,
+                            **owner_settings,
                         },
                     }
                 )
@@ -2123,6 +2296,7 @@ def main() -> int:
     result["inputValidation"] = input_validation_fixtures()
     result["tools"] = tool_fixtures()
     result["errorMappings"] = error_mapping_fixtures()
+    result["accountCases"] = account_method_fixtures()
     result["accountErrors"] = account_error_fixtures()
     result["issuerRedirects"] = issuer_redirect_fixtures()
     content = json.dumps(result, indent=2, sort_keys=True) + "\n"

@@ -66,6 +66,17 @@ export class ProjectResolutionError extends MemoryApiError {}
 export class StoredKeyRefused extends MemoryApiError {}
 /** This issuer or self-hosted connection has no account API. */
 export class AccountApiUnavailable extends MemoryApiError {}
+/** An organisation owner's agent permission switch refused the account call. */
+export class AgentPermissionDisabled extends MemoryApiError {
+  readonly action?: string;
+  readonly settingsUrl?: string;
+  /** Carry the issuer's instructions and Settings link for the owner. */
+  constructor({detail, action, settingsUrl}: {detail: string; action?: string; settingsUrl?: string}) {
+    super({statusCode: 403, detail, code: 'agent_permission_disabled'});
+    this.action = action;
+    this.settingsUrl = settingsUrl;
+  }
+}
 /** Issuer metadata, discovery or transport violated its contract. */
 export class IssuerError extends MemoryApiError {}
 /** A response number cannot be represented without integer precision loss. */

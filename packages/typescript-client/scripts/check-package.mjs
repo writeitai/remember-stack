@@ -38,6 +38,17 @@ function responseTypes({query,envelope}:{query:sdk.QueryResultDict;envelope:sdk.
   const defaults:boolean=envelope.freshness.p1_written_inline;
   void rows;void timestamp;void defaults;
 }
+/** Verify both activation methods expose the same payment and optional Checkout types. */
+async function activationTypes():Promise<void> {
+  const created=await client.account.createProject({name:'Research'});
+  const retried=await client.account.startActivationCheckout({projectId:'research'});
+  const payments:('credits'|'saved_card'|'checkout')[]=[created.payment,retried.payment];
+  const url:string|undefined=retried.checkout?.url;
+  const paid:sdk.ProjectActivationResult={project:created.project,payment:'credits',requires_human_action:false};
+  const nullCheckout:sdk.ProjectActivationResult={...paid,checkout:null};
+  void payments;void url;void nullCheckout;
+}
+void activationTypes;
 const readTime:sdk.ReadTimeInput={mode:'overlap',from:'2026-01-01T00:00:00Z',to:'2026-07-01T00:00:00Z'};
 const sectionRequest:sdk.SectionHistoryRequestInput={doc_id:'10000000-0000-0000-0000-000000000001',section_key:'part/4',time:readTime};
 const referencesRequest:sdk.DocumentReferencesRequestInput={doc_id:sectionRequest.doc_id,time:readTime};

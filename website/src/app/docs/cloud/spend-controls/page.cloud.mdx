@@ -32,19 +32,17 @@ day, they stop at the next daily funding point.
 
 ## Project sub-caps
 
-An owner can give each project its own monthly limit (a sub-cap), through
-the API:
+An owner can give each project its own monthly limit (a sub-cap). After
+signing in with `account:manage`, set or clear the cap with the CLI.
 
 ```bash
-curl -s -X PUT \
-  "https://remember.dev/app/api/v1/orgs/$ORG_ID/projects/$PROJECT_ID/spend-cap" \
-  -H "Content-Type: application/json" \
-  --cookie "__session=..." \
-  -d '{"monthly_subcap_credits": "50"}'
+remember projects set-cap "$PROJECT_ID" --monthly-cap 50.00
+remember projects set-cap "$PROJECT_ID" --clear
 ```
 
-Send `null` to remove it. Owners can raise, lower or remove a sub-cap
-without approval.
+Owners can raise, lower or remove a sub-cap without approval. To control
+whether API keys can change project caps, use **Settings → Agent permissions**.
+The issuer also accepts cap changes through the [account API](/docs/reference/cloud-api#projects).
 
 A sub-cap works like the organisation cap, counted for that project only.
 When a project reaches its sub-cap, only that project stops; the others
