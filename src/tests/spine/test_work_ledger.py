@@ -12,11 +12,14 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+import httpx
+from psycopg import OperationalError as PsycopgOperationalError
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 
 from rememberstack.adapters.testing import RecordingTaskQueue
 from rememberstack.core import source_identity_hash
@@ -677,6 +680,78 @@ def test_scheduled_retry_is_announced_through_the_queue_port(
     (announcement,) = recorder.announcements
     assert announcement.processing_id == enqueued.processing_id
     assert announcement.route_snapshot.stage is PipelineStage.EXTRACT_CLAIMS
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OperationalError(
+            "SELECT 1", {}, PsycopgOperationalError("FATAL: query_wait_timeout")
+        ),
+        ProviderCallError("upstream unavailable", status_code=503),
+        ProviderCallError("upstream timed out", status_code=524),
+        httpx.ReadTimeout("upstream timed out"),
+    ],
+    ids=["pgbouncer", "http-503", "http-524", "read-timeout"],
+)
+@pytest.mark.parametrize("recovers", [True, False], ids=["recovers", "exhausted"])
+def test_dependency_outage_uses_durable_backoff_and_the_attempt_limit(
+    database_engine: Engine, ledger: WorkLedger, failure: Exception, recovers: bool
+) -> None:
+    """An early retry and a longer cooldown give the dependency time to recover."""
+
+    class OutageHandler:
+        def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
+            """Keep the dependency down until the last allowed attempt."""
+            if work.attempt < 3 or not recovers:
+                raise failure
+            return HandlerOutcome()
+
+    registry = HandlerRegistry()
+    registry.register(stage=PipelineStage.EXTRACT_CLAIMS, handler=OutageHandler())
+    recorder = RecordingTaskQueue()
+    worker = Worker(ledger=ledger, registry=registry, queue=recorder)
+    enqueued = ledger.enqueue(work=_work())
+
+    def run_one() -> RunResultOutcome:
+        """Deliver the same route and observe the authoritative ledger outcome."""
+        return worker.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.EXTRACT_CLAIMS,
+            lane=ProcessingLane.STEADY,
+            processing_id=enqueued.processing_id,
+        ).outcome
+
+    for attempt, minimum_delay in enumerate((60, 20 * 60), start=1):
+        assert run_one() is RunResultOutcome.RETRY_SCHEDULED
+        with database_engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    "SELECT status, defer_reason, attempts, max_attempts, not_before,"
+                    " EXTRACT(epoch FROM not_before - now()) AS remaining"
+                    " FROM processing_state WHERE processing_id = :processing_id"
+                ),
+                {"processing_id": enqueued.processing_id},
+            ).one()
+        assert (row.status, row.defer_reason) == ("failed", "retry_backoff")
+        assert (row.attempts, row.max_attempts) == (attempt, 3)
+        assert minimum_delay - 5 <= row.remaining <= minimum_delay * 1.2
+        assert recorder.announcements[-1].not_before_snapshot == row.not_before
+        assert run_one() is RunResultOutcome.NO_WORK
+        with database_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE processing_state SET not_before = now()"
+                    " WHERE processing_id = :processing_id"
+                ),
+                {"processing_id": enqueued.processing_id},
+            )
+
+    expected = (
+        RunResultOutcome.SUCCEEDED if recovers else RunResultOutcome.DEAD_LETTERED
+    )
+    assert run_one() is expected
+    assert len(recorder.announcements) == 2
 
 
 def test_a_forget_stops_nothing_but_its_own_document(

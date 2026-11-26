@@ -4294,6 +4294,18 @@
       "PipelineStageReadiness": {
         "additionalProperties": false,
         "properties": {
+          "blocked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Dead-lettered prerequisite preventing this missing stage from running.",
+            "title": "Blocked By"
+          },
           "component_version": {
             "title": "Component Version",
             "type": "string"
@@ -8700,6 +8712,18 @@
       "post": {
         "description": "Inspect exact pipeline and explicitly requested capabilities.",
         "operationId": "pipeline_readiness_readiness_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_blockers",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Blockers",
+              "type": "boolean"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {

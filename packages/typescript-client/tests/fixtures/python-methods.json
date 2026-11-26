@@ -6451,7 +6451,12 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/readiness",
-          "query": []
+          "query": [
+            [
+              "include_blockers",
+              "true"
+            ]
+          ]
         }
       ]
     },
@@ -6519,7 +6524,12 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/readiness",
-          "query": []
+          "query": [
+            [
+              "include_blockers",
+              "true"
+            ]
+          ]
         }
       ]
     },
@@ -6572,7 +6582,12 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/readiness",
-          "query": []
+          "query": [
+            [
+              "include_blockers",
+              "true"
+            ]
+          ]
         }
       ]
     },
@@ -6631,7 +6646,12 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/readiness",
-          "query": []
+          "query": [
+            [
+              "include_blockers",
+              "true"
+            ]
+          ]
         }
       ]
     },

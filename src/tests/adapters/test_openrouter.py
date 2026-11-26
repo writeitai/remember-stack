@@ -2429,6 +2429,32 @@ def test_invalid_terminal_under_rotation_attributes_targeted_slug(
 
 
 @pytest.mark.parametrize("routed", [False, True])
+@pytest.mark.parametrize("status", [503, 524])
+def test_upstream_http_status_survives_provider_error(
+    routed: bool, status: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worker can schedule outage backoff from the typed gateway refusal."""
+    provider, _seen, _sleeps = _mock_chat_provider(
+        monkeypatch=monkeypatch,
+        settings=OpenRouterSettings(
+            api_key="offline",
+            chat_provider_order=["azure"] if routed else None,
+            chat_throttle_retries=0,
+        ),
+        responses=[httpx.Response(status, text="gateway unavailable")] * 12,
+    )
+    try:
+        with pytest.raises(OpenRouterProviderError) as error:
+            provider.generate(
+                request=ModelRequest(model="openai/gpt-6-luna", prompt="offline"),
+                response_type=_Answer,
+            )
+    finally:
+        provider._client.close()
+    assert error.value.status_code == status
+
+
+@pytest.mark.parametrize("routed", [False, True])
 @pytest.mark.parametrize("with_id", [False, True])
 @pytest.mark.parametrize("code", [None, 429, 500, 502, 503, 504, 529])
 def test_unbilled_http_200_flex_capacity_error_is_retried(

@@ -3,6 +3,10 @@
 /* tslint:disable */
 /* eslint-disable */
 export type PipelineStageReadiness = {
+    /**
+     * Dead-lettered prerequisite preventing this missing stage from running.
+     */
+    blocked_by?: string | null;
     component_version: string;
     defer_reason?: 'scheduled' | 'retry_backoff' | 'budget' | 'no_route' | 'admission' | null;
     finished_at?: string | null;

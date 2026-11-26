@@ -112,7 +112,8 @@ def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
             kept = [
                 p
                 for p in operation["parameters"]
-                if p.get("name") not in {"layers", "allow_forgotten", "include_blockers"}
+                if p.get("name")
+                not in {"layers", "allow_forgotten", "include_blockers"}
                 and not (p.get("name") == "tags" and p.get("in") == "query")
             ]
             if kept:

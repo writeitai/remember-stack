@@ -16,6 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.models import ProcessingLayer
 from rememberstack.core import chunker_version as packing_generation
 from rememberstack.core import ChunkerParams
 from rememberstack.model import DeploymentBootstrapInput
@@ -24,6 +25,8 @@ from rememberstack.model import ReadinessRequirements
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import ensure_graph_catalog
 from rememberstack.spine import PipelineReadinessCatalog
+from rememberstack.spine import WorkLedger
+from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
 from tests.database_reset import reset_database
 
@@ -532,9 +535,14 @@ def _seed_embed_succeeded(
 
 
 def _seed_chunk_extract_dead_letter(
-    engine: Engine, *, version_id: UUID, finished_at: datetime
-) -> None:
-    """Dead-letter the extract_claims row for the version's single default-grid chunk."""
+    engine: Engine,
+    *,
+    version_id: UUID,
+    finished_at: datetime,
+    stage: PipelineStage = PipelineStage.EXTRACT_CLAIMS,
+) -> UUID:
+    """Dead-letter a work row for the version's single default-grid chunk."""
+    processing_id = uuid4()
     with engine.begin() as connection:
         chunk_id = connection.execute(
             text(
@@ -549,17 +557,19 @@ def _seed_chunk_extract_dead_letter(
                 " target_kind, target_id, stage, component_version, content_hash,"
                 " lane, status, attempts, finished_at)"
                 " VALUES (:p, :d, 'chunk', :t,"
-                " CAST('extract_claims' AS pipeline_stage), :c, 'hash', 'steady',"
+                " CAST(:stage AS pipeline_stage), :c, 'hash', 'steady',"
                 " 'dead_letter', 1, :finished)"
             ),
             {
-                "p": uuid4(),
+                "p": processing_id,
                 "d": _DEPLOYMENT_ID,
                 "t": chunk_id,
                 "c": _EXTRACTOR_VERSION,
+                "stage": stage.value,
                 "finished": finished_at,
             },
         )
+    return processing_id
 
 
 def _seed_coordinator_extract_succeeded(
@@ -688,6 +698,116 @@ def test_dead_letter_extract_keeps_its_completion_timestamp(
     assert extract_status == "dead_letter"
     assert finished_at is not None
     assert ready is False
+
+
+@pytest.mark.parametrize("facts_expected", [True, False], ids=["facts", "claims-only"])
+def test_grounding_dead_letter_explains_unscheduled_stages_until_replay(
+    ready_rows: tuple[Engine, UUID], facts_expected: bool
+) -> None:
+    """Zero claims after failed grounding cannot complete the normalization barrier."""
+    engine, version_id = ready_rows
+    other_version_id = uuid4()
+    _seed_version_representation(
+        engine, version_id=version_id, chunker_version=_DEFAULT_CHUNKER_VERSION
+    )
+    finished = datetime.now(tz=UTC) - timedelta(minutes=1)
+    _seed_embed_succeeded(engine, version_id=version_id, finished_at=finished)
+    processing_id = _seed_chunk_extract_dead_letter(
+        engine,
+        version_id=version_id,
+        finished_at=finished,
+        stage=PipelineStage.GROUND_CLAIMS,
+    )
+    catalog = PipelineReadinessCatalog(
+        engine=engine,
+        expected_components={
+            PipelineStage.EXTRACT_CLAIMS: _EXTRACTOR_VERSION,
+            PipelineStage.GROUND_CLAIMS: _EXTRACTOR_VERSION,
+            PipelineStage.NORMALIZE_RELATIONS: "normalize-v1",
+            PipelineStage.ADJUDICATE_OBSERVATIONS: "observe-v1",
+            PipelineStage.ADJUDICATE_SUPERSESSION: "supersede-v1",
+            PipelineStage.EMBED_CLAIM: "embed-claim-v1",
+            PipelineStage.RECONCILE: "reconcile-v1",
+            PipelineStage.LABEL_RELATION: "label-v1",
+        },
+    )
+    layers = {ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS}
+    if facts_expected:
+        layers.add(ProcessingLayer.FACTS)
+
+    report = catalog.inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(version_id, other_version_id),
+        require=_requirements(),
+        layers=frozenset(layers),
+    )
+    assert report.capabilities["pipeline"].reason == "stage_dead_lettered"
+    downstream = {
+        stage.stage: stage
+        for stage in report.versions[0].stages
+        if stage.stage not in {"extract_claims", "ground_claims"}
+    }
+    assert downstream.keys() == (
+        {
+            "normalize_relations",
+            "adjudicate_observations",
+            "adjudicate_supersession",
+            "embed_claim",
+            "reconcile",
+            "label_relation",
+        }
+        if facts_expected
+        else {"embed_claim", "reconcile"}
+    )
+    assert all(stage.status == "missing" for stage in downstream.values())
+    assert all(stage.blocked_by == "ground_claims" for stage in downstream.values())
+    assert all(stage.blocked_by is None for stage in report.versions[1].stages)
+
+    WorkLedger(engine=engine, settings=WorkLedgerSettings()).replay_dead_letter(
+        deployment_id=_DEPLOYMENT_ID, processing_id=processing_id
+    )
+    after_replay = catalog.inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(version_id,),
+        require=_requirements(),
+        layers=frozenset(layers),
+    )
+    assert after_replay.capabilities["pipeline"].reason == "stage_incomplete"
+    assert all(stage.blocked_by is None for stage in after_replay.versions[0].stages)
+
+
+def test_supersession_dead_letter_only_blocks_its_own_branch(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """Claim embedding can run independently of supersession and reconcile."""
+    engine, version_id = ready_rows
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO processing_state (processing_id, deployment_id,"
+                " target_kind, target_id, stage, component_version, content_hash,"
+                " lane, status, attempts, finished_at)"
+                " VALUES (:p, :d, 'document_version', :v, 'adjudicate_supersession',"
+                " 'supersede-v1', 'hash', 'steady', 'dead_letter', 3, now())"
+            ),
+            {"p": uuid4(), "d": _DEPLOYMENT_ID, "v": version_id},
+        )
+    report = PipelineReadinessCatalog(
+        engine=engine,
+        expected_components={
+            PipelineStage.EMBED_CLAIM: "embed-claim-v1",
+            PipelineStage.LABEL_RELATION: "label-v1",
+            PipelineStage.RECONCILE: "reconcile-v1",
+            PipelineStage.ADJUDICATE_SUPERSESSION: "supersede-v1",
+        },
+    ).inspect(
+        deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=_requirements()
+    )
+    stages = {stage.stage: stage for stage in report.versions[0].stages}
+    assert stages["embed_claim"].status == "missing"
+    assert stages["embed_claim"].blocked_by is None
+    assert stages["reconcile"].blocked_by == "adjudicate_supersession"
+    assert stages["label_relation"].blocked_by == "adjudicate_supersession"
 
 
 def test_coordinator_succeeded_does_not_mask_chunk_derived_missing(

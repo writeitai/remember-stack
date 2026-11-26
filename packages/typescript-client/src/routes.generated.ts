@@ -2453,7 +2453,18 @@ export default {
   "POST /readiness": {
     "method": "POST",
     "operationId": "pipeline_readiness_readiness_post",
-    "parameters": [],
+    "parameters": [
+      {
+        "in": "query",
+        "name": "include_blockers",
+        "required": false,
+        "schema": {
+          "default": false,
+          "title": "Include Blockers",
+          "type": "boolean"
+        }
+      }
+    ],
     "path": "/readiness",
     "requestBody": {
       "content": {

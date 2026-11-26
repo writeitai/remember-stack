@@ -64,6 +64,13 @@ if TYPE_CHECKING:
     from rememberstack.workers.base import EmptyObsFlushComplete
 
 
+# A short retry handles a brief interruption. Subsequent retries wait out a
+# dependency outage without consuming the remaining attempts in a burst.
+_DEPENDENCY_FIRST_RETRY_S: Final = 60
+_DEPENDENCY_RETRY_COOLDOWN_S: Final = 20 * 60
+_DEPENDENCY_RETRY_JITTER_MAX: Final = 1.2
+
+
 class WorkLedgerSettings(BaseSettings):
     """Retry backoff, claim leases and explicit route budgets for one deployment.
 
@@ -795,11 +802,15 @@ class WorkLedger:
                     self._settings.retry_backoff_max_s,
                 )
                 if dependency_unavailable:
-                    # Check once after a brief interruption, then leave a
-                    # recovery window before spending another attempt. Spread
-                    # work that was released by the same fan-out.
-                    delay_s = 60 if attempts == 1 else 20 * 60
-                    backoff_s = max(backoff_s, delay_s * random.uniform(1, 1.2))
+                    delay_s = (
+                        _DEPENDENCY_FIRST_RETRY_S
+                        if attempts == 1
+                        else _DEPENDENCY_RETRY_COOLDOWN_S
+                    )
+                    backoff_s = max(
+                        backoff_s,
+                        delay_s * random.uniform(1, _DEPENDENCY_RETRY_JITTER_MAX),
+                    )
                 scheduled = connection.execute(
                     _FAIL_RETRY,
                     {

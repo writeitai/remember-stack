@@ -5093,7 +5093,13 @@ restored bucket. A missing local mount does not invalidate a remote publish.
 A stage `status` is one of `missing`, `pending`, `running`, `succeeded`,
 `failed`, `dead_letter`, `skipped`. A version is ready when every expected
 stage has `succeeded` or been `skipped` and has a `finished_at`. A
-`pending` stage with a `defer_reason` of `no_route` is parked: it will not
+`missing` stage with `blocked_by` is waiting for the named dead-lettered
+stage to succeed after operator replay. For example, a dead letter in
+`adjudicate_supersession` blocks `reconcile` and `label_relation`. Claim
+embedding runs on its own branch. The SDK and CLI request this detail
+automatically. For direct HTTP requests, add `?include_blockers=true`.
+
+A `pending` stage with a `defer_reason` of `no_route` is parked: it will not
 move until an operator adds a conversion route, so waiting does not help.
 With `budget`, a spend budget has reached its ceiling: the work resumes by
 itself when the budget window ends, or sooner if an operator raises the
@@ -5105,6 +5111,7 @@ Capability reasons when not ready:
 | Capability | Reason | Meaning |
 |---|---|---|
 | `pipeline` | `stage_incomplete` | At least one stage of one version has not finished. |
+| `pipeline` | `stage_dead_lettered` | At least one stage needs operator intervention. |
 | `p1` | `search_channel_incomplete` | The search index is not ready. |
 | `live_graph` | a `graph_…` reason, such as `graph_catalog_mismatch` | The live graph failed its catalog or health check. This is a deployment problem, not a problem with your document. |
 | `p3` | `corpus_publication_incomplete` | A requested served version has no matching publication marker yet. |
@@ -5115,8 +5122,9 @@ The check reads state; it never starts or speeds up work.
 ## When a version fails
 
 - **`failed`** means the last attempt failed and a retry is scheduled; it
-  can still succeed. **`dead_letter`** means the stage ran out of attempts.
-  It does not heal by waiting.
+  can still succeed. Retries after a dependency outage may wait longer,
+  with at least twenty minutes before the second retry. **`dead_letter`**
+  means the work requires operator intervention.
 - **Stuck at `pending` on the first stage** on a self-hosted deployment
   usually means the file's MIME type has no converter: the version is
   parked until one is configured. See [File formats and
@@ -11500,15 +11508,16 @@ The stages a self-hosted deployment reports, in order: `convert`, `structure`,
 `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`,
 `embed_claim`, `reconcile`, `label_relation`.
 
-A `failed` stage has a retry scheduled and can still succeed; keep polling.
-If a stage is `dead_letter`, stop polling: it used all its attempts, and
-that version will not become ready without intervention.
+A `failed` stage has a retry scheduled and can still succeed. A stage at
+`dead_letter` requires operator intervention. With the optional
+`include_blockers=true` query parameter, a `missing` stage includes
+`blocked_by` when a dead-lettered prerequisite prevents it from running.
 
 Capability `reason` values:
 
 | Capability | `reason` when ready | `reason` when not ready |
 |---|---|---|
-| `pipeline` | `ready` | `stage_incomplete` |
+| `pipeline` | `ready` | `stage_incomplete`, `stage_dead_lettered` |
 | `p1` | `ready` | `search_channel_incomplete` |
 | `p3` | `ready` | `corpus_publication_incomplete`, `p3_version_not_served` |
 | `live_graph` | `ready` | `graph_server_version_mismatch`, `graph_extension_version_mismatch`, `graph_role_contract_mismatch`, `graph_helper_contract_mismatch`, `graph_catalog_mismatch`, `graph_role_runtime_limits_mismatch`, `graph_smoke_identifier_collision`, `graph_one_hop_guard_smoke_failed`, `graph_one_hop_smoke_failed`, `graph_neighborhood_smoke_failed`, `graph_path_smoke_failed`, `graph_citation_smoke_failed`, `graph_database_or_permission_failed`, `graph_smoke_contract_failed` |
@@ -11525,7 +11534,7 @@ A version id the deployment does not know is not an error: every stage reads
 ### Example
 
 ```bash
-curl -s -X POST "$REMEMBER_API_URL/readiness" \
+curl -s -X POST "$REMEMBER_API_URL/readiness?include_blockers=true" \
   -H "Authorization: Bearer $REMEMBER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"version_ids": ["0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f"],
@@ -16126,6 +16135,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `status` | string | `missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`. |
 | `finished_at` | date-time, nullable | |
 | `defer_reason` | string, nullable | Why a `pending` or `failed` stage waits: `no_route` (no converter for the file's type), `admission` (a metered deployment waiting for its control plane's approval), `budget` (a spend budget is used up), `scheduled` (due later), `retry_backoff` (a `failed` stage waiting for its next attempt). `null` for any other status, and for pending work that is simply queued. |
+| `blocked_by` | string, optional | The dead-lettered prerequisite for a `missing` stage. For HTTP, request `?include_blockers=true`. |
 
 `missing` means no work for that stage and component version exists yet.
 `failed` may be retried by the pipeline; `dead_letter` will not be.
@@ -19752,7 +19762,7 @@ models below are Pydantic models (frozen) unless noted.
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
-| `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (why waiting work waits: `no_route`, `admission`, `budget`, `scheduled`, `retry_backoff`, or `None`). |
+| `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (`no_route`, `admission`, `budget`, `scheduled`, `retry_backoff`, or `None`), `blocked_by` (the dead-lettered prerequisite, or `None`). |
 | `ProcessingLayer` | String enum: `sources`, `claims`, `facts`. |
 | `ProcessingLayerStates` | The result of `processing_layers`: `claims` and `facts`, each `enabled`, `backfilling` or `disabled`. |
 | `CapabilityReadiness` | `required`, `ready`, `checked_at`, `reason`, `version`, `built_at`, `published_at`. |
