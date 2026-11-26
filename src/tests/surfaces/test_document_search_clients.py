@@ -182,8 +182,9 @@ def test_cli_searches_with_filters(
     assert request.limit == 3
     assert request.filters.family == ("pdf",)
     assert request.filters.authors == ("Alice", "bob@acme.com")
-    assert request.filters.created_from == datetime(2025, 1, 1, tzinfo=UTC)
-    assert request.filters.created_from.tzinfo is UTC
+    created_from = request.filters.created_from
+    assert created_from is not None and created_from.tzinfo is UTC
+    assert created_from == datetime(2025, 1, 1, tzinfo=UTC)
 
     assert cli_main(["documents", "search", "audit report"]) == 0
     capsys.readouterr()
