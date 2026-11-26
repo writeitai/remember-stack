@@ -267,13 +267,16 @@ test('borrowed account transport failures preserve API status zero and original 
   try{await assert.rejects(client.account.whoami(),error=>error instanceof MemoryApiError&&error.statusCode===0&&error.cause===cause);}finally{client.close();}
 });
 
-test('general API timestamps require offsets before HTTP while UTC-only fields retain their policy',async()=>{
+test('typed request timestamps require offsets before HTTP',async()=>{
   let calls=0;const client=new Client({client:{request:async()=>{calls++;return Response.json(fixtures.envelope);}}});
   try{
     const validAt='2026-10-02T12:00:00';
-    await assert.rejects(client.lookupRelations({validAt}),InputValidationError);
+    await assert.rejects(client.lookupRelations({validAt}),/validAt must be timezone-aware/);
     await assert.rejects(client.graphNeighborhood({entityId:id,validAt}),InputValidationError);
     await assert.rejects(client.graphPath({fromEntityId:id,toEntityId:id,validAt}),InputValidationError);
+    await assert.rejects(client.ingest({content:Buffer.from('note'),filename:'note.md',sourceKind:'git',sourceRef:'note.md',sourceModifiedAt:validAt}),/sourceModifiedAt must be timezone-aware/);
+    await assert.rejects(client.searchDocuments({filters:{modified_from:validAt}}),/modified_from must be timezone-aware/);
+    await assert.rejects(client.searchDocuments({time:{mode:'at',at:validAt}}),/at must be timezone-aware/);
     assert.equal(calls,0);
   }finally{client.close();}
 });

@@ -192,7 +192,7 @@ defaulted output properties as present and type them non-optional. Inputs
 accept schema-described JSON types, not Pydantic lax numeric-string coercions.
 Cross-field checks cover ContextBundle child grains, temporal interval order,
 evidence-span bounds, evidence returned<=total, document query/cursor exclusion,
-UTC-only fields and nested connector secret keys. Shared adversarial fixtures
+UTC response fields and nested connector secret keys. Shared adversarial fixtures
 exercise these; JSON Schema generation alone is insufficient.
 
 `MemoryApiError` includes HTTP status (0 for network failure), detail, code
@@ -350,7 +350,8 @@ Checks must answer different questions; one regenerate-and-diff is not enough.
 
 Anything absent from this table must match current Python behavior. Options
 use camelCase; nested schema-owned input types retain snake_case fields. Nested
-dates accept ISO strings, not Date; top-level Date options become UTC ISO.
+dates take ISO strings with an explicit offset. Top-level timestamp options
+also accept `Date`.
 Timeout API units are milliseconds: timeoutMs=300000, wait timeoutMs=1800000,
 pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 
@@ -358,7 +359,7 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | --- | --- | --- |
 | Synchronous methods/context manager; close leaves an injected client usable | Promises; close/async disposal. A closed SDK facade refuses later calls with AbortError even with injected client; borrowed resources remain open | Cleanup, borrowed ownership and calls after close |
 | UUID/datetime/tuple wrappers | UUID/ISO strings and arrays; rows/columns/truncated remain properties | Typed result/default fixtures |
-| General lookup/graph datetime options accept naive datetime objects despite the published date-time annotation | Require an ISO datetime with Z or numeric offset, raising InputValidationError before HTTP; preserve nonzero offsets. The SDK asserts the published RFC3339 format to avoid implicit local time. Current servers refuse naive and non-UTC instants with 422; offsets are forwarded so non-UTC values receive that server error as in Python | Naive local refusal for lookupRelations/graphNeighborhood/graphPath; unchanged +02:00 wire fixtures; candidate +02:00 gives 422 MemoryApiError and Z succeeds, while pre-v0.17.1 releases (matrix: v0.15/v0.16) accept offsets; original-format checks |
+| Typed request timestamps require an aware datetime or a string with an explicit offset and are normalized to UTC | Convert ISO 8601 strings with `Z` or a numeric offset to UTC before HTTP. For example, `2026-11-20T14:03:11+01:00` is sent as `2026-11-20T13:03:11+00:00`. Keep up to six fractional digits so submillisecond periods retain their ordering. A timestamp with no offset raises `InputValidationError`. UTC wire values also work with engines that require a zero offset | Python and TypeScript wire parity for offset inputs to ingest, periods, filters and as-of reads. Local refusal of naive inputs. Direct HTTP normalization and temporal compatibility fixtures |
 | Pydantic lax coercion | JSON Schema types, no numeric-string/bool coercion; fill defaults | Invalid types and complete outputs |
 | Arbitrary-size integers | Refuse unsafe integer values before JSON.parse rounding or sending; NumericPrecisionError. Query parameters above MAX_SAFE_INTEGER require an explicit SQL string/cast | 2^53 boundary responses/parameters |
 | Method-based replay and write replay on 421/connect errors | _READ_ROUTES-derived read eligibility; never write replay. Refresh for next call only | POST readiness and 421/network writes |

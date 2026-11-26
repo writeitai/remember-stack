@@ -108,7 +108,7 @@ now or at a past instant.
 | `subject_entity_id` | query | UUID | no | any | |
 | `predicate` | query | string | no | any | Exact predicate name. |
 | `object_entity_id` | query | UUID | no | any | |
-| `valid_at` | query | date-time | no | now | Must be UTC (`Z` or `+00:00`). |
+| `valid_at` | query | date-time | no | now | Include `Z` or a numeric UTC offset. |
 | `limit` | query | integer | no | `50` | 1–200 relations per page. |
 | `cursor` | query | string | no | | The previous response's `next_cursor`. |
 
@@ -141,7 +141,7 @@ contradiction, the other sides in `contradiction`. With `valid_at`,
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | cursor error | A malformed cursor or one from another deployment or filter scope. |
-| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a zero UTC offset, or `limit` outside 1–200. |
+| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a UTC offset, or `limit` outside 1–200. |
 
 ### Example
 

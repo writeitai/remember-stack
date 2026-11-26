@@ -519,21 +519,16 @@ def test_push_ingest_preserves_stable_source_lineage(rig: _ApiRig) -> None:
     }
 
 
-@pytest.mark.parametrize(
-    "source_modified_at", ("2023-05-01T13:00:00", "2023-05-01T13:00:00+02:00")
-)
-def test_http_ingest_rejects_non_utc_source_time(
-    rig: _ApiRig, source_modified_at: str
-) -> None:
-    """Direct HTTP callers cannot bypass the SDK's aware-UTC invariant."""
+def test_http_ingest_rejects_naive_source_time(rig: _ApiRig) -> None:
+    """A timestamp without an offset is refused before ingestion."""
     response = rig.client.post(
         "/ingest",
         params={
             "filename": "invalid-time.md",
             "mime": "text/markdown",
             "source_kind": "push-test",
-            "source_ref": f"invalid/{source_modified_at}",
-            "source_modified_at": source_modified_at,
+            "source_ref": "invalid/naive-timestamp",
+            "source_modified_at": "2023-05-01T13:00:00",
         },
         content=b"must not ingest",
         headers={"Content-Type": "application/octet-stream"},
@@ -541,7 +536,7 @@ def test_http_ingest_rejects_non_utc_source_time(
 
     assert response.status_code == 422
     assert response.json()["detail"] == (
-        "source_modified_at must be timezone-aware UTC"
+        "source_modified_at must be timezone-aware (include Z or a numeric UTC offset)"
     )
 
 

@@ -54,13 +54,13 @@ attribution, which travels in headers so that it never lands in access logs.
 | `title` | query | string | no | stem of `filename` | |
 | `source_kind` | query | string | no | | At least 1 character. Must be sent together with `source_ref`. |
 | `source_ref` | query | string | no | | At least 1 character. Must be sent together with `source_kind`. |
-| `source_modified_at` | query | date-time | no | | UTC only (`Z` or `+00:00`). Requires `source_kind` and `source_ref`. |
+| `source_modified_at` | query | date-time | no | | Source modification time with an explicit UTC offset. Requires `source_kind` and `source_ref`. |
 | `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
 | `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
 | `source_path` | query | string | no | | At least 1 character. Where the file lives at its source, such as a folder path or a URL. Recorded with this version's names; see [File names, titles and paths](#file-names-titles-and-paths). |
 | `version_key` | query | string | no | | 1 to 512 characters. Your own permanent name for this version, unique within the document, such as `edition-2`. Requires `source_kind` and `source_ref`. See [Versions in force](#versions-in-force). |
-| `effective_from` | query | date-time | no | | UTC only. The start (included) of the period during which this version's text is in force. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
-| `effective_until` | query | date-time | no | | UTC only. The end (excluded) of that period. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
+| `effective_from` | query | date-time | no | | The start (included) of the period during which this version's text is in force, with a UTC offset. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
+| `effective_until` | query | date-time | no | | The end (excluded) of that period, with a UTC offset. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
 | `tags` | query | string, repeatable | no | | At most 64. Registered tags, each by name (any letter case) or `tag_id`, added to the document's tags. Repeat the parameter for several: `tags=project:billing-migration&tags=kind:decision`. See [Tags](#tags). |
 | `allow_forgotten` | query | boolean | no | `false` | Add back content of a forgotten document, for this request only. See [Adding forgotten content back](#adding-forgotten-content-back). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
@@ -271,7 +271,7 @@ for it; it will not become ready on its own.
 | `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": […]}` | A tag in `tags` is not registered. `tags` lists every unregistered one as you sent it. Nothing was stored. |
 | `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
 | `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | `source_modified_at`, `source_version_ref`, `versioning_mode=living`, `version_key` or `effective_from` without a source identity. |
-| `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. The same message names `effective_from` or `effective_until` for those parameters. |
+| `422` | `source_modified_at must be timezone-aware (include Z or a numeric UTC offset)` | The timestamp has no offset. The same message names `effective_from` or `effective_until` for those parameters. |
 | `422` | `effective_until requires an earlier effective_from` | `effective_until` without `effective_from`, or not later than it. |
 | `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | A period with `versioning_mode=living`, or for a document that was first ingested as `living`. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
@@ -1101,8 +1101,8 @@ force by giving it an end.
 | Field | Type | Required | Constraints |
 |---|---|---|---|
 | `periods` | array of objects | yes | 0 to 1,000 items, no two with the same `effective_from`. |
-| `periods[].effective_from` | date-time | yes | UTC (`Z` or `+00:00`). Included. |
-| `periods[].effective_until` | date-time | no | UTC. Excluded; later than `effective_from`. Omitted: the period lasts until the next declared start in the document. |
+| `periods[].effective_from` | date-time | yes | Inclusive start with a UTC offset. |
+| `periods[].effective_until` | date-time | no | Exclusive end with a UTC offset, later than `effective_from`. Without it the period lasts until the next declared start in the document. |
 
 Unknown fields are rejected (`422`).
 
@@ -1156,7 +1156,7 @@ with a cursor keeps seeing the periods as they were when it started.
 | `404` | `version_not_found` | The version is not a live version of this document. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version (`version_id`) already declares that start. |
 | `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | The document is `living`. |
-| `422` | validation list | A timestamp without a zero UTC offset, an end not after its start, two periods with the same start, more than 1,000 periods, or an unknown field. |
+| `422` | validation list | A timestamp without a UTC offset, an end not after its start, two periods with the same start, more than 1,000 periods, or an unknown field. |
 
 ### Example
 
@@ -1269,7 +1269,7 @@ with no references. Each object:
 | `target.section_key` | string | no | A section key in the target; omitted, the whole document. Same syntax as `from_section_key`. |
 | `binding` | `floating` \| `pinned` | no | Default `floating`: the reference points at whichever target versions are in force when it is read. `pinned` points at the one version named by `target.version_key`. |
 | `change_date_known` | boolean | with `kind: amends` | Whether the source states when its change takes effect. Only for `amends`. |
-| `change_effective_from` | date-time | with `change_date_known: true` | UTC. When the change takes effect. Only for `amends`, and forbidden when `change_date_known` is `false`. |
+| `change_effective_from` | date-time | with `change_date_known: true` | When the change takes effect, with a UTC offset. Only for `amends`, and forbidden when `change_date_known` is `false`. |
 | `source_label` | string | no | 1 to 200 characters. Your own type code for the reference, returned as you sent it. |
 | `context` | string | no | 1 to 2,000 characters. Text around the reference, shown when it is read. |
 

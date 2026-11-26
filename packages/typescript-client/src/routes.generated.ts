@@ -305,7 +305,8 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
@@ -322,7 +323,8 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
@@ -339,7 +341,8 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
@@ -715,7 +718,8 @@ export default {
           "anyOf": [
             {
               "format": "date-time",
-              "type": "string"
+              "type": "string",
+              "x-normalize-utc": true
             },
             {
               "type": "null"
@@ -2024,7 +2028,7 @@ export default {
         }
       },
       {
-        "description": "Start (inclusive, UTC) of the period this version's text is in force for. Requires source_kind/source_ref and versioning_mode=snapshot.",
+        "description": "Start (inclusive) of the period this version's text is in force. Include a UTC offset. Requires source_kind/source_ref and versioning_mode=snapshot.",
         "in": "query",
         "name": "effective_from",
         "required": false,
@@ -2038,12 +2042,12 @@ export default {
               "type": "null"
             }
           ],
-          "description": "Start (inclusive, UTC) of the period this version's text is in force for. Requires source_kind/source_ref and versioning_mode=snapshot.",
+          "description": "Start (inclusive) of the period this version's text is in force. Include a UTC offset. Requires source_kind/source_ref and versioning_mode=snapshot.",
           "title": "Effective From"
         }
       },
       {
-        "description": "Declared end (exclusive, UTC) of that period; without it the period lasts until the next declared start.",
+        "description": "Declared end (exclusive) of that period. Include a UTC offset. Without it the period lasts until the next declared start.",
         "in": "query",
         "name": "effective_until",
         "required": false,
@@ -2057,7 +2061,7 @@ export default {
               "type": "null"
             }
           ],
-          "description": "Declared end (exclusive, UTC) of that period; without it the period lasts until the next declared start.",
+          "description": "Declared end (exclusive) of that period. Include a UTC offset. Without it the period lasts until the next declared start.",
           "title": "Effective Until"
         }
       },

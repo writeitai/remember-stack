@@ -221,20 +221,22 @@ document; nothing is processed again.
 | `--mime` | from the file's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `--title` | none | Human title. |
 | `--source-kind`, `--source-ref` | none | The document's stable identity. Give both or neither. Re-ingesting with the same pair makes a new version of the same document. |
-| `--source-modified-at` | none | When the source last changed, as an ISO 8601 timestamp with a UTC offset of zero, for example `2026-09-21T14:00:00+00:00`. Needs `--source-kind`/`--source-ref`. |
+| `--source-modified-at` | none | When the source last changed, for example `2026-11-20T14:03:11+01:00` from `git log --format=%cI`. Needs `--source-kind`/`--source-ref`. |
 | `--versioning-mode` | `snapshot` | `snapshot` or `living`; `living` needs `--source-kind`/`--source-ref`. See [Updating a source](/docs/concepts/updating-sources). |
 | `--source-version-ref` | none | The source system's revision label. Needs `--source-kind`/`--source-ref`. |
 | `--version-key` | none | Your permanent name for this version, unique within the document, for example `edition-2`. A new key always creates a version. Needs `--source-kind`/`--source-ref`. |
-| `--effective-from` | none | When this version's text comes into force (included), as an ISO 8601 timestamp with a UTC offset of zero. Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
+| `--effective-from` | none | When this version's text comes into force (included). Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
 | `--effective-until` | none | When it stops being in force (excluded), later than `--effective-from`. Omitted: until the next declared start. |
 | `--tag` | none | A registered tag, by name or id, to add to the document. Repeat it for several. Ingest only adds tags; see [Tags](/docs/reference/http-api/ingest#tags). |
 | `--allow-forgotten` | off | Add back content of a [forgotten](#remember-forget) document. Without it such a file is refused (`error: API 409: …document_forgotten…`); with it, it is accepted once that forget is no longer erasing and comes back under a new `doc_id`. See [Adding forgotten content back](/docs/reference/http-api/ingest#adding-forgotten-content-back). |
 
-What a key and a period do: [Versions in force](/docs/reference/http-api/ingest#versions-in-force).
+Supply ISO 8601 timestamps with `Z` or a numeric UTC offset for ingest,
+as-of reads and date filters. The CLI converts them to UTC. For version keys
+and periods, see [Versions in force](/docs/reference/http-api/ingest#versions-in-force).
 
-Exit status 2 when the source arguments break these rules, a timestamp is
-not UTC, or a period is malformed; 1 when the file cannot be read or the
-upload fails, including a `409` for a key or period start already used by
+Exit status 2 when the source arguments break these rules, a timestamp
+lacks an offset, or a period is malformed. Exit status 1 when the file cannot
+be read or the upload fails, including a `409` for a key or period start already used by
 another version, and a `422` for a tag that is not registered
 (`error: API 422: unknown tags: …`).
 
@@ -444,8 +446,9 @@ after submitting a set.
 
 `set-effective-periods` replaces all declarations for one version. Give
 `--periods` a JSON array with an `effective_from` for each period and an
-optional `effective_until`. Use ISO 8601 UTC instants. The start is inclusive,
-the end exclusive. Omit the end to use the next declared start in the document.
+optional `effective_until`. Include a UTC offset in each ISO 8601 timestamp.
+The start is inclusive and the end is exclusive. Omit the end to use the next
+declared start in the document.
 Use `[]` to leave this version with no in-force period while keeping declared
 effective time for the document.
 

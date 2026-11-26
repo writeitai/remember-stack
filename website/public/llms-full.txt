@@ -798,7 +798,8 @@ source_kind/source_ref`.
 
 `source_modified_at` is when the source says the content was written or last
 changed: the timestamp of the meeting, the send time of a message, the
-last-modified time of a file. It must be timezone-aware UTC.
+last-modified time of a file. Supply a timezone-aware timestamp.
+RememberStack converts it to UTC.
 
 RememberStack copies it onto every claim extracted from that version as
 `asserted_at`, the time the source said it. This is one of the three clocks
@@ -3758,7 +3759,7 @@ for source, (text, date) in rebuild_documents(chunks).items():
         title=source,
         source_kind="vector-import",
         source_ref=source,
-        source_modified_at=date,  # a timezone-aware UTC datetime, or None
+        source_modified_at=date,  # a timezone-aware datetime, or None
     )
     if version.created:
         pending.append(version.version_id)
@@ -3826,8 +3827,8 @@ with psycopg.connect("postgresql://localhost/app") as conn:
     ).fetchall()
 ```
 
-Make sure the dates you pass are timezone-aware and in UTC; the client
-rejects anything else. For a naive timestamp known to be UTC, use
+Pass timezone-aware dates and the client converts them to UTC.
+For a naive timestamp already known to be UTC, attach that timezone with
 `date.replace(tzinfo=UTC)`.
 
 **Pinecone, Weaviate and other stores** follow the same pattern: page
@@ -4046,9 +4047,9 @@ sources](https://remember.dev/docs/concepts/documents-and-sources) explains the 
 
 `source_modified_at` is when the source last changed. It becomes the time
 the document's claims were asserted, which is how RememberStack reads
-"yesterday" or "next week" inside the text. It must be a timezone-aware UTC
-`datetime`; a naive or non-UTC value raises `ValueError`. It requires the
-source pair.
+"yesterday" or "next week" inside the text. Pass a timezone-aware `datetime`.
+The client converts it to UTC and raises `ValueError` for a naive datetime.
+It requires the source pair.
 
 `versioning_mode` and `source_version_ref` also require the pair. They
 matter when a file changes: see [Keep a source up to
@@ -4443,15 +4444,20 @@ What happens:
 Only the edited passages are extracted again. Passages whose text and
 neighbours did not change reuse the claims they already had.
 
-The same with the CLI:
+Pass Git's committer timestamp directly to the CLI. `git log --format=%cI`
+includes the commit's UTC offset.
 
 ```bash
-remember ingest specs/billing-migration-plan.md \
-  --source-kind file --source-ref specs/billing-migration-plan.md \
-  --source-modified-at 2026-09-17T14:00:00+00:00 \
+path=specs/billing-migration-plan.md
+remember ingest "$path" \
+  --source-kind file --source-ref "$path" \
+  --source-modified-at "$(git log -1 --format=%cI -- "$path")" \
   --versioning-mode living \
-  --source-version-ref git:4f2c9e1
+  --source-version-ref "git:$(git log -1 --format=%H -- "$path")"
 ```
+
+For a committed file, `2026-11-20T14:03:11+01:00` is accepted and recorded
+as `2026-11-20T13:03:11Z`.
 
 ## Choose snapshot or living
 
@@ -4512,8 +4518,9 @@ source](https://remember.dev/docs/concepts/updating-sources#two-different-proble
 
 ## `source_modified_at` and `source_version_ref`
 
-- `source_modified_at` is when the source last changed, as a
-  timezone-aware UTC `datetime`. Claims extracted from the version get it
+- `source_modified_at` is when the source last changed. Pass a
+  timezone-aware `datetime` in Python or an ISO 8601 timestamp with an explicit
+  offset in the CLI. RememberStack converts it to UTC. Claims get that instant
   as `asserted_at`. Send the source's own modification time, not the time you
   uploaded. It is fixed once the version exists; re-sending identical bytes
   with a different `source_modified_at` does not change it.
@@ -10902,8 +10909,9 @@ Requests with a body send JSON (`Content-Type: application/json`), except
 NDJSON, one JSON object per line (`Content-Type: application/x-ndjson`).
 Every response body is JSON.
 
-Timestamps are ISO 8601 strings. Wherever a timestamp is part of a result, it
-is UTC. Identifiers are UUID strings.
+Send timestamp fields as ISO 8601 strings with `Z` or a numeric UTC offset.
+The API converts them to UTC and returns `422` for a timestamp without
+an offset. Result timestamps are UTC. Identifiers are UUID strings.
 
 ## Errors
 
@@ -11177,13 +11185,13 @@ attribution, which travels in headers so that it never lands in access logs.
 | `title` | query | string | no | stem of `filename` | |
 | `source_kind` | query | string | no | | At least 1 character. Must be sent together with `source_ref`. |
 | `source_ref` | query | string | no | | At least 1 character. Must be sent together with `source_kind`. |
-| `source_modified_at` | query | date-time | no | | UTC only (`Z` or `+00:00`). Requires `source_kind` and `source_ref`. |
+| `source_modified_at` | query | date-time | no | | Source modification time with an explicit UTC offset. Requires `source_kind` and `source_ref`. |
 | `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
 | `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
 | `source_path` | query | string | no | | At least 1 character. Where the file lives at its source, such as a folder path or a URL. Recorded with this version's names; see [File names, titles and paths](#file-names-titles-and-paths). |
 | `version_key` | query | string | no | | 1 to 512 characters. Your own permanent name for this version, unique within the document, such as `edition-2`. Requires `source_kind` and `source_ref`. See [Versions in force](#versions-in-force). |
-| `effective_from` | query | date-time | no | | UTC only. The start (included) of the period during which this version's text is in force. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
-| `effective_until` | query | date-time | no | | UTC only. The end (excluded) of that period. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
+| `effective_from` | query | date-time | no | | The start (included) of the period during which this version's text is in force, with a UTC offset. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
+| `effective_until` | query | date-time | no | | The end (excluded) of that period, with a UTC offset. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
 | `tags` | query | string, repeatable | no | | At most 64. Registered tags, each by name (any letter case) or `tag_id`, added to the document's tags. Repeat the parameter for several: `tags=project:billing-migration&tags=kind:decision`. See [Tags](#tags). |
 | `allow_forgotten` | query | boolean | no | `false` | Add back content of a forgotten document, for this request only. See [Adding forgotten content back](#adding-forgotten-content-back). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
@@ -11394,7 +11402,7 @@ for it; it will not become ready on its own.
 | `422` | `{"code": "unknown_tag", "message": "unknown tags: …", "tags": […]}` | A tag in `tags` is not registered. `tags` lists every unregistered one as you sent it. Nothing was stored. |
 | `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
 | `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | `source_modified_at`, `source_version_ref`, `versioning_mode=living`, `version_key` or `effective_from` without a source identity. |
-| `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. The same message names `effective_from` or `effective_until` for those parameters. |
+| `422` | `source_modified_at must be timezone-aware (include Z or a numeric UTC offset)` | The timestamp has no offset. The same message names `effective_from` or `effective_until` for those parameters. |
 | `422` | `effective_until requires an earlier effective_from` | `effective_until` without `effective_from`, or not later than it. |
 | `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | A period with `versioning_mode=living`, or for a document that was first ingested as `living`. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
@@ -12204,8 +12212,8 @@ force by giving it an end.
 | Field | Type | Required | Constraints |
 |---|---|---|---|
 | `periods` | array of objects | yes | 0 to 1,000 items, no two with the same `effective_from`. |
-| `periods[].effective_from` | date-time | yes | UTC (`Z` or `+00:00`). Included. |
-| `periods[].effective_until` | date-time | no | UTC. Excluded; later than `effective_from`. Omitted: the period lasts until the next declared start in the document. |
+| `periods[].effective_from` | date-time | yes | Inclusive start with a UTC offset. |
+| `periods[].effective_until` | date-time | no | Exclusive end with a UTC offset, later than `effective_from`. Without it the period lasts until the next declared start in the document. |
 
 Unknown fields are rejected (`422`).
 
@@ -12259,7 +12267,7 @@ with a cursor keeps seeing the periods as they were when it started.
 | `404` | `version_not_found` | The version is not a live version of this document. |
 | `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version (`version_id`) already declares that start. |
 | `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | The document is `living`. |
-| `422` | validation list | A timestamp without a zero UTC offset, an end not after its start, two periods with the same start, more than 1,000 periods, or an unknown field. |
+| `422` | validation list | A timestamp without a UTC offset, an end not after its start, two periods with the same start, more than 1,000 periods, or an unknown field. |
 
 ### Example
 
@@ -12372,7 +12380,7 @@ with no references. Each object:
 | `target.section_key` | string | no | A section key in the target; omitted, the whole document. Same syntax as `from_section_key`. |
 | `binding` | `floating` \| `pinned` | no | Default `floating`: the reference points at whichever target versions are in force when it is read. `pinned` points at the one version named by `target.version_key`. |
 | `change_date_known` | boolean | with `kind: amends` | Whether the source states when its change takes effect. Only for `amends`. |
-| `change_effective_from` | date-time | with `change_date_known: true` | UTC. When the change takes effect. Only for `amends`, and forbidden when `change_date_known` is `false`. |
+| `change_effective_from` | date-time | with `change_date_known: true` | When the change takes effect, with a UTC offset. Only for `amends`, and forbidden when `change_date_known` is `false`. |
 | `source_label` | string | no | 1 to 200 characters. Your own type code for the reference, returned as you sent it. |
 | `context` | string | no | 1 to 2,000 characters. Text around the reference, shown when it is read. |
 
@@ -13404,7 +13412,7 @@ now or at a past instant.
 | `subject_entity_id` | query | UUID | no | any | |
 | `predicate` | query | string | no | any | Exact predicate name. |
 | `object_entity_id` | query | UUID | no | any | |
-| `valid_at` | query | date-time | no | now | Must be UTC (`Z` or `+00:00`). |
+| `valid_at` | query | date-time | no | now | Include `Z` or a numeric UTC offset. |
 | `limit` | query | integer | no | `50` | 1–200 relations per page. |
 | `cursor` | query | string | no | | The previous response's `next_cursor`. |
 
@@ -13437,7 +13445,7 @@ contradiction, the other sides in `contradiction`. With `valid_at`,
 | Status | `detail` | Cause |
 |---|---|---|
 | `400` | cursor error | A malformed cursor or one from another deployment or filter scope. |
-| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a zero UTC offset, or `limit` outside 1–200. |
+| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a UTC offset, or `limit` outside 1–200. |
 
 ### Example
 
@@ -14009,8 +14017,8 @@ cannot get a slot within the pool wait (default 1 second) is refused with
 instant in the world you ask about, and the instant of the memory's knowledge
 you ask from. Send both or neither. With neither, both are the time the
 request runs. The result's `temporal_scope` always has mode `as_of` and names
-both clocks. Send them in UTC (`Z` or `+00:00`); a timestamp with no offset
-or another offset is refused with `422`. See
+both clocks. Include `Z` or a numeric UTC offset in each timestamp. The API
+converts them to UTC and returns `422` if an offset is missing. See
 [Time](https://remember.dev/docs/concepts/time).
 
 Entity traversals (`/graph/neighborhood`, `/graph/path`) apply the
@@ -14069,7 +14077,7 @@ Unknown fields are rejected.
 
 | Status | `detail` | Cause |
 |---|---|---|
-| `422` | validation list | Out-of-range `hops` or `limit`, too many or too long `predicates`, only one of `valid_at` and `believed_at`, a clock without a zero UTC offset, or an unknown field. |
+| `422` | validation list | Out-of-range `hops` or `limit`, too many or too long `predicates`, only one of `valid_at` and `believed_at`, a clock without a UTC offset, or an unknown field. |
 | `503` | `live graph is busy` | No traversal slot was free in time. Retry. |
 | `503` | `live graph result unavailable` | The traversal and the rows it pointed at disagreed. Retry. |
 | `503` | `live graph timed out` | The traversal ran past its statement timeout, or its database connection failed. Retry with back-off; narrow the request if it persists. |
@@ -16850,7 +16858,7 @@ Claims ranked by meaning. Category: nomination.
 | `claim_valid_from` | timestamptz |
 | `claim_valid_until` | timestamptz |
 
-Filters: `asserted_from`, `asserted_to` (ISO 8601 instants), `doc_id`,
+Filters: `asserted_from`, `asserted_to` (ISO 8601 instants with a UTC offset), `doc_id`,
 `entity_id` (UUIDs), `source_kind` (string).
 
 ### lexical_claims
@@ -18474,15 +18482,19 @@ results.
 | `mime` | Media type; an explicit value always wins. Defaults to the type of the extension of the file's real name (for a path) or of `filename` (for bytes): `.md` is `text/markdown`, `.pdf` is `application/pdf`, on every Python installation; the full table is in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type). An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. The engine converts only media types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | `title` | A human title for the document. |
 | `source_kind`, `source_ref` | The document's stable identity: what kind of source it is and its id within that kind. Always together. Ingesting again with the same pair creates a new version of the same document when the bytes differ. See [Documents, versions and sources](https://remember.dev/docs/concepts/documents-and-sources). |
-| `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
+| `source_modified_at` | When the source itself last changed, as a timezone-aware `datetime`. Requires `source_kind`/`source_ref`. |
 | `versioning_mode` | `"snapshot"` (default) or `"living"`. `"living"` requires `source_kind`/`source_ref`. See [Updating a source](https://remember.dev/docs/concepts/updating-sources). |
 | `source_version_ref` | The source system's own revision label. Requires `source_kind`/`source_ref`. |
 | `source_path` | Where the file lives at its source, such as a folder path or a URL. Recorded with the version's names; sending the same bytes again with a different `filename`, `title` or `source_path` records the new name without creating a version. See [File names, titles and paths](https://remember.dev/docs/reference/http-api/ingest#file-names-titles-and-paths). |
 | `version_key` | Your permanent name for this version, unique within the document (1 to 512 characters). A key new to the document always creates a version; the latest version's key is accepted again only with the same bytes. Requires `source_kind`/`source_ref`. See [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force). |
-| `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
-| `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
+| `effective_from` | Start (included) of the period this version's text is in force, as a timezone-aware `datetime`. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
+| `effective_until` | End (excluded) of that period, as a timezone-aware `datetime` later than `effective_from`. Omit it for a period that lasts until the next declared start. |
 | `tags` | Registered tags, each a name (any letter case) or `tag_id`, added to the document's tags; at most 64. Ingest only adds tags and they never decide whether a version is created. See [Tags](https://remember.dev/docs/reference/http-api/ingest#tags). |
 | `allow_forgotten` | Add back content of a [forgotten](#forget_document) document, for this call only. Without it such content raises `MemoryApiError` 409 with `code` `"document_forgotten"`; while that forget is still erasing, 409 with `code` `"forget_not_complete"`. The content comes back under a new `doc_id`. See [Adding forgotten content back](https://remember.dev/docs/reference/http-api/ingest#adding-forgotten-content-back). |
+
+The SDK converts timezone-aware ingest dates, as-of times and date filters
+to UTC. For example, pass `datetime.fromisoformat("2026-11-20T14:03:11+01:00")`
+to send `2026-11-20T13:03:11+00:00`.
 
 Raises `ValueError` when:
 
@@ -18490,8 +18502,8 @@ Raises `ValueError` when:
 - `source_modified_at`, `source_version_ref`, `versioning_mode="living"`,
   `version_key`, `effective_from` or `effective_until` is given without
   `source_kind`/`source_ref`;
-- `source_modified_at`, `effective_from` or `effective_until` is naive or not
-  UTC;
+- `source_modified_at`, `effective_from` or `effective_until` is a naive
+  `datetime` without timezone information;
 - `effective_until` is given without `effective_from`, or is not later than
   it, or a period is given with `versioning_mode="living"`;
 - neither `source` nor `content` is given;
@@ -18924,8 +18936,9 @@ MemoryClient.set_effective_periods(
 
 Replaces the periods during which one version's text is in force.
 `periods` is the version's complete set: each `EffectivePeriodInput` has
-`effective_from` and an optional `effective_until`, both timezone-aware UTC
-`datetime` values (or ISO 8601 strings with a zero offset). Periods not
+`effective_from` and an optional `effective_until`, both timezone-aware
+`datetime` values or ISO 8601 strings with an explicit offset. The model
+converts them to UTC. Periods not
 listed are withdrawn and new ones declared, in one step. An empty sequence
 leaves the version with no period while the document keeps reading by
 period. Needs a `write` credential. Raises `pydantic.ValidationError`
@@ -20154,15 +20167,13 @@ argument or environment signed keys without a URL use issuer routing without
 reading an unavailable credential file. Unsigned keys without a URL refuse a
 present file and use the localhost default if the file is absent.
 
-General lookup/graph `validAt` and `believedAt` strings retain their supplied
-ISO datetime, including nonzero offsets. TypeScript requires a timezone offset
-or Z, unlike Python's permissive naive datetime handling; this keeps requests
-within the published date-time format and avoids ambiguous timestamps.
-The current engine (v0.17.1+) requires UTC on those HTTP fields and returns 422
-for a nonzero offset, just as it does for the Python client. Earlier releases
-accept offsets at the HTTP boundary; this does not guarantee that their
-downstream query implementation accepts them.
-Ingest lineage and schema fields marked UTC continue to require UTC.
+Timestamp strings for ingest, graph reads, effective periods and date filters
+require `Z` or a numeric UTC offset. The SDK converts them to UTC and
+preserves microsecond precision. For example, `2026-11-20T14:03:11+01:00`
+becomes `2026-11-20T13:03:11Z`. Top-level options such as
+`sourceModifiedAt` and `validAt` also accept a JavaScript `Date`.
+The SDK raises `InputValidationError` before sending a request for a typed
+timestamp string without an offset.
 
 ---
 
@@ -20334,20 +20345,22 @@ document; nothing is processed again.
 | `--mime` | from the file's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | `--title` | none | Human title. |
 | `--source-kind`, `--source-ref` | none | The document's stable identity. Give both or neither. Re-ingesting with the same pair makes a new version of the same document. |
-| `--source-modified-at` | none | When the source last changed, as an ISO 8601 timestamp with a UTC offset of zero, for example `2026-09-21T14:00:00+00:00`. Needs `--source-kind`/`--source-ref`. |
+| `--source-modified-at` | none | When the source last changed, for example `2026-11-20T14:03:11+01:00` from `git log --format=%cI`. Needs `--source-kind`/`--source-ref`. |
 | `--versioning-mode` | `snapshot` | `snapshot` or `living`; `living` needs `--source-kind`/`--source-ref`. See [Updating a source](https://remember.dev/docs/concepts/updating-sources). |
 | `--source-version-ref` | none | The source system's revision label. Needs `--source-kind`/`--source-ref`. |
 | `--version-key` | none | Your permanent name for this version, unique within the document, for example `edition-2`. A new key always creates a version. Needs `--source-kind`/`--source-ref`. |
-| `--effective-from` | none | When this version's text comes into force (included), as an ISO 8601 timestamp with a UTC offset of zero. Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
+| `--effective-from` | none | When this version's text comes into force (included). Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
 | `--effective-until` | none | When it stops being in force (excluded), later than `--effective-from`. Omitted: until the next declared start. |
 | `--tag` | none | A registered tag, by name or id, to add to the document. Repeat it for several. Ingest only adds tags; see [Tags](https://remember.dev/docs/reference/http-api/ingest#tags). |
 | `--allow-forgotten` | off | Add back content of a [forgotten](#remember-forget) document. Without it such a file is refused (`error: API 409: …document_forgotten…`); with it, it is accepted once that forget is no longer erasing and comes back under a new `doc_id`. See [Adding forgotten content back](https://remember.dev/docs/reference/http-api/ingest#adding-forgotten-content-back). |
 
-What a key and a period do: [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force).
+Supply ISO 8601 timestamps with `Z` or a numeric UTC offset for ingest,
+as-of reads and date filters. The CLI converts them to UTC. For version keys
+and periods, see [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force).
 
-Exit status 2 when the source arguments break these rules, a timestamp is
-not UTC, or a period is malformed; 1 when the file cannot be read or the
-upload fails, including a `409` for a key or period start already used by
+Exit status 2 when the source arguments break these rules, a timestamp
+lacks an offset, or a period is malformed. Exit status 1 when the file cannot
+be read or the upload fails, including a `409` for a key or period start already used by
 another version, and a `422` for a tag that is not registered
 (`error: API 422: unknown tags: …`).
 
@@ -20557,8 +20570,9 @@ after submitting a set.
 
 `set-effective-periods` replaces all declarations for one version. Give
 `--periods` a JSON array with an `effective_from` for each period and an
-optional `effective_until`. Use ISO 8601 UTC instants. The start is inclusive,
-the end exclusive. Omit the end to use the next declared start in the document.
+optional `effective_until`. Include a UTC offset in each ISO 8601 timestamp.
+The start is inclusive and the end is exclusive. Omit the end to use the next
+declared start in the document.
 Use `[]` to leave this version with no in-force period while keeping declared
 effective time for the document.
 
@@ -21218,11 +21232,11 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `source_kind` | string | no | 1–128 characters. Give with `source_ref`. |
 | `source_ref` | string | no | 1–512 characters. Give with `source_kind`. The same pair later makes a new version of the same document. |
 | `versioning_mode` | `"snapshot"` or `"living"` | no | Default `"snapshot"`. `"living"` needs `source_kind`/`source_ref`. |
-| `source_modified_at` | string | no | ISO 8601 timestamp in UTC (`Z` or `+00:00`). Needs `source_kind`/`source_ref`. |
+| `source_modified_at` | string | no | ISO 8601 timestamp with `Z` or a numeric UTC offset. Needs `source_kind`/`source_ref`. |
 | `source_version_ref` | string | no | 1–512 characters. Needs `source_kind`/`source_ref`. |
 | `version_key` | string | no | 1–512 characters. A permanent name for this version, unique within the document. A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Needs `source_kind`/`source_ref`. |
-| `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
-| `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
+| `effective_from` | string | no | Inclusive start of the period this version's text is in force, with a UTC offset. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
+| `effective_until` | string | no | Exclusive end of that period with a UTC offset, later than `effective_from`. Without it the period lasts until the next declared start. |
 | `tags` | array of strings | no | At most 64, no repeats, each 1–128 characters after Unicode NFC. Registered tags, by name (any letter case) or `tag_id`, to add to the document. Ingest never removes a tag. An unregistered tag refuses the whole call with `unknown_tag` before anything is stored. See [`list_tags`](#list_tags). |
 | `allow_forgotten` | boolean | no | Default `false`. Add back content of a [forgotten](#forget_document) document. Without it such content is refused with `document_forgotten`; with it, it is refused with `forget_not_complete` while that forget is still erasing, and otherwise comes back under a new `doc_id`. The tool description tells the agent to set it only after the user confirms. |
 
@@ -22277,13 +22291,13 @@ their code in `code`. `wait_for_readiness` raises
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
 | `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | A `PUT …/references` body over 64 MiB. | Send a smaller set: the limit applies to one version's complete set. |
 | `413` | `body_too_large` | The ingest body is over the cap. | Split the document. |
-| `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
+| `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a UTC offset, and an unknown `status` on `GET /query/saved`. | Check the field named by `loc`. |
 | `422` | `content_type_mismatch` | The ingest MIME hint contradicts the detected byte class. Nothing was stored. | Send the correct file and a compatible MIME hint. |
 | `422` | `ambiguous_office_format` | A legacy Office container names no single Word, Excel or PowerPoint document. | Save the file again from its Office application, or in a current format. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
 | `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
 | `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |
-| `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. The same message names `effective_from` or `effective_until`. | Send it with `Z`. |
+| `422` | `source_modified_at must be timezone-aware (include Z or a numeric UTC offset)` | Ingest timestamp without an offset. The same message names `effective_from` or `effective_until`. | Include `Z` or a numeric UTC offset. |
 | `422` | `effective_until requires an earlier effective_from` | Ingest with an end but no start, or an end not after the start. | Send a start, and an end after it. |
 | `422` | `{"code": "effective_time_requires_snapshot", …}` | An effective period for a `living` document. | Periods apply to `snapshot` documents only. |
 | `422` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `POST /ingest` or `POST /documents/{doc_id}/tags` names a tag that is not registered, or a `tags` filter on `POST /documents/search`, `POST /search/claims` or `POST /search/chunks` does; `tags` lists every one. Nothing was stored, changed or searched. | Register the tag with `POST /tags`, or fix the spelling (check `GET /tags`). |

@@ -76,13 +76,13 @@ their code in `code`. `wait_for_readiness` raises
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
 | `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | A `PUT …/references` body over 64 MiB. | Send a smaller set: the limit applies to one version's complete set. |
 | `413` | `body_too_large` | The ingest body is over the cap<Cloud> (100,000,000 bytes on remember.dev)</Cloud>. | Split the document. |
-| `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
+| `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a UTC offset, and an unknown `status` on `GET /query/saved`. | Check the field named by `loc`. |
 | `422` | `content_type_mismatch` | The ingest MIME hint contradicts the detected byte class. Nothing was stored. | Send the correct file and a compatible MIME hint. |
 | `422` | `ambiguous_office_format` | A legacy Office container names no single Word, Excel or PowerPoint document. | Save the file again from its Office application, or in a current format. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
 | `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
 | `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |
-| `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. The same message names `effective_from` or `effective_until`. | Send it with `Z`. |
+| `422` | `source_modified_at must be timezone-aware (include Z or a numeric UTC offset)` | Ingest timestamp without an offset. The same message names `effective_from` or `effective_until`. | Include `Z` or a numeric UTC offset. |
 | `422` | `effective_until requires an earlier effective_from` | Ingest with an end but no start, or an end not after the start. | Send a start, and an end after it. |
 | `422` | `{"code": "effective_time_requires_snapshot", …}` | An effective period for a `living` document. | Periods apply to `snapshot` documents only. |
 | `422` | `{"code": "unknown_tag", "message": …, "tags": […]}` | `POST /ingest` or `POST /documents/{doc_id}/tags` names a tag that is not registered, or a `tags` filter on `POST /documents/search`, `POST /search/claims` or `POST /search/chunks` does; `tags` lists every one. Nothing was stored, changed or searched. | Register the tag with `POST /tags`, or fix the spelling (check `GET /tags`). |

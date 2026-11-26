@@ -172,27 +172,28 @@ def _client(
     )
 
 
-@pytest.mark.parametrize(
-    "valid_at", ["2026-01-01T00:00:00", "2026-01-01T02:00:00+02:00"]
-)
-def test_lookup_refuses_a_naive_or_non_utc_instant(valid_at: str) -> None:
-    """G27: the instant is refused at the boundary, not echoed into a 500."""
+def test_lookup_refuses_a_naive_instant() -> None:
+    """A lookup clock requires an explicit timezone offset."""
     engine = _Engine()
     response = _client(engine=engine).get(
         "/lookup/relations",
-        params={"subject_entity_id": str(_ENTITY), "valid_at": valid_at},
+        params={"subject_entity_id": str(_ENTITY), "valid_at": "2026-01-01T00:00:00"},
     )
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["query", "valid_at"]
+    assert response.json()["detail"][0]["type"] == "timezone_aware"
     assert engine.calls == []
 
 
-def test_lookup_accepts_a_utc_instant_and_forwards_limit() -> None:
-    """A `Z` instant passes through; browse limit defaults to 50."""
+@pytest.mark.parametrize(
+    "valid_at", ["2026-01-01T00:00:00Z", "2026-01-01T05:30:00+05:30"]
+)
+def test_lookup_normalizes_the_instant_and_forwards_limit(valid_at: str) -> None:
+    """A clock with an offset reaches lookup in UTC."""
     engine = _Engine()
     client = _client(engine=engine)
     assert (
-        client.get("/lookup/relations", params={"valid_at": "2026-01-01T00:00:00Z"})
+        client.get("/lookup/relations", params={"valid_at": valid_at})
     ).status_code == 200
     assert (
         client.get(
@@ -201,6 +202,8 @@ def test_lookup_accepts_a_utc_instant_and_forwards_limit() -> None:
     ).status_code == 200
     (_, relations), (_, observations) = engine.calls
     assert relations["valid_at"] == datetime(2026, 1, 1, tzinfo=UTC)
+    assert isinstance(relations["valid_at"], datetime)
+    assert relations["valid_at"].tzinfo is UTC
     assert relations["limit"] == 50
     assert observations["limit"] == 3
 
@@ -295,20 +298,46 @@ def _coded(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
     ]
 
 
-@pytest.mark.parametrize("clock", ["2026-01-01T00:00:00", "2026-01-01T00:00:00-05:00"])
-def test_graph_refuses_a_naive_or_non_utc_clock(clock: str) -> None:
-    """G27: both graph clocks must be UTC; anything else is a 422."""
+def test_graph_refuses_a_naive_clock() -> None:
+    """Both graph clocks require an explicit timezone offset."""
     response = _client(graph=_Graph(AssertionError("never called"))).post(
         "/graph/path",
         json={
             "from_entity_id": str(_ENTITY),
             "to_entity_id": str(_OTHER),
             "valid_at": "2026-01-01T00:00:00Z",
-            "believed_at": clock,
+            "believed_at": "2026-01-01T00:00:00",
         },
     )
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["body", "believed_at"]
+    assert response.json()["detail"][0]["type"] == "timezone_aware"
+
+
+def test_graph_normalizes_both_clocks_to_utc() -> None:
+    """Both clocks reach the graph as the equivalent UTC instants."""
+    calls: list[dict[str, object]] = []
+
+    class Graph:
+        def path(self, **kwargs: object) -> Envelope:
+            calls.append(kwargs)
+            return _envelope()
+
+    response = _client(graph=Graph()).post(
+        "/graph/path",
+        json={
+            "from_entity_id": str(_ENTITY),
+            "to_entity_id": str(_OTHER),
+            "valid_at": "2026-01-01T01:00:01.123456+01:00",
+            "believed_at": "2025-12-31T19:00:00-05:00",
+        },
+    )
+    assert response.status_code == 200, response.text
+    (received,) = calls
+    valid_at, believed_at = received["valid_at"], received["believed_at"]
+    assert isinstance(valid_at, datetime) and isinstance(believed_at, datetime)
+    assert valid_at.isoformat() == "2026-01-01T00:00:01.123456+00:00"
+    assert believed_at.isoformat() == "2026-01-01T00:00:00+00:00"
 
 
 @pytest.mark.parametrize(

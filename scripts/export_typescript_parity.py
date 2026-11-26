@@ -50,6 +50,7 @@ TARGET = ROOT / "packages/typescript-client/tests/fixtures/python-methods.json"
 ID = "10000000-0000-0000-0000-000000000001"
 OTHER_ID = "10000000-0000-0000-0000-000000000002"
 STAMP = "2026-10-02T12:00:00+00:00"
+OFFSET_STAMP = "2026-10-02T14:00:00+02:00"
 REQUIRE = {"pipeline": True, "p1": True, "live_graph": True, "p3": False}
 
 
@@ -253,7 +254,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "title": "fixture title",
                 "source_kind": "agent",
                 "source_ref": "stable/ref",
-                "source_modified_at": STAMP,
+                "source_modified_at": "2026-11-20T14:03:11+01:00",
                 "versioning_mode": "living",
                 "source_version_ref": "etag-2",
                 "source_path": "/upstream/fixture.md",
@@ -277,11 +278,11 @@ def scenarios() -> list[dict[str, Any]]:
                 "query": "fixture",
                 "filters": {
                     "authors": ["alice"],
-                    "modified_from": STAMP,
+                    "modified_from": OFFSET_STAMP,
                     "include_archived": True,
                 },
                 "versions": "all",
-                "time": {"mode": "at", "at": STAMP},
+                "time": {"mode": "at", "at": OFFSET_STAMP},
                 "k": 3,
             },
         ),
@@ -335,7 +336,8 @@ def scenarios() -> list[dict[str, Any]]:
                     {
                         "kind": "amends",
                         "target": {"source_kind": "policy", "source_ref": "expenses"},
-                        "change_date_known": False,
+                        "change_date_known": True,
+                        "change_effective_from": "2026-10-02T05:00:00.123456-07:00",
                         "context": "café",
                     },
                     {
@@ -392,8 +394,8 @@ def scenarios() -> list[dict[str, Any]]:
                 "version_id": OTHER_ID,
                 "periods": [
                     {
-                        "effective_from": "2026-01-01T00:00:00Z",
-                        "effective_until": STAMP,
+                        "effective_from": "2026-01-01T05:30:00+05:30",
+                        "effective_until": OFFSET_STAMP,
                     },
                     {"effective_from": "2026-11-01T00:00:00Z"},
                 ],
@@ -528,8 +530,8 @@ def scenarios() -> list[dict[str, Any]]:
                 "source_kind": "policy",
                 "source_ref": "expenses",
                 "version_key": "edition-2",
-                "effective_from": "2026-01-01T00:00:00+00:00",
-                "effective_until": STAMP,
+                "effective_from": "2026-01-01T05:30:00.123456+05:30",
+                "effective_until": "2026-10-02T05:00:00.123456-07:00",
             },
         }
     )
@@ -1449,7 +1451,7 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
                 {"change_date_known": False, "change_effective_from": STAMP},
                 {
                     "change_date_known": True,
-                    "change_effective_from": "2026-01-01T00:00:00+02:00",
+                    "change_effective_from": "2026-01-01T00:00:00",
                 },
             )
         ]
@@ -1494,7 +1496,7 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
             )
             for periods in (
                 [{"effective_from": STAMP, "effective_until": STAMP}],
-                [{"effective_from": "2026-01-01T00:00:00+02:00"}],
+                [{"effective_from": "2026-01-01T00:00:00"}],
                 [
                     {
                         "effective_from": "2026-01-01T00:00:00.000002Z",
@@ -1503,7 +1505,7 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
                 ],
                 [
                     {"effective_from": "2026-01-01T00:00:00Z"},
-                    {"effective_from": "2026-01-01T00:00:00+00:00"},
+                    {"effective_from": "2025-12-31T19:00:00-05:00"},
                 ],
             )
         ]
@@ -1530,12 +1532,12 @@ def input_validation_fixtures() -> list[dict[str, Any]]:
                 {
                     "source_kind": "policy",
                     "source_ref": "expenses",
-                    "effective_from": "2026-01-01T00:00:00+02:00",
+                    "effective_from": "2026-01-01T00:00:00",
                 },
                 {
                     "source_kind": "policy",
                     "source_ref": "expenses",
-                    "effective_from": STAMP,
+                    "effective_from": OFFSET_STAMP,
                     "effective_until": STAMP,
                 },
                 # D159: a string is not the per-request flag; nothing is sent.
@@ -1696,7 +1698,8 @@ def tool_fixtures() -> list[dict[str, Any]]:
                     "source_kind": "policy",
                     "source_ref": "expenses",
                     "version_key": "edition-2",
-                    "effective_from": STAMP,
+                    "source_modified_at": "2026-11-20T14:03:11+01:00",
+                    "effective_from": OFFSET_STAMP,
                 },
             },
             {

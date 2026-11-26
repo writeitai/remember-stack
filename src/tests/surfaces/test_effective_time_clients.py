@@ -52,6 +52,7 @@ class _Ingest:
 
     def __init__(self) -> None:
         self.uploads: list[DocumentUpload] = []
+        self.source_modified_at: datetime | None = None
 
     def ingest(
         self,
@@ -77,6 +78,7 @@ class _Ingest:
     ) -> IngestedVersion:
         assert deployment_id == _DEPLOYMENT_ID
         self.uploads.append(upload)
+        self.source_modified_at = source_modified_at
         if upload.version_key == "taken":
             raise VersionKeyConflictError(version_key="taken", version_id=_OTHER)
         return IngestedVersion(
@@ -180,8 +182,8 @@ def test_sdk_ingest_sends_the_version_key_and_period(
         source_kind="intranet",
         source_ref="policy/travel",
         version_key="edition-2",
-        effective_from=_JAN,
-        effective_until=_JUL,
+        effective_from=datetime.fromisoformat("2026-01-01T01:00:00+01:00"),
+        effective_until=datetime.fromisoformat("2026-06-30T20:00:00-04:00"),
     )
 
     assert receipt.version_key == "edition-2"
@@ -299,7 +301,7 @@ def test_cli_ingest_forwards_the_d140_flags(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`remember ingest --version-key --effective-from --effective-until`."""
+    """`remember ingest` accepts Git's committer timestamp and period bounds."""
     client, ingest, _ = surface
     monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
     monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
@@ -317,17 +319,49 @@ def test_cli_ingest_forwards_the_d140_flags(
                 "policy/travel",
                 "--version-key",
                 "edition-1",
+                "--source-modified-at",
+                "2026-11-20T14:03:11+01:00",
                 "--effective-from",
-                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T05:30:00+05:30",
                 "--effective-until",
-                "2026-07-01T00:00:00+00:00",
+                "2026-06-30T20:00:00-04:00",
             ]
         )
         == 0
     )
     assert json.loads(capsys.readouterr().out)["version_key"] == "edition-1"
+    assert ingest.source_modified_at is not None
+    assert ingest.source_modified_at.isoformat() == "2026-11-20T13:03:11+00:00"
     upload = ingest.uploads[0]
     assert (upload.effective_from, upload.effective_until) == (_JAN, _JUL)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "flag"),
+    [
+        (
+            ["ingest", "travel.md", "--source-modified-at", "2026-11-20T14:03:11"],
+            "--source-modified-at",
+        ),
+        (["lookup", "relations", "--valid-at", "2026-11-20T14:03:11"], "--valid-at"),
+        (
+            [
+                "documents",
+                "search",
+                "--time",
+                '{"mode":"at","at":"2026-11-20T14:03:11"}',
+            ],
+            "--time",
+        ),
+    ],
+)
+def test_cli_explains_missing_timestamp_offsets(
+    arguments: list[str], flag: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A missing offset gets a flag-specific diagnostic before a request."""
+    assert cli_main(["--json", *arguments]) == 2
+    output = capsys.readouterr()
+    assert f"{flag} must be timezone-aware" in output.out + output.err
 
 
 def _payload(result: dict[str, object]) -> dict[str, object]:
@@ -367,12 +401,15 @@ def test_remember_mcp_ingest_forwards_the_d140_arguments(
             "source_kind": "intranet",
             "source_ref": "policy/travel",
             "version_key": "edition-2",
-            "effective_from": "2026-01-01T00:00:00Z",
-            "effective_until": "2026-07-01T00:00:00Z",
+            "source_modified_at": "2026-11-20T14:03:11+01:00",
+            "effective_from": "2026-01-01T01:00:00+01:00",
+            "effective_until": "2026-06-30T20:00:00-04:00",
         },
     )
 
     assert result["isError"] is False, result
+    assert ingest.source_modified_at is not None
+    assert ingest.source_modified_at.isoformat() == "2026-11-20T13:03:11+00:00"
     upload = ingest.uploads[0]
     assert (upload.version_key, upload.effective_from, upload.effective_until) == (
         "edition-2",
