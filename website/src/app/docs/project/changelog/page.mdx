@@ -24,6 +24,20 @@ release. What it serves is on
 
 </Cloud>
 
+## 0.22.2 (November 2026)
+
+**Set up remember.dev Projects from your agent.** New `remember projects
+list|show|create|set-cap|activate` and `remember keys list|create|revoke`
+commands, with matching `client.account` methods in the Python and TypeScript
+SDKs. An agent signed in with an owner's key can create a Project with an
+optional monthly cap, change the cap, activate the Project and mint a
+Project-scoped memory key. Activation is paid from the organisation's credits
+or saved card when possible; only when neither covers it does the command
+print a Checkout link for a person to complete. Owners can turn agent Project
+creation and cap changes off in Settings → Agent permissions; the commands
+then exit with the setting's link. No MCP tools were added. See
+[Set up a Project from your agent](/docs/cloud/setup-project-from-agent).
+
 ## 0.22.1 (November 2026)
 
 **New model defaults: GPT 6 Luna everywhere, Jev for facts.** Every chat seat
