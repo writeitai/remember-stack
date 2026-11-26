@@ -31,14 +31,14 @@ a table with its own account of limits and drops.
 
 ## Ways to reach the memory
 
-The same reads are available from four places. Pick by who is asking:
+Choose a surface based on how you access memory.
 
 | Surface | Use it for | What it reaches |
 |---|---|---|
-| [Python client](/docs/reference/python-sdk) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
-| [CLI](/docs/reference/cli) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
-| [MCP](/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, archive and unarchive, document search, section history, document references, the four operations, adjacent chunks, and the seven SQL query tools. |
-| [HTTP API](/docs/reference/http-api) | Any other language or runtime. | Every route; the other three are built on it. |
+| [Python SDK](/docs/reference/python-sdk) and [TypeScript SDK](/docs/reference/typescript-sdk) | Sync jobs, pipelines and applications. | Ingest, readiness, the four operations, every retrieval primitive, SQL and saved queries, with typed results. |
+| [CLI](/docs/reference/cli) (`remember`) | Terminals, scripts and agents with a shell. | Ingest, readiness, document management, the four operations, every retrieval primitive, SQL and saved queries. Prints JSON. |
+| [MCP](/docs/reference/mcp) (`remember mcp`) | Agents without a shell. | A curated set that includes ingestion, document search and history, the four operations, adjacent chunks and the seven SQL query tools. |
+| [HTTP API](/docs/reference/http-api) | Any other language or runtime. | Every route the deployment serves. |
 
 <Cloud>
 

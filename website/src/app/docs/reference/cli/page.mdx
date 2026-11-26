@@ -23,16 +23,29 @@ remember --version
 It needs Python 3.12 or newer. `uv tool install remember` installs it as a
 standalone tool; `uvx remember …` runs it without installing.
 
+Use the CLI if your agent can run shell commands. Its help and results enter
+the agent's context only when requested. MCP gives clients without a shell a
+curated tool list whose descriptions and schemas take context on every turn.
+See [MCP tools](/docs/reference/mcp).
+
 ## Commands at a glance
 
 | Group | Command | What it does |
 |---|---|---|
 | Memory | [`ingest`](#remember-ingest) | Upload one file. |
+| | [`readiness`](#remember-readiness) | Check or wait for ingested versions to be queryable. |
 | | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
 | | [`operations`](#remember-operations) | List or run assured operations by name. |
-| | [`documents`](#remember-documents) | List and search documents, archive, unarchive or forget one, or change its tags. |
+| | [`documents`](#remember-documents) | Browse and manage documents, their history, references and effective periods. |
 | | [`forget`](#remember-forget) | List forget records, or show one. |
 | | [`tags`](#remember-tags) | List, register, change and delete document tags. |
+| | [`search`](#remember-search) | Find claims or source chunks. |
+| | [`resolve`](#remember-resolve) | Resolve a name to entities. |
+| | [`lookup`](#remember-lookup) | Find relations or observations. |
+| | [`graph`](#remember-graph) | Traverse entity relations or document citations. |
+| | [`relation`](#remember-relation) | Read evidence or decisions for one relation. |
+| Diagnostics | [`deployment`](#remember-deployment) | Show the build revision, model bindings and MCP tool versions. |
+| | [`processing-layers`](#remember-processing-layers) | Show which processing layers the deployment serves. |
 | Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
 | | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
 | | [`doctor`](#remember-doctor) | Check installation, credentials, connectivity and agent configuration. |
@@ -59,12 +72,11 @@ For remember.dev:
 
 ## How the CLI finds your deployment
 
-Every command that talks to a deployment (`ingest`, `query`, `operations`,
-`documents`, `tags`, `mcp`, `connectors`, `doctor`) accepts the same connection and request flags:
+Commands that use the deployment API accept these connection and request flags.
 
 | Flag | Meaning |
 |---|---|
-| `--timeout SECONDS` | HTTP request timeout for SDK-backed commands; overrides `REMEMBER_TIMEOUT`, default 300 seconds. Set above the combined server database budgets. |
+| `--timeout SECONDS` | HTTP request timeout for SDK-backed commands. Overrides `REMEMBER_TIMEOUT`, default 300 seconds. For `readiness --wait` it also sets the polling deadline. |
 | `--api-url URL` | The deployment address. |
 | `--api-key KEY` | The API key. A bare key or a full `Bearer …` value. |
 | `--project PROJECT` | Which project to use, by id or name, when the key covers several.<Cloud> Only a remember.dev key uses it.</Cloud> |
@@ -168,7 +180,7 @@ print a warning on standard error.
 | Code | Meaning |
 |---|---|
 | 0 | Success. |
-| 1 | The request failed (network, HTTP error, rejected key), the credential file is unusable, or a check in `doctor` failed.<Cloud> Also when remember.dev cannot resolve the project.</Cloud> |
+| 1 | A request failed, the credential file is unusable, a `doctor` check failed, or `readiness --wait` stopped on a dead-lettered stage or timed out.<Cloud> Also when remember.dev cannot resolve the project.</Cloud> |
 | 2 | Usage error: unknown command or flag, missing argument, or an argument the CLI could not parse (for example `--parameters` that is not a JSON array). Also a stored key refused for the address you named. |
 
 <Cloud>
@@ -243,9 +255,32 @@ names the release step (`remember ops resume-no-route`); the exit status stays 0
 because the file is stored. See
 [File formats and converters](/docs/self-hosting/converters#files-no-route-accepts).
 
-Ingest returns before processing ends. To wait, use the SDK's
-`wait_for_readiness` or the MCP `pipeline_readiness` tool; the CLI has no
-readiness command. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
+Ingest returns before processing ends. Pass the returned `version_id` to
+[`remember readiness --wait`](#remember-readiness).
+
+### `remember readiness`
+
+```text
+remember readiness VERSION_ID... [--wait] [--timeout SECONDS] [--poll-interval SECONDS] [--require-p3]
+```
+
+Check up to 1,000 version UUIDs from ingest. The command requires the pipeline,
+search index (`p1`) and live graph to be ready. Add `--require-p3` to also
+require publication to the corpus.
+
+Without `--wait` the command checks once, prints the readiness report as JSON
+and exits 0 even if the report says `"ready": false`. With `--wait` it checks
+immediately and then every 15 seconds by default until all requested versions
+are ready. Set a positive `--poll-interval` to change that interval. The polling
+deadline defaults to 1,800 seconds. An explicit `--timeout` sets both the
+polling deadline and HTTP request timeout. `REMEMBER_TIMEOUT` sets the HTTP
+request timeout when you omit the flag.
+
+A stage marked `failed` can retry, so polling continues. A `dead_letter` stage
+stops the wait with exit status 1 and names the version and stage on stderr.
+When the polling deadline elapses, stdout contains the last report and stderr
+carries the `readiness_timeout` error. The command exits with status 1. Add
+`--json` to read errors as JSON. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
 
 ### `remember documents`
 
@@ -270,6 +305,14 @@ remember documents tag DOC_ID [--add TAG]... [--remove TAG]...
                               [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents tag DOC_ID --set TAG [--set TAG]...
                               [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents section-history DOC_ID SECTION_KEY [--time JSON] [--limit N] [--cursor CURSOR]
+remember documents references (--doc-id DOC_ID | --chunk-id CHUNK_ID) [--section-key KEY]
+                              [--direction {incoming,outgoing,both}] [--kind KIND]...
+                              [--time JSON] [--limit N] [--cursor CURSOR]
+remember documents reference-generations DOC_ID VERSION_ID
+remember documents set-references DOC_ID VERSION_ID FILE
+remember documents set-effective-periods DOC_ID VERSION_ID --periods JSON
+remember documents clear-effective-periods DOC_ID
 ```
 
 `list` prints one page of documents as JSON, newest document first, in the
@@ -370,6 +413,45 @@ remember documents tag a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b --add kind:decision 
 ```json
 {"doc_id":"a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b","tags":["kind:decision","project:billing-migration"]}
 ```
+
+#### Section history and references
+
+`section-history` follows a section key across document versions. It defaults
+to history and shows the effective intervals and section state for each
+version. Use `--time` to select a narrower scope.
+
+`references` lists links into and out of a document or chunk. With
+`--doc-id`, you can add `--section-key` to keep references for that section
+and its descendants. `--direction` defaults to `both`. Repeat `--kind` to keep
+any of the listed kinds. By default the read uses the current document
+scope, or the chunk's in-force intervals up to now with `--chunk-id`.
+Both commands take a page size of 1–200 (default 50). Pass the returned
+`next_cursor` to `--cursor` to continue.
+
+`--time` takes a JSON object. Use `{"mode":"current"}` for the current
+version, `{"mode":"history"}` for all history, or `{"mode":"at","at":"2026-09-24T12:00:00Z"}`
+for what was in force at an instant. Use `mode: "overlap"` with `from` and
+`to` to read a time window. See [Section history and references](/docs/reference/http-api/sections-and-references).
+
+`set-references` replaces the entire supplied set for one version with an
+NDJSON file. Write one [reference object](/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences)
+per line. Blank lines are ignored. An empty file supplies an empty set.
+`reference-generations` prints the version's generations newest first,
+including their status and validation errors. Check for an `active` generation
+after submitting a set.
+
+#### Effective periods
+
+`set-effective-periods` replaces all declarations for one version. Give
+`--periods` a JSON array with an `effective_from` for each period and an
+optional `effective_until`. Use ISO 8601 UTC instants. The start is inclusive,
+the end exclusive. Omit the end to use the next declared start in the document.
+Use `[]` to leave this version with no in-force period while keeping declared
+effective time for the document.
+
+`clear-effective-periods` retracts the declarations for every version of the
+document. Current reads then use the newest processed version. The engine
+preserves the declaration history. See [Versions in force](/docs/guides/versions-in-force).
 
 ### `remember forget`
 
@@ -510,6 +592,85 @@ Prints the passages immediately before and after one chunk, in document order.
 remember query adjacent-chunks 6f1c2d0e-… --window 2
 ```
 
+### `remember search`
+
+```text
+remember search claims QUERY [--k N] [--channel {semantic,bm25}] [--documents JSON] [--time JSON]
+remember search chunks QUERY [--k N] [--channel {semantic,bm25}] [--documents JSON] [--time JSON]
+```
+
+Search claims or source passages and print an evidence envelope. `--k` is
+1–400 (default 10). The channel defaults to `semantic`. Use `bm25` for a
+lexical search.
+
+Use `--documents` for a JSON object of [document filters](/docs/reference/result-types#documentsearchfilters).
+Use `--time` to select versions in force in the same format as
+[section history](#section-history-and-references). The default time scope is
+`current`. Supplying either flag sends a POST search. The plain form sends GET.
+See [Search and adjacent chunks](/docs/reference/http-api/search).
+
+### `remember resolve`
+
+```text
+remember resolve NAME [--context-entity-id ENTITY_ID]...
+```
+
+Print entity candidates for a name. Repeat `--context-entity-id` for up to eight
+known entities to help disambiguate the name. See [Entities and facts](/docs/reference/http-api/entities-and-facts).
+
+### `remember lookup`
+
+```text
+remember lookup relations [--subject-entity-id ENTITY_ID] [--predicate PREDICATE]
+                          [--object-entity-id ENTITY_ID] [--valid-at INSTANT] [--limit N] [--cursor CURSOR]
+remember lookup observations ENTITY_ID [--limit N] [--cursor CURSOR]
+remember lookup observations ENTITY_ID --property-query QUERY [--k N]
+```
+
+`relations` pages relations matching the given subject, predicate and object
+filters. Pass an ISO 8601 instant with a timezone to `--valid-at` to read
+relations that held then. Without it the command reads current relations.
+
+`observations` browses live observations for one entity. Use `--property-query`
+to rank observations by text. `--k` is 1–400 (default 10) for ranked results.
+For either browse command, `--limit` is 1–200 (default 50), and the response's
+`next_cursor` continues the browse. See [Entities and facts](/docs/reference/http-api/entities-and-facts).
+
+### `remember graph`
+
+```text
+remember graph neighborhood ENTITY_ID [--hops N] [--predicate PREDICATE]...
+                            [--valid-at INSTANT] [--believed-at INSTANT]
+                            [--limit N] [--cursor CURSOR] [--include-paths]
+remember graph path FROM_ENTITY_ID TO_ENTITY_ID [--max-hops N] [--predicate PREDICATE]...
+                    [--valid-at INSTANT] [--believed-at INSTANT]
+remember graph citation-path FROM_DOC_ID TO_DOC_ID [--max-hops N]
+```
+
+`neighborhood` reads up to four hops around an entity (default two).
+It pages results with `--limit` (1–500, default 100) and `--cursor`. Add
+`--include-paths` to include paths to the returned neighbors.
+
+`path` finds shortest paths between two entities. `citation-path` follows
+directed document references from one document to another. Both accept a
+`--max-hops` of 1–6, default four for `path` and six for `citation-path`.
+
+For entity traversal, repeat `--predicate` to keep edges with any of the
+given predicates. `--valid-at` selects when facts held, and `--believed-at`
+selects when the engine held that belief. Supply ISO 8601 instants with a
+timezone. See [Graph](/docs/reference/http-api/graph).
+
+### `remember relation`
+
+```text
+remember relation hydrate RELATION_ID
+remember relation transcript RELATION_ID
+```
+
+`hydrate` follows a relation's evidence to source documents. `transcript`
+reads the bounded record of decisions that changed the relation. Use a
+relation UUID from a lookup or fact result. See [Entities and facts](/docs/reference/http-api/entities-and-facts).
+
 ### `remember operations`
 
 ```text
@@ -533,6 +694,20 @@ remember operations run facts_context \
 
 An `--arg` without `=` exits with status 2. Operation names and arguments are
 in [Assured operations](/docs/reference/assured-operations).
+
+## Deployment diagnostics
+
+### `remember deployment`
+
+Print the deployment build revision, model bindings, document binding
+generation and supported MCP tool versions as JSON.
+See [Deployment info and health](/docs/reference/http-api/deployment).
+
+### `remember processing-layers`
+
+Print the `claims` and `facts` layer states as JSON. Each is `enabled`,
+`backfilling` or `disabled`. The deployment always processes the `sources` layer.
+See [Processing layers](/docs/concepts/pipeline#processing-layers).
 
 ## Agent commands
 

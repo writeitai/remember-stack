@@ -41,14 +41,9 @@ absent from the current release; nothing here has a date.
   references itself (links, citations, "see section 4.2"); every reference
   `document_references` returns is one you supplied with
   `PUT /documents/{doc_id}/versions/{version_id}/references`.
-- **Periods, references and section history from the CLI and MCP.** The CLI
-  declares periods only at `remember ingest`, and the MCP server only through
-  `ingest`; neither can change periods later or supply references. The CLI
-  has no section history or references command; the MCP server has the
-  `section_history` and `document_references` tools.
-- **Waiting for readiness from the CLI.** No `remember` command waits for a
-  document to be processed; use the SDK's `wait_for_readiness` or the MCP
-  `pipeline_readiness` tool.
+- **Effective-period and reference maintenance over MCP.** To change effective
+  periods after ingest, supply references, or check reference generations, use
+  the SDK or [`remember documents`](/docs/reference/cli#remember-documents).
 
 ## Knowledge
 
