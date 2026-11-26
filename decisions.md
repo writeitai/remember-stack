@@ -8675,3 +8675,24 @@ barrier, restore replay and stop-and-remount clauses.
 
 **Design.** [Archive and forget](plan/designs/archive_and_forget_design.md).
 **Analysis.** [Archive and forget](plan/analysis/archive_and_forget.md).
+
+
+## D160. Keep the previous release working through migrations
+
+**Decision (2026-11-26, binding on merge).** A release's migrations must
+preserve the reads and writes of the previous release while it runs. Add
+first. Remove or rename an object in a later release once the running code
+has stopped depending on it. Apply migrations per database before replacing
+the processes.
+
+**Why.** D159 dropped objects that its predecessor still used. Keeping
+the old schema contract through the handoff removes that failure mode.
+A DROP/RENAME lint would flag compatible cleanup and miss other breaks.
+Review the rule in the migration PR.
+
+**Consequences.** Cleanup may have to wait for an intervening release to
+serve. A deliberately incompatible change is a maintenance release. D159
+remains the historical change.
+
+[Design §6.1](plan/designs/packaging_distribution_design.md#61-migration-compatibility) ·
+[Analysis](plan/analysis/expand_contract_migrations.md).
