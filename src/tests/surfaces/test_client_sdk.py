@@ -53,6 +53,7 @@ class _OpenBoundary:
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
+        include_blockers: bool = False,
     ) -> PipelineReadinessReport:
         assert deployment_id == _DEPLOYMENT_ID
         assert version_ids == (_VERSION_ID,)
@@ -70,7 +71,9 @@ class _OpenBoundary:
                             stage="reconcile",
                             component_version="reconcile-v1",
                             status="missing",
-                            blocked_by="adjudicate_supersession",
+                            blocked_by="adjudicate_supersession"
+                            if include_blockers
+                            else None,
                         ),
                     ),
                 ),
@@ -195,12 +198,16 @@ def test_stage_blockers_are_opt_in_on_the_readiness_wire() -> None:
     )
     require = ReadinessRequirements(pipeline=True, p1=True, live_graph=True, p3=True)
     with TestClient(app) as client:
-        response = client.post(
-            "/readiness",
-            json={"version_ids": [str(_VERSION_ID)], "require": require.model_dump()},
-        )
-        assert response.status_code == 200
-        assert "blocked_by" not in response.json()["versions"][0]["stages"][0]
+        for path in ("/readiness", "/readiness?include_blockers=false"):
+            response = client.post(
+                path,
+                json={
+                    "version_ids": [str(_VERSION_ID)],
+                    "require": require.model_dump(),
+                },
+            )
+            assert response.status_code == 200
+            assert "blocked_by" not in response.json()["versions"][0]["stages"][0]
         report = MemoryClient(client=client).pipeline_readiness(
             version_ids=(_VERSION_ID,), require=require
         )

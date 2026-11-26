@@ -222,6 +222,7 @@ class _StubReadinessPort:
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
+        include_blockers: bool = False,
     ) -> PipelineReadinessReport:
         return PipelineReadinessReport(
             ready=True,

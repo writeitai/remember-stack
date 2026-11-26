@@ -284,6 +284,7 @@ class PipelineReadinessPort(Protocol):
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
+        include_blockers: bool = False,
     ) -> PipelineReadinessReport: ...
 
 
@@ -1702,23 +1703,13 @@ def _mount_pipeline_readiness(*, app: FastAPI) -> None:
         deployment: _Deployment,
         request: Annotated[PipelineReadinessRequest, Body()],
         include_blockers: Annotated[bool, Query()] = False,
-    ) -> PipelineReadinessReport | JSONResponse:
+    ) -> PipelineReadinessReport:
         """Inspect exact pipeline and explicitly requested capabilities."""
-        report = _served(deployment.pipeline_readiness).inspect(
+        return _served(deployment.pipeline_readiness).inspect(
             deployment_id=deployment.deployment_id,
             version_ids=tuple(request.version_ids),
             require=request.require,
-        )
-        if include_blockers:
-            return report
-        # Older clients validate each stage against a closed response model.
-        return JSONResponse(
-            content=report.model_dump(
-                mode="json",
-                exclude={
-                    "versions": {"__all__": {"stages": {"__all__": {"blocked_by"}}}}
-                },
-            )
+            include_blockers=include_blockers,
         )
 
 

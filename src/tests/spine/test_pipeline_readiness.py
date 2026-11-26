@@ -734,12 +734,27 @@ def test_grounding_dead_letter_explains_unscheduled_stages_until_replay(
     layers = {ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS}
     if facts_expected:
         layers.add(ProcessingLayer.FACTS)
+    expected_layers = frozenset(layers)
+
+    default_report = catalog.inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(version_id,),
+        require=_requirements(),
+        layers=expected_layers,
+    )
+    assert default_report.capabilities["pipeline"].reason == "stage_incomplete"
+    assert default_report.ready is False
+    default_stages = {stage.stage: stage for stage in default_report.versions[0].stages}
+    assert all(stage.blocked_by is None for stage in default_stages.values())
+    if facts_expected:
+        assert default_stages["normalize_relations"].status == "succeeded"
 
     report = catalog.inspect(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id, other_version_id),
         require=_requirements(),
-        layers=frozenset(layers),
+        layers=expected_layers,
+        include_blockers=True,
     )
     assert report.capabilities["pipeline"].reason == "stage_dead_lettered"
     downstream = {
@@ -770,7 +785,8 @@ def test_grounding_dead_letter_explains_unscheduled_stages_until_replay(
         deployment_id=_DEPLOYMENT_ID,
         version_ids=(version_id,),
         require=_requirements(),
-        layers=frozenset(layers),
+        layers=expected_layers,
+        include_blockers=True,
     )
     assert after_replay.capabilities["pipeline"].reason == "stage_incomplete"
     assert all(stage.blocked_by is None for stage in after_replay.versions[0].stages)
@@ -801,7 +817,10 @@ def test_supersession_dead_letter_only_blocks_its_own_branch(
             PipelineStage.ADJUDICATE_SUPERSESSION: "supersede-v1",
         },
     ).inspect(
-        deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=_requirements()
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(version_id,),
+        require=_requirements(),
+        include_blockers=True,
     )
     stages = {stage.stage: stage for stage in report.versions[0].stages}
     assert stages["embed_claim"].status == "missing"

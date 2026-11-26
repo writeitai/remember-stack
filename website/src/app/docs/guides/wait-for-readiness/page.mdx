@@ -155,7 +155,7 @@ Capability reasons when not ready:
 | Capability | Reason | Meaning |
 |---|---|---|
 | `pipeline` | `stage_incomplete` | At least one stage of one version has not finished. |
-| `pipeline` | `stage_dead_lettered` | At least one stage needs operator intervention. |
+| `pipeline` | `stage_dead_lettered` | With `include_blockers=true`, at least one stage needs operator intervention. |
 | `p1` | `search_channel_incomplete` | The search index is not ready. |
 | `live_graph` | a `graph_…` reason, such as `graph_catalog_mismatch` | The live graph failed its catalog or health check. This is a deployment problem, not a problem with your document. |
 | `p3` | `corpus_publication_incomplete` | A requested served version has no matching publication marker yet. |

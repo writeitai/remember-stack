@@ -118,6 +118,7 @@ class PipelineReadinessCatalog:
         require: ReadinessRequirements,
         layers: frozenset[ProcessingLayer] | None = None,
         discharged_as_skipped: bool = True,
+        include_blockers: bool = False,
     ) -> PipelineReadinessReport:
         """Return readiness without mutating or waiting for the pipeline.
 
@@ -127,6 +128,9 @@ class PipelineReadinessCatalog:
         expected the report is exactly the pre-D143 one. Serving readiness
         reads a discharged layer's stages as ``skipped``; a receipt passes
         ``discharged_as_skipped=False`` so only stages that really ran count.
+
+        ``include_blockers`` adds dead-letter diagnostics and checks that
+        grounding finished before marking zero-claim normalization succeeded.
         """
         from rememberstack.workers.reconcile import RECONCILE_CLAIMS_VERSION
 
@@ -329,7 +333,8 @@ class PipelineReadinessCatalog:
                 component_version = configured_version
                 row = by_key.get((version_id, stage, component_version))
                 if (
-                    stage is PipelineStage.NORMALIZE_RELATIONS
+                    include_blockers
+                    and stage is PipelineStage.NORMALIZE_RELATIONS
                     and row is not None
                     and row.get("no_claims")
                     and ground_version is not None
@@ -376,8 +381,12 @@ class PipelineReadinessCatalog:
                         }
                     )
                 )
-            stages = _with_dead_letter_blockers(
-                stages=stage_rows, facts_expected=facts_expected
+            stages = (
+                _with_dead_letter_blockers(
+                    stages=stage_rows, facts_expected=facts_expected
+                )
+                if include_blockers
+                else tuple(stage_rows)
             )
             versions.append(
                 VersionPipelineReadiness(
@@ -391,7 +400,7 @@ class PipelineReadinessCatalog:
                 )
             )
         versions_ready = all(version.ready for version in versions)
-        has_dead_letter = any(
+        report_dead_letter = include_blockers and any(
             stage.status == "dead_letter"
             for version in versions
             for stage in version.stages
@@ -407,7 +416,7 @@ class PipelineReadinessCatalog:
                     "ready"
                     if versions_ready
                     else "stage_dead_lettered"
-                    if has_dead_letter
+                    if report_dead_letter
                     else "stage_incomplete"
                 ),
             ),

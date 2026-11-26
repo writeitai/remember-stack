@@ -368,12 +368,14 @@ A `failed` stage has a retry scheduled and can still succeed. A stage at
 `dead_letter` requires operator intervention. With the optional
 `include_blockers=true` query parameter, a `missing` stage includes
 `blocked_by` when a dead-lettered prerequisite prevents it from running.
+With this option, a version with zero claims requires completed grounding
+before `normalize_relations` can report `succeeded`.
 
 Capability `reason` values:
 
 | Capability | `reason` when ready | `reason` when not ready |
 |---|---|---|
-| `pipeline` | `ready` | `stage_incomplete`, `stage_dead_lettered` |
+| `pipeline` | `ready` | `stage_incomplete`, `stage_dead_lettered` (with `include_blockers=true`) |
 | `p1` | `ready` | `search_channel_incomplete` |
 | `p3` | `ready` | `corpus_publication_incomplete`, `p3_version_not_served` |
 | `live_graph` | `ready` | `graph_server_version_mismatch`, `graph_extension_version_mismatch`, `graph_role_contract_mismatch`, `graph_helper_contract_mismatch`, `graph_catalog_mismatch`, `graph_role_runtime_limits_mismatch`, `graph_smoke_identifier_collision`, `graph_one_hop_guard_smoke_failed`, `graph_one_hop_smoke_failed`, `graph_neighborhood_smoke_failed`, `graph_path_smoke_failed`, `graph_citation_smoke_failed`, `graph_database_or_permission_failed`, `graph_smoke_contract_failed` |
