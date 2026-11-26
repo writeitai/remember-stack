@@ -425,8 +425,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.22.0](https://github.com/writeitai/remember-stack/releases/tag/v0.22.0)
-([on PyPI](https://pypi.org/project/remember/0.22.0/)).
+[v0.22.1](https://github.com/writeitai/remember-stack/releases/tag/v0.22.1)
+([on PyPI](https://pypi.org/project/remember/0.22.1/)).
 
 ## 3. Point the client at your endpoint
 
@@ -7353,8 +7353,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.22.0` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:18-0.22.0` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.22.1` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.22.1` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -7545,7 +7545,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.22.0
+git checkout v0.22.1
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -7557,7 +7557,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.22.0`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.22.1`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -10755,7 +10755,7 @@ space, `memory_v1`, a fixed set of prepared, read-only views and functions.
 The engine validates every statement against the query space before running it.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.22.0/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.22.1/openapi.json).
 
 ## Base URL
 
@@ -20172,7 +20172,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
-This page describes the `remember` CLI (v0.22.0), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.22.1), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -23046,6 +23046,52 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## 0.22.1 (November 2026)
+
+**New model defaults: GPT 6 Luna everywhere, Jev for facts.** Every chat seat
+now defaults to `openai/gpt-6-luna`: the skeleton check, section role and
+section summary (were `z-ai/glm-4.7-flash`), and the structure fallback, claim
+extraction, relation normalisation, entity resolution and the `prompt` fact
+engine (were `openai/gpt-5.6-luna`). Fact adjudication now defaults to Jev
+(`REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`), served through OpenRouter on
+your OpenRouter key (`REMEMBERSTACK_TYPESAFE_ROUTE=openrouter`), the System One
+route added in 0.21.3. No new key is needed. The ZDR start-up rules from
+0.21.3 are unchanged: with `REMEMBERSTACK_OPENROUTER_ZDR=true`, Jev must run
+on the `openrouter` route against `https://openrouter.ai` with
+`REMEMBERSTACK_TYPESAFE_BACKUP=none`, otherwise the deployment refuses to
+start. The new default route meets the first rule, so check the other two
+before you upgrade a ZDR deployment. The embedding ZDR routing and host
+allowlist (`REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ONLY`) from 0.21.3 are
+unchanged. When Jev runs through OpenRouter, `GET /deployment` reports
+`model_bindings.systemone_route` as `openrouter`. New work uses the new
+models; documents already processed are not re-run. See
+[Models](https://remember.dev/docs/self-hosting/models).
+
+**Action needed (self-hosted)** only if you want the previous models. Set them
+in `.env`: `REMEMBERSTACK_STRUCTURER_MODEL`, `REMEMBERSTACK_E2_EXTRACT_MODEL`,
+`REMEMBERSTACK_E3_NORMALIZE_MODEL`, `REMEMBERSTACK_OBS_SMALL_MODEL` and
+`REMEMBERSTACK_FACT_MODEL` to `openai/gpt-5.6-luna`;
+`REMEMBERSTACK_SKELETON_CHECK_MODEL`, `REMEMBERSTACK_ROLE_MODEL` and
+`REMEMBERSTACK_SUMMARY_MODEL` to `z-ai/glm-4.7-flash`; and
+`REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=prompt`. A deployment that already
+runs Jev on the direct route must set `REMEMBERSTACK_TYPESAFE_ROUTE=typesafe`
+to keep it.
+
+**The CLI covers the whole public API.** New commands include
+`remember readiness VERSION_ID... [--wait]`, `remember graph`, `lookup`,
+`search`, `relation`, `resolve`, `deployment` and `processing-layers`, and the
+document references, section history and effective-period commands. Every
+public operation is now reachable from the Python SDK, the TypeScript SDK and
+the CLI (`POST /chunks/adjacent` through its equivalent
+`GET /chunks/{chunk_id}/adjacent`). Agents with a shell should prefer the CLI; the MCP tool list is
+unchanged. See the [CLI reference](https://remember.dev/docs/reference/cli).
+
+**Docs and verification.** The LoCoMo results cite each comparator's
+published results and run setup. The docs site publishes `robots.txt`, its
+icons and per-page social previews. CI now installs the published `remember`
+package and runs the documented CLI, Python SDK and MCP workflows against
+Compose.
 
 ## 0.22.0 (November 2026)
 
