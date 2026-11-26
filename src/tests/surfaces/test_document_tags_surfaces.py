@@ -30,6 +30,7 @@ from remember import UnknownTag
 from remember.cli import main as cli_main
 from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import INGEST_TOOL_NAME
+from remember.mcp_tools import ROUTE_TOOL_NAMES
 from remember.mcp_tools import TAG_TOOL_NAMES
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
@@ -546,6 +547,8 @@ def test_engine_mcp_lists_tag_tools_only_when_the_deployment_serves_them(
     assert {entry["name"] for entry in _items(writable.list_tools()["tools"])} >= set(
         TAG_TOOL_NAMES
     )
-    assert {entry["name"] for entry in _items(read_only.list_tools()["tools"])} == {
-        "list_tags"
+    # The engine's own read routes are always served, so their route tools are too.
+    read_only_names = {
+        entry["name"] for entry in _items(read_only.list_tools()["tools"])
     }
+    assert read_only_names - set(ROUTE_TOOL_NAMES) == {"list_tags"}
