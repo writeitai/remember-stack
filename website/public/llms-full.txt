@@ -425,8 +425,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.22.1](https://github.com/writeitai/remember-stack/releases/tag/v0.22.1)
-([on PyPI](https://pypi.org/project/remember/0.22.1/)).
+[v0.22.2](https://github.com/writeitai/remember-stack/releases/tag/v0.22.2)
+([on PyPI](https://pypi.org/project/remember/0.22.2/)).
 
 ## 3. Point the client at your endpoint
 
@@ -7385,8 +7385,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.22.1` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:18-0.22.1` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.22.2` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:18-0.22.2` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -7577,7 +7577,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.22.1
+git checkout v0.22.2
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -7589,7 +7589,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.22.1`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.22.2`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -10787,7 +10787,7 @@ space, `memory_v1`, a fixed set of prepared, read-only views and functions.
 The engine validates every statement against the query space before running it.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.22.1/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.22.2/openapi.json).
 
 ## Base URL
 
@@ -20037,7 +20037,8 @@ accept a `time` scope. A time-scoped claims/chunks search uses POST; the ordinar
 unfiltered search retains GET. Nested scopes use the engine's wire names:
 `{ mode: 'at', at: '2026-01-01T00:00:00Z' }` or
 `{ mode: 'overlap', from: '2026-01-01T00:00:00Z', to: '2026-07-01T00:00:00Z' }`.
-ReadTime instants retain explicit offsets; ingest effective times require UTC.
+Supply `Z` or a numeric UTC offset for `ReadTime` instants and ingest effective
+times. The SDK normalizes both to UTC.
 
 `sectionHistory({ docId, sectionKey })` defaults to the complete history scope.
 `documentReferences` accepts exactly one `chunkId` or `docId`, with `sectionKey`
@@ -20216,7 +20217,7 @@ Source: https://remember.dev/docs/reference/cli
 
 Pagination follows the shared [Pagination and truncation](https://remember.dev/docs/reference/http-api#pagination-and-truncation) contract (D154).
 
-This page describes the `remember` CLI (v0.22.1), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.22.2), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -23098,6 +23099,30 @@ published as `rememberstack`.
 
 The engine is pre-1.0. A minor version can change the API; changes that
 need action from you are marked **Action needed**.
+
+## 0.22.2 (November 2026)
+
+**Set up remember.dev Projects from your agent.** New `remember projects
+list|show|create|set-cap|activate` and `remember keys list|create|revoke`
+commands, with matching `client.account` methods in the Python and TypeScript
+SDKs. An agent signed in with an owner's key can create a Project with an
+optional monthly cap, change the cap, activate the Project and mint a
+Project-scoped memory key. Activation is paid from the organisation's credits
+or saved card when possible; only when neither covers it does the command
+print a Checkout link for a person to complete. Owners can turn agent Project
+creation and cap changes off in Settings → Agent permissions; the commands
+then exit with the setting's link. No MCP tools were added.
+
+**Timestamps with UTC offsets.** The CLI, Python and TypeScript SDKs, HTTP API
+and MCP now accept ISO 8601 timestamps with numeric offsets. For example,
+`2026-11-26T16:00:00+01:00` is normalized to `2026-11-26T15:00:00Z`. Supply
+`Z` or a numeric offset on each timestamp.
+
+**Readiness waits retry temporary failures.** `remember readiness --wait`,
+Python's `wait_for_readiness` and TypeScript's `waitForReadiness` retry
+connection failures, request timeouts and transient HTTP errors such as `503`
+and `524` with backoff until the original deadline. See
+[Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness).
 
 ## 0.22.1 (November 2026)
 

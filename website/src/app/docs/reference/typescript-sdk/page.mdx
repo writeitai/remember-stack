@@ -255,7 +255,8 @@ accept a `time` scope. A time-scoped claims/chunks search uses POST; the ordinar
 unfiltered search retains GET. Nested scopes use the engine's wire names:
 `{ mode: 'at', at: '2026-01-01T00:00:00Z' }` or
 `{ mode: 'overlap', from: '2026-01-01T00:00:00Z', to: '2026-07-01T00:00:00Z' }`.
-ReadTime instants retain explicit offsets; ingest effective times require UTC.
+Supply `Z` or a numeric UTC offset for `ReadTime` instants and ingest effective
+times. The SDK normalizes both to UTC.
 
 `sectionHistory({ docId, sectionKey })` defaults to the complete history scope.
 `documentReferences` accepts exactly one `chunkId` or `docId`, with `sectionKey`

@@ -19,6 +19,18 @@ Run the smallest relevant test set while iterating, then the complete checks app
 to the change before requesting review. User-facing behavior changes must update the
 corresponding documentation in the same pull request.
 
+## Database migrations
+
+Run migrations per database before replacing the API and workers. In migration
+review, check that the previous release can still read and write the migrated
+schema while it serves. When an upgrade skips releases, check against the
+version actually running. Add replacement objects first, and drop or rename
+old objects in a later release after the serving code stops using them.
+
+For a deliberately incompatible migration, record the reason and expected
+outage in the migration comment and release notes. See
+[Migration compatibility](plan/designs/packaging_distribution_design.md#61-migration-compatibility).
+
 ## Engine OpenAPI export
 
 Run from the repository root with the locked development environment. The
