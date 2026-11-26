@@ -301,10 +301,10 @@ ports and published extension points, keeping it portable off GCP too.
   version string); every release publishes `remember` to PyPI, the GHCR image, and the compose
   file pinned to that tag. *(D76 naming as amended by D108: PyPI/CLI `remember`, container
   `remember-stack`, internal engine import `rememberstack`; canonical home `remember.dev`.)*
-- **Upgrades**: Alembic migrations run **before** workers roll (the schema doc is the source
-  of truth; migrations implement it). They are per database, so deployments that share a
-  PostgreSQL server upgrade independently and concurrently: an operator runs `setup` (or
-  `alembic upgrade head`) once per deployment database, in any order or in parallel.
+- **Upgrades**: Alembic migrations run **before** the API and workers roll.
+  Follow [the compatibility rule in §6.1](#61-migration-compatibility).
+  Deployments that share PostgreSQL upgrade independently. Run `setup`
+  (or `alembic upgrade head`) once per deployment database, in any order or in parallel.
   Migrations may touch cluster-global objects only idempotently and race-free: the shared
   `rememberstack_view_owner` role is created tolerating a concurrent creator, every other role
   is named per database (`rememberstack_query_<database>`, `rememberstack_graph_<database>`),
@@ -341,6 +341,23 @@ The portable restore order is deliberately small:
 Credentials, provider configuration, backup retention, transfer progress, retries and
 cross-store snapshot policy remain operator or `ultimate-memory-cloud` responsibilities. The
 engine never blocks starting on forget state.
+
+### 6.1 Migration compatibility
+
+A release's migrations must keep the previous release's running code
+working. Add first. Drop or rename only in a later release, once the
+version still serving has stopped reading and writing the old object.
+For a rename, add the replacement beside the old field and keep both
+versions' reads and writes correct through the switch. An operator who
+skips releases checks the rule against the version actually running.
+
+Put this rule in [`CONTRIBUTING.md`](../../CONTRIBUTING.md) and apply it
+in migration review. If a change deliberately breaks the rule, state
+the reason and expected outage in the migration comment and release notes.
+Even compatible changes can block queries while holding a database lock.
+
+[D160](../../decisions.md#d160-keep-the-previous-release-working-through-migrations) ·
+[Analysis](../analysis/expand_contract_migrations.md)
 
 ## 7. Decision interactions
 
