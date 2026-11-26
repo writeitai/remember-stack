@@ -560,21 +560,23 @@ MemoryClient.wait_for_readiness(
 ) -> PipelineReadinessReport
 ```
 
-Calls `pipeline_readiness` at once and then every `poll_interval` seconds
-until the report says `ready`, requiring `pipeline`, `p1` and `live_graph`
-(and `p3` when `require_p3=True`). Returns the ready report. The defaults,
-30 minutes and 15 seconds, are starting points sized for single documents;
-raise `timeout` for bulk loads.
+Checks readiness at once and then waits at least `poll_interval` seconds
+between checks. It requires `pipeline`, `p1` and `live_graph` (and `p3` when
+`require_p3=True`) and returns the ready report. The defaults are 30 minutes
+and 15 seconds. Raise `timeout` for bulk loads.
 
 A stage that is `failed` has a retry scheduled, so the method keeps
 polling. A stage that is `dead_letter` has used all its attempts and never
-becomes ready, so the method stops at once.
+becomes ready, so the method stops at once. The method backs off after
+retryable transport and server errors, within the same deadline.
 
 Raises:
 
 - [`PipelineDeadLettered`](#pipelinedeadlettered) when any stage of any
-  listed version is `dead_letter`;
-- `TimeoutError` when `timeout` seconds pass first;
+  listed version is `dead_letter`.
+- `TimeoutError` when `timeout` seconds pass first. Its `report` and `last_error`
+  attributes hold the last successful report and retryable error, if available.
+- [`MemoryApiError`](#memoryapierror) immediately for a non-retryable request error.
 - `ValueError` when an id is not a UUID.
 
 See [Wait until a document is queryable](/docs/guides/wait-for-readiness).

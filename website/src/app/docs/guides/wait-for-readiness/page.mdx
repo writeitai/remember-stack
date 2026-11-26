@@ -26,8 +26,9 @@ remember readiness "$VERSION_ID" --wait --timeout 1800
 
 Pass several version IDs to wait on them together. Omit `--wait` for one
 readiness report. Add `--require-p3` if your next step reads the published
-corpus. On timeout stdout contains the last report and the command exits
-with status 1. See [`remember readiness`](/docs/reference/cli#remember-readiness).
+corpus. On timeout the command exits with status 1. It prints the last
+successful report to stdout if a check returned one, and includes the last
+request error on stderr if a check failed. See [`remember readiness`](/docs/reference/cli#remember-readiness).
 
 ## Wait with the Python client
 
@@ -47,12 +48,12 @@ print(report.ready)
 ```
 
 `wait_for_readiness(version_ids, *, timeout=1800.0, poll_interval=15.0,
-require_p3=False)` checks the deployment at once, then every
-`poll_interval` seconds, until every listed version is ready, and returns
-the last report. The defaults, 30 minutes and 15 seconds, are starting
-points sized for single documents, where processing takes minutes. Raise
-`timeout` for bulk loads. If `timeout` seconds pass first, it raises
-`TimeoutError`, whose message includes the last report.
+require_p3=False)` checks the deployment at once and returns the report
+when every listed version is ready. It waits `poll_interval` seconds
+between successful checks. The defaults are 30 minutes and 15 seconds.
+Raise `timeout` for bulk loads. If the deadline passes first, `TimeoutError`
+carries the last successful report in `report` and the last retryable request
+error in `last_error`. Each is `None` when there is no corresponding result.
 
 It checks three capabilities for you: the pipeline stages for your
 versions, the search index (`p1`) and the live graph (`live_graph`). Pass
@@ -66,7 +67,31 @@ A version with `created=False` needs no new processing, but wait on it
 anyway: the earlier run of the same bytes may still be going, and a
 finished one returns ready on the first check.
 
+## Wait with the TypeScript client
+
+Pass the `version_id` from ingest to [`waitForReadiness`](/docs/reference/typescript-sdk).
+
+```typescript
+const report = await client.waitForReadiness({ versionIds: [versionId] });
+```
+
+The options `timeoutMs` and `pollIntervalMs` take milliseconds. On timeout,
+`TimeoutError` carries `report` and `lastError` when available.
+
+## Poll through temporary outages
+
+Both SDKs and `remember readiness --wait` keep polling through temporary
+connection failures, request timeouts, and HTTP `502`, `503`, `504`, and
+`524`. They also retry a server error that explicitly sets `retryable: true`.
+Consecutive failures double the retry delay from 2 seconds up to 30 seconds.
+The configured poll interval is the minimum gap between checks. A successful
+check restores the normal interval. All retries count toward the original
+deadline.
+
 ## Stop on failure
+
+Non-retryable errors, such as HTTP `401` or a server error that sets
+`retryable: false`, stop the wait immediately.
 
 A stage that is `failed` has a retry scheduled and can still succeed, so
 `wait_for_readiness` keeps waiting through it. A stage that is

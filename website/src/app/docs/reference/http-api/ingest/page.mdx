@@ -409,10 +409,11 @@ report = memory.pipeline_readiness(
 report = memory.wait_for_readiness([version.version_id])
 ```
 
-`wait_for_readiness` polls every `poll_interval` seconds (default 15) and
-raises `TimeoutError` after `timeout` seconds (default 1800). It keeps
-polling through a `failed` stage and raises `PipelineDeadLettered` at once
-on a `dead_letter` stage. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
+`wait_for_readiness` waits at least `poll_interval` seconds between polls
+(default 15) and raises `TimeoutError` after `timeout` seconds (default 1800).
+It keeps polling through a `failed` stage or a retryable request error and
+raises `PipelineDeadLettered` at once on a `dead_letter` stage. See
+[Wait until a document is queryable](/docs/guides/wait-for-readiness).
 
 ## GET /documents
 

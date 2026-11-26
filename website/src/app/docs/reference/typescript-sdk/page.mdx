@@ -194,6 +194,9 @@ record; `listForgets()` and `getForget({forgetId})` follow the erasure. See
 
 Readiness polling starts immediately, including after `created: false` receipts.
 Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
+`waitForReadiness` backs off after retryable transport and server errors.
+`pollIntervalMs` sets the minimum delay between checks. A `dead_letter` stage
+or a non-retryable error stops the wait immediately.
 When requested, `p3` checks the nullable publication marker of each served
 version. An unrelated successful publication cannot satisfy it. A ready
 single-version request exposes its export digest as `version`; aggregate
@@ -340,8 +343,10 @@ When an owner's **Settings → Agent permissions** switch blocks a call, catch
 ## Transport and errors
 
 Ordinary requests default to `timeoutMs: 300_000`. Caller cancellation raises
-AbortError with the signal reason; an HTTP deadline raises RequestTimeoutError;
-readiness expiry raises TimeoutError with its last report. These are distinct.
+`AbortError` with the signal reason. An HTTP deadline raises `RequestTimeoutError`,
+which `waitForReadiness` treats as a retryable poll failure. The overall readiness
+deadline raises `TimeoutError`. Its `report` and `lastError` properties hold the
+most recent successful report and retryable error when available.
 
 Writes are never automatically replayed. A classified read can replay once
 only after issuer resolution changes its deployment URL. Network failure/421
