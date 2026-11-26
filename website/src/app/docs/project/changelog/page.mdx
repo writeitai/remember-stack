@@ -24,6 +24,27 @@ release. What it serves is on
 
 </Cloud>
 
+## 0.22.3 (November 2026)
+
+**Spend accounting keeps the API responsive.** Spend reservation, commit and
+release now run in a dedicated pool of up to 16 worker threads, leaving the
+API event loop free to serve other requests. The API waits up to five seconds
+for each call, including time in the queue. A reservation timeout returns
+`503` before the operation runs.
+
+**Workers give temporary outages time to clear.** By default, workers retry
+transient dependency failures such as database pool timeouts after about one
+minute, then after about 20 minutes if the failure persists. The longer delays
+give the dependency time to recover before the work is dead-lettered.
+
+**Readiness can name the stage blocking progress.** Add `?include_blockers=true`
+to `POST /readiness` to see the dead-lettered prerequisite in `blocked_by` for
+a missing stage. The pipeline reason can report `stage_dead_lettered`. By
+default, HTTP clients continue to receive the existing response fields, stage
+statuses and capability reasons. The Python and TypeScript SDKs and
+`remember readiness` request the diagnostics automatically. See
+[Wait until a document is queryable](/docs/guides/wait-for-readiness).
+
 ## 0.22.2 (November 2026)
 
 **Set up remember.dev Projects from your agent.** New `remember projects

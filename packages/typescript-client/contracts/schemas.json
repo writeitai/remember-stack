@@ -4809,6 +4809,20 @@
     "PipelineStageReadiness": {
       "additionalProperties": false,
       "properties": {
+        "blocked_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Dead-lettered prerequisite preventing this missing stage from running.",
+          "title": "Blocked By",
+          "x-exclude-if-none": true
+        },
         "component_version": {
           "title": "Component Version",
           "type": "string"

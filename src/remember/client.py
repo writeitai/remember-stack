@@ -902,6 +902,7 @@ class MemoryClient:
             self._json(
                 "POST",
                 "/readiness",
+                params={"include_blockers": True},
                 json_body={
                     "version_ids": [str(version_id) for version_id in version_ids],
                     "require": require.model_dump(mode="json"),

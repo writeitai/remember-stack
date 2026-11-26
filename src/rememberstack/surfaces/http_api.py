@@ -284,6 +284,7 @@ class PipelineReadinessPort(Protocol):
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
+        include_blockers: bool = False,
     ) -> PipelineReadinessReport: ...
 
 
@@ -1699,13 +1700,16 @@ def _mount_pipeline_readiness(*, app: FastAPI) -> None:
         response_model=PipelineReadinessReport,
     )
     def pipeline_readiness(
-        deployment: _Deployment, request: Annotated[PipelineReadinessRequest, Body()]
+        deployment: _Deployment,
+        request: Annotated[PipelineReadinessRequest, Body()],
+        include_blockers: Annotated[bool, Query()] = False,
     ) -> PipelineReadinessReport:
         """Inspect exact pipeline and explicitly requested capabilities."""
         return _served(deployment.pipeline_readiness).inspect(
             deployment_id=deployment.deployment_id,
             version_ids=tuple(request.version_ids),
             require=request.require,
+            include_blockers=include_blockers,
         )
 
 

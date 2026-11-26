@@ -22,7 +22,9 @@ from rememberstack.client import ConnectorNotFoundError
 from rememberstack.client import MemoryApiError
 from rememberstack.client import MemoryClient
 from rememberstack.client import PipelineReadinessReport
+from rememberstack.client import PipelineStageReadiness
 from rememberstack.client import ReadinessRequirements
+from rememberstack.client import VersionPipelineReadiness
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
@@ -41,12 +43,17 @@ _VERSION_ID = UUID("57000000-0000-0000-0000-000000000003")
 class _OpenBoundary:
     """Keep the SDK fixture open while satisfying readiness and admission."""
 
+    def __init__(self, *, blocked: bool = False) -> None:
+        """Choose whether the readiness fixture contains an unscheduled stage."""
+        self._blocked = blocked
+
     def inspect(
         self,
         *,
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
+        include_blockers: bool = False,
     ) -> PipelineReadinessReport:
         assert deployment_id == _DEPLOYMENT_ID
         assert version_ids == (_VERSION_ID,)
@@ -54,9 +61,29 @@ class _OpenBoundary:
             pipeline=True, p1=True, live_graph=True, p3=True
         )
         checked_at = datetime.now(tz=timezone.utc)
+        versions = (
+            (
+                VersionPipelineReadiness(
+                    version_id=_VERSION_ID,
+                    ready=False,
+                    stages=(
+                        PipelineStageReadiness(
+                            stage="reconcile",
+                            component_version="reconcile-v1",
+                            status="missing",
+                            blocked_by="adjudicate_supersession"
+                            if include_blockers
+                            else None,
+                        ),
+                    ),
+                ),
+            )
+            if self._blocked
+            else ()
+        )
         return PipelineReadinessReport(
-            ready=True,
-            versions=(),
+            ready=not self._blocked,
+            versions=versions,
             capabilities={
                 name: CapabilityReadiness(
                     required=True, ready=True, checked_at=checked_at, reason="ready"
@@ -160,6 +187,31 @@ def client_surface() -> tuple[MemoryClient, _Ingest, _Connectors]:
         pipeline_readiness=boundary,
     )
     return MemoryClient(client=TestClient(app)), ingest, connectors
+
+
+def test_stage_blockers_are_opt_in_on_the_readiness_wire() -> None:
+    """New SDK calls opt in while the previous strict response shape still works."""
+    app = build_api(
+        engine=cast("QueryEngine", object()),
+        deployment_id=_DEPLOYMENT_ID,
+        pipeline_readiness=_OpenBoundary(blocked=True),
+    )
+    require = ReadinessRequirements(pipeline=True, p1=True, live_graph=True, p3=True)
+    with TestClient(app) as client:
+        for path in ("/readiness", "/readiness?include_blockers=false"):
+            response = client.post(
+                path,
+                json={
+                    "version_ids": [str(_VERSION_ID)],
+                    "require": require.model_dump(),
+                },
+            )
+            assert response.status_code == 200
+            assert "blocked_by" not in response.json()["versions"][0]["stages"][0]
+        report = MemoryClient(client=client).pipeline_readiness(
+            version_ids=(_VERSION_ID,), require=require
+        )
+    assert report.versions[0].stages[0].blocked_by == "adjudicate_supersession"
 
 
 def test_sdk_pushes_lineage_metadata_to_e0(

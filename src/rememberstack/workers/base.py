@@ -17,13 +17,18 @@ from typing import Protocol
 from typing import runtime_checkable
 from uuid import UUID
 
+import httpx
 from pydantic import BaseModel
 from pydantic import ConfigDict
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as DatabasePoolTimeout
 
 from rememberstack.core.object_transfer import current_object_transfer
 from rememberstack.core.object_transfer import object_transfer_scope
 from rememberstack.model import BudgetParked
 from rememberstack.model import ClaimedWork
+from rememberstack.model import ConverterLaneError
 from rememberstack.model import EnqueueWork
 from rememberstack.model import ExpiredLease
 from rememberstack.model import HandlerAlreadyRegisteredError
@@ -46,6 +51,50 @@ from rememberstack.ports.telemetry import TelemetryPort
 from rememberstack.spine.work_ledger import WorkLedger
 
 _logger = logging.getLogger(__name__)
+_TRANSIENT_HTTP_STATUS = frozenset(
+    {408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529}
+)
+
+
+def _dependency_unavailable(*, exception: BaseException) -> bool:
+    """Recognize dependency outages through adapters' explicit exception causes."""
+    error: BaseException | None = exception
+    while error is not None:
+        if isinstance(
+            error,
+            (
+                ConnectionError,
+                TimeoutError,
+                DatabasePoolTimeout,
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
+            ),
+        ):
+            return True
+        if isinstance(error, ConverterLaneError) and error.retryable:
+            # Also covers remote converter refusals whose wire result identifies
+            # a retryable lane but has no underlying exception object.
+            return True
+        if isinstance(error, httpx.HTTPStatusError):
+            return error.response.status_code in _TRANSIENT_HTTP_STATUS
+        if isinstance(error, ProviderCallError) and error.status_code is not None:
+            return error.status_code in _TRANSIENT_HTTP_STATUS
+        if isinstance(error, DBAPIError) and error.connection_invalidated:
+            return True
+        if isinstance(error, OperationalError):
+            sqlstate = getattr(error.orig, "sqlstate", None)
+            if isinstance(sqlstate, str) and (
+                sqlstate.startswith("08")
+                or sqlstate in {"57P01", "57P02", "57P03", "53300"}
+            ):
+                return True
+            # PgBouncer and libpq can close a connection without SQLSTATE.
+            detail = str(error.orig)
+            if "query_wait_timeout" in detail or "connection timeout expired" in detail:
+                return True
+        error = error.__cause__
+    return False
 
 
 class NoRouteHandlerError(Exception):
@@ -507,6 +556,7 @@ class Worker:
                     attempt=claimed.attempt,
                     error=traceback.format_exc(),
                     retryable=True,
+                    dependency_unavailable=_dependency_unavailable(exception=exception),
                 )
             except WorkNotRunningError:
                 # The reaper took the claim back: it requeues the item or

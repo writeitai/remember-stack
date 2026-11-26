@@ -149,7 +149,8 @@ class OpenAIDecisionsClient:
         except ValueError as error:
             if response.status_code != 200:
                 raise ProviderCallError(
-                    f"OpenAI Decisions returned HTTP {response.status_code}"
+                    f"OpenAI Decisions returned HTTP {response.status_code}",
+                    status_code=response.status_code,
                 ) from error
             raise ProviderAccountingError(
                 "Decisions returned no parseable accounting"
@@ -166,6 +167,7 @@ class OpenAIDecisionsClient:
             raise ProviderCallError(
                 f"OpenAI Decisions returned HTTP {response.status_code}",
                 usage=failure_usage,
+                status_code=response.status_code,
             )
         usage = _decision_usage(body=body, settings=self._settings, started_ns=started)
         try:

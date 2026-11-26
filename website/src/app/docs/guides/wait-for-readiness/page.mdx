@@ -137,7 +137,13 @@ restored bucket. A missing local mount does not invalidate a remote publish.
 A stage `status` is one of `missing`, `pending`, `running`, `succeeded`,
 `failed`, `dead_letter`, `skipped`. A version is ready when every expected
 stage has `succeeded` or been `skipped` and has a `finished_at`. A
-`pending` stage with a `defer_reason` of `no_route` is parked: it will not
+`missing` stage with `blocked_by` is waiting for the named dead-lettered
+stage to succeed after operator replay. For example, a dead letter in
+`adjudicate_supersession` blocks `reconcile` and `label_relation`. Claim
+embedding runs on its own branch. The SDK and CLI request this detail
+automatically. For direct HTTP requests, add `?include_blockers=true`.
+
+A `pending` stage with a `defer_reason` of `no_route` is parked: it will not
 move until an operator adds a conversion route, so waiting does not help.
 With `budget`, a spend budget has reached its ceiling: the work resumes by
 itself when the budget window ends, or sooner if an operator raises the
@@ -149,6 +155,7 @@ Capability reasons when not ready:
 | Capability | Reason | Meaning |
 |---|---|---|
 | `pipeline` | `stage_incomplete` | At least one stage of one version has not finished. |
+| `pipeline` | `stage_dead_lettered` | With `include_blockers=true`, at least one stage needs operator intervention. |
 | `p1` | `search_channel_incomplete` | The search index is not ready. |
 | `live_graph` | a `graph_…` reason, such as `graph_catalog_mismatch` | The live graph failed its catalog or health check. This is a deployment problem, not a problem with your document. |
 | `p3` | `corpus_publication_incomplete` | A requested served version has no matching publication marker yet. |
@@ -159,8 +166,9 @@ The check reads state; it never starts or speeds up work.
 ## When a version fails
 
 - **`failed`** means the last attempt failed and a retry is scheduled; it
-  can still succeed. **`dead_letter`** means the stage ran out of attempts.
-  It does not heal by waiting.
+  can still succeed. Retries after a dependency outage may wait longer,
+  with at least twenty minutes before the second retry. **`dead_letter`**
+  means the work requires operator intervention.
 - **Stuck at `pending` on the first stage** on a self-hosted deployment
   usually means the file's MIME type has no converter: the version is
   parked until one is configured. See [File formats and

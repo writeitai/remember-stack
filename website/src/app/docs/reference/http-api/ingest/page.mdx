@@ -364,15 +364,18 @@ The stages a self-hosted deployment reports, in order: `convert`, `structure`,
 `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`,
 `embed_claim`, `reconcile`, `label_relation`.
 
-A `failed` stage has a retry scheduled and can still succeed; keep polling.
-If a stage is `dead_letter`, stop polling: it used all its attempts, and
-that version will not become ready without intervention.
+A `failed` stage has a retry scheduled and can still succeed. A stage at
+`dead_letter` requires operator intervention. With the optional
+`include_blockers=true` query parameter, a `missing` stage includes
+`blocked_by` when a dead-lettered prerequisite prevents it from running.
+With this option, a version with zero claims requires completed grounding
+before `normalize_relations` can report `succeeded`.
 
 Capability `reason` values:
 
 | Capability | `reason` when ready | `reason` when not ready |
 |---|---|---|
-| `pipeline` | `ready` | `stage_incomplete` |
+| `pipeline` | `ready` | `stage_incomplete`, `stage_dead_lettered` (with `include_blockers=true`) |
 | `p1` | `ready` | `search_channel_incomplete` |
 | `p3` | `ready` | `corpus_publication_incomplete`, `p3_version_not_served` |
 | `live_graph` | `ready` | `graph_server_version_mismatch`, `graph_extension_version_mismatch`, `graph_role_contract_mismatch`, `graph_helper_contract_mismatch`, `graph_catalog_mismatch`, `graph_role_runtime_limits_mismatch`, `graph_smoke_identifier_collision`, `graph_one_hop_guard_smoke_failed`, `graph_one_hop_smoke_failed`, `graph_neighborhood_smoke_failed`, `graph_path_smoke_failed`, `graph_citation_smoke_failed`, `graph_database_or_permission_failed`, `graph_smoke_contract_failed` |
@@ -389,7 +392,7 @@ A version id the deployment does not know is not an error: every stage reads
 ### Example
 
 ```bash
-curl -s -X POST "$REMEMBER_API_URL/readiness" \
+curl -s -X POST "$REMEMBER_API_URL/readiness?include_blockers=true" \
   -H "Authorization: Bearer $REMEMBER_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"version_ids": ["0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f"],

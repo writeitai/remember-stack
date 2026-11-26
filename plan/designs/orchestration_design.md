@@ -265,6 +265,19 @@ backoff-derived `not_before`; at the total-attempt limit the row becomes `dead_l
 Non-retryable errors may dead-letter earlier. Delivery retries that never claim the row consume no
 application attempt, and budget parking can never take either failure transition.
 
+A dependency outage uses the same attempt limit and the same durable retry row. The first
+retry waits at least a minute. Further retries wait at least twenty minutes. Up to 20% random
+delay spreads jobs that failed together. A database pool timeout can hold each attempt for
+minutes, so a fan-out that retries in seconds can exhaust every attempt before the pool recovers.
+The early retry covers a short interruption and the longer wait gives the dependency time to
+recover. Waiting consumes neither a worker nor a model call. Terminal handler and accounting
+failures keep their immediate dead-letter transition.
+
+Readiness reports a missing stage's dead-lettered prerequisite when the stage is waiting on a
+success that will require replay. In the facts layer, observation adjudication opens claim
+embedding and supersession separately. A dead-lettered supersession blocks reconcile and its
+label stage. In a claims-only deployment, grounding opens both claim embedding and reconcile.
+
 ### Claim leases and the reaper (D145)
 
 A claim is only valid while the worker that made it is alive. Without a time limit, a worker that
