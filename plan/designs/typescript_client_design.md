@@ -18,8 +18,9 @@ provides `MemoryClient`, `Client`, `RememberClient` (an alias), `AccountApi`,
 `resolveConnection`, the Python client's exported model types and typed errors.
 The issuer owns its account API; this repository owns memory HTTP and client
 behavior. The public provider contract contains only issuer metadata,
-ResolvedProject and an object-shaped whoami response, never a private account
-API schema. Neither SDK owns memory truth.
+ResolvedProject and an object-shaped whoami response. The named account methods
+forward the issuer's project and key results as JSON. Neither SDK owns memory
+truth.
 
 CLI and MCP are separate library/distribution boundaries, intended coordinates
 `@rememberdev/cli` and `@rememberdev/mcp`; they depend on this client, not vice
@@ -62,7 +63,8 @@ All public client methods are covered, including assured operations; SQL and
 saved-query execution/discovery; primitive search, resolve, hydration,
 transcripts and graph operations; deployment build information; pipeline
 readiness and waiting; binary/path ingestion; document listing, metadata search,
-archive, unarchive and forget (D159); all four connector methods; `fromEnv`; and `account.whoami/get`.
+archive, unarchive and forget (D159); all four connector methods; `fromEnv`;
+and the `account` identity, read, project setup and key management methods.
 Connector methods work against a deployment composing that port and propagate
 its refusal otherwise. They do not add `/connectors` to the standard exported
 deployment profile. No method returns a fabricated success for an absent API.
@@ -321,7 +323,9 @@ Checks must answer different questions; one regenerate-and-diff is not enough.
 5. **Issuer/provider compatibility.** Publish public JSON Schemas for the
    consumed issuer metadata fields, ResolvedProject and object-shaped whoami.
    `account.get` returns unknown JSON and whoami returns a JSON object, matching
-   issuer-agnostic Python. No cloud-specific DTOs or private schemas are copied.
+   issuer-agnostic Python. Project and key calls use the issuer's JSON over the
+   same transport. Offline fixtures compare methods, paths, request bodies,
+   idempotency headers and the owner-switch refusal across both SDKs.
    Engine CI checks its source/generated provider contracts offline. The private
    cloud repo runs a one-way check on PRs/main/daily: its own exported response
    schemas and issuer metadata handler must satisfy the provider contract at
@@ -389,6 +393,7 @@ redact them; deliberate authorization access is explicit.
 | MemoryApiError | MemoryApiError: statusCode, detail, code, response, optional retryable/requestId | Error |
 | RateLimited | RateLimited: retryAfter (seconds) | MemoryApiError |
 | ProjectResolutionError, StoredKeyRefused, AccountApiUnavailable, IssuerError | Same named classes | MemoryApiError |
+| AgentPermissionDisabled | AgentPermissionDisabled with `action` and `settingsUrl` | MemoryApiError |
 | PipelineDeadLettered | PipelineDeadLettered: deadLettered, report | Error, outside MemoryApiError |
 | ConnectorNotFoundError | ConnectorNotFoundError | Error, outside MemoryApiError |
 | ValueError, Pydantic ValidationError, SandboxRejection invalid_parameter | InputValidationError, code=invalid_parameter | TypeError |

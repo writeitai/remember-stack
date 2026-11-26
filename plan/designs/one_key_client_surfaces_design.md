@@ -757,12 +757,22 @@ a key still reaches a self-hosted engine at `REMEMBER_API_URL` or localhost.
 `remember.Client` exposes an `account` namespace (`client.account.…`) that
 calls the key's issuer's account API with the same key; the issuer is found
 from `iss` and the API location from the issuer metadata's
-`remember_account_endpoint`. When the key has no
+`remember_account_endpoint` on the same origin. When the key has no
 issuer (a self-hosted shared secret) or the metadata has no
 `remember_account_endpoint`,
 `client.account` raises `AccountApiUnavailable`; memory calls are unaffected.
 The account API's operations and their permissions are defined by the issuer
 (for remember.dev, the cloud design); the engine has no account surface.
+
+The CLI's `projects` and `keys` groups use the same account methods as the
+SDKs. For these calls the key's `org` claim supplies the organisation path
+segment. The issuer checks current membership, coverage and permissions.
+For project creation and activation Checkout the clients send a request
+identifier in `Idempotency-Key`. A caller retrying the same operation can
+reuse the identifier. A Checkout result gives a person the payment URL.
+When a project write is blocked by an owner switch, the clients surface the
+issuer's action and Settings URL. These are issuer operations for clients
+such as remember.dev (Autoboard D55, cloud D117).
 
 ### 8.4 `remember login`, `logout`, `switch`
 

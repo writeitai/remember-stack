@@ -5698,6 +5698,13 @@ D32, D43's untyped statement, D98, D100–D105.
 > as is the D92 part of **Amends**. Items 1–3 and 5, the platform-CLI taxonomy and
 > the durable launcher rule remain binding.
 
+> **Project setup updated by Autoboard D55 and remember.dev D117 (2026-11-26).**
+> The console-only instruction for project creation in item 4 is superseded.
+> `remember projects` and `remember keys` use the issuer account API for
+> project setup and key management. The owner controls agent permissions in
+> the issuer's Settings, and a person completes activation payment.
+> [Issuer account calls](plan/designs/one_key_client_surfaces_design.md#83-resolving-the-data-plane-host-from-a-key)
+
 **Context.** In D62 the distribution was designed as a single monolithic package family on PyPI (`rememberstack`) carrying the `remember` CLI binary, client SDK, and server extras (`[server]`), while `remember` existed as an early standalone client package. In practice, this created three compounding problems:
 1. Users and AI coding agents were confused by the dual-package presence on PyPI, frequently installing `rememberstack` when they only needed the client or hitting executable name collisions.
 2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, an S3-compatible object store, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
