@@ -183,6 +183,7 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
     ):
         source.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         _settings(source)
+        _settings(reference)
         identity = (
             "SELECT system_identifier, current_database() FROM pg_control_system()"
         )
@@ -198,10 +199,13 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
         )
         assert reference.info.server_version // 10000 == 18
         privileges = reference.execute(_PRIVILEGES).fetchall()
+        # pg_inherits also contains partitioned indexes. Their leaf names can
+        # incorporate OIDs from the local cluster, and they have no bounds.
         partition_layout = """SELECT parent.relname, child.relname, pg_get_expr(child.relpartbound, child.oid)
                               FROM pg_inherits i JOIN pg_class child ON child.oid=i.inhrelid
                               JOIN pg_class parent ON parent.oid=i.inhparent
-                              WHERE child.relispartition ORDER BY 1,2"""
+                              WHERE child.relispartition AND child.relpartbound IS NOT NULL
+                              ORDER BY 1,2"""
         assert (
             source.execute(partition_layout).fetchall()
             == reference.execute(partition_layout).fetchall()
