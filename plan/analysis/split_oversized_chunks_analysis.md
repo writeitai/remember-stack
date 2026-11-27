@@ -2,7 +2,8 @@
 
 ## Incident and scope
 
-Two of 40 documents in a hosted WriteIt batch dead-lettered at `embed_chunk`.
+The owner reported that two of 40 documents in a hosted WriteIt batch
+dead-lettered at `embed_chunk`.
 One chunk was 71,710 characters and 3,021 whitespace tokens. E1 emits a large
 block intact, counts whitespace tokens within blocks, and sends the normalized
 slice with any D80 location header. Dense text, including YAML, OCR tables and
@@ -52,6 +53,31 @@ completion so none of those lookups can switch grids.
 [E2 lookup](../../src/rememberstack/workers/e2.py#L524-L595) ·
 [Layer lookups](../../src/rememberstack/spine/processing_layers.py#L1308-L1332) ·
 [Readiness query](../../src/rememberstack/spine/readiness.py#L843-L880).
+
+The collision continues after E2. The observation-flush guard and entity
+membership keys are version-scoped. A completed flush blocks a repack's
+fan-out even when the new grid carries new claims for the same entity.
+On the claims-only path the enqueue hits the old `embed_claim` and
+`reconcile` keys. Filtering readiness leaves both paths missing work.
+Scope flush membership and the version-level tail to the grid, with
+normalization and application receipts reusable by claim. Reusing or
+overwriting the old barrier would lose the evidence of what it completed.
+Both reconciliation modes need the selected grid because the living
+supersession query can see occurrence links from every grid of the version.
+[Flush guard](../../src/rememberstack/spine/work_ledger.py#L1538-L1547) ·
+[Flush keys](../../src/rememberstack/spine/work_ledger.py#L2585-L2641) ·
+[Claims tail](../../src/rememberstack/spine/processing_layers.py#L1093-L1138) ·
+[Application membership](../../src/rememberstack/spine/fact_applications.py#L470-L488) ·
+[Testimony selectors](../../src/rememberstack/spine/lifecycle.py#L1433-L1474).
+
+Enqueuing CHUNK again resolves to the original processing row. Even a fresh
+invocation of its ordinary handler takes the existing-cuts path. Calling the
+shared fit-and-refine code from size recovery lets the replacement and
+embed replay commit under the same locks, with the failed attempt as the
+retry guard.
+[Ledger enqueue](../../src/rememberstack/spine/work_ledger.py#L1895-L1908) ·
+[CHUNK replay](../../src/rememberstack/workers/e1.py#L132-L165) ·
+[Dead-letter transition](../../src/rememberstack/spine/work_ledger.py#L2365-L2391).
 
 Packing can produce a new grid over the same representation and spans.
 P1 upserts and E2 work deduplication use chunk IDs, so the full packing

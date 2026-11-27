@@ -209,7 +209,8 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 6. **Readiness** — The grid is embed-ready when its embed row succeeds and every
    nonblank chunk in that grid has a successful stamp matching the configured
    `(policy_generation, embedder_generation)` and input hash. An `empty_body` skip
-   satisfies the per-chunk check. The claims handoff uses that same grid.
+   satisfies the per-chunk check. Claims and facts handoffs and their barriers
+   use that same grid through the applicable tail. [D162 delivery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 K/P and other stages are unchanged by this subsection.
 
@@ -250,13 +251,14 @@ infrastructure). The operational surface over it is thin and deterministic:
 - **Replay** — reset the row to `pending`, clear its retry defer reason, choose `not_before`, raise
   `max_attempts` above the current `attempts` by the approved replay allowance, and re-announce
   its `processing_id`. Attempts never reset, so cost-ledger deduplication remains stable.
-  Unconditionally safe: the idempotency key is unchanged, so a partially-succeeded earlier attempt
-  no-ops. Bulk replay is the same operation scoped by version or error class; an explicit operator
+  Ordinary replay resumes from durable checkpoints under the original key. Bulk replay is the
+  same operation scoped by version or error class. An explicit operator
   transition may reroute it through the backfill lane when large. `payload` remains handler input
   for inspection, never the source of route, schedule, or retry state.
   [D162 size recovery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished)
-  re-runs CHUNK before reopening a confirmed size failure after verifying the
-  failed attempt's exact grid, E1 incompleteness and continuous reader isolation.
+  invokes CHUNK's shared fit-and-refine routine directly for the failed embed
+  attempt. Grid replacement and replay of that embed row commit together under
+  the lineage and work-row locks.
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.

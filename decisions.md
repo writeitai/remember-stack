@@ -1778,6 +1778,10 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Both reconcile modes use the selected packing grid's claim occurrences.
+> Testimony lost to a same-version repack follows the `reextracted` rule.
+
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
 > claims-mode component version that applies the same currency and counting logic but opens no
@@ -4013,6 +4017,10 @@ changes either child still must pass the ordinary evidence gate.
 
 ## D88. E3 normalize work is leased per claim so large documents can normalize in parallel
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> The expected claim set is per packing grid. Each claim ID and normalizer
+> generation still identify one normalization result.
+
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The claim normalize fan-out is opened only when the facts layer is entered for the version.
 
@@ -4113,6 +4121,11 @@ for an unused benchmark harness.
 **Analysis.** `plan/analysis/fact_context_authority_performance.md`.
 
 ## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
+
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Flush units and completion state add the representation and full packing
+> generation to the version's keys. Entity-global apply order still governs
+> assertions admitted by those units.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The empty path opens `adjudicate_supersession` and `embed_claim` only when the facts layer is
@@ -7617,6 +7630,10 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 
 ## D143. Processing layers can be switched off per deployment and per request
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Admission, dispatch, frontiers, readiness and receipts use the exact
+> packing grid through the claims-only or full facts tail.
+
 > **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
 > sources-only document tree with no entities, fact metadata or K links, identical
 > across claims/facts settings. No facts-setting snapshot rebuild or filtering is
@@ -8779,12 +8796,12 @@ piece gets a generation-specific ID, a fresh vector and a fresh E2 completion.
 Ineligible pieces have stable Selection keys for their Claimify consumers.
 Intact chunks keep their Selection key, date-free key and date when the
 consumed E2 inputs match across a split. Claimify still checks D122's producers.
-Each additional packing grid gets its own delivery key. Existing keys stay
-with their grids. Embed dispatch, the claims handoff and readiness use the
-same representation and full packing generation.
-E1-complete and exposed grids keep their cuts. CHUNK recovers confirmed size
-dead letters for the failed attempt's exact incomplete grid with proven reader
-isolation. Recovery carries the effective date, using E2's version-date fallback
+Each additional packing grid gets its own delivery and barrier keys through
+the claims-only or facts tail. Existing keys stay with their grids. Reconcile
+uses the selected grid for current testimony. E1-complete and exposed grids
+keep their cuts. Size recovery calls CHUNK's shared fit-and-refine routine
+for the exact failed embed attempt and commits the private recut and replay
+together. Recovery carries the effective date, using E2's version-date fallback
 for unstamped pre-D140 rows. Confirmed input rejection is terminal and capacity
 retries remain bounded.
 

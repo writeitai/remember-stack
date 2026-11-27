@@ -59,13 +59,12 @@ precise model:
   several representation generations; one is current (`current_representation_id`, swapped
   only on completion of the downstream chain);
 - the **extraction basis** = **`(representation_id, blockizer_version, structurer_version,
-  extractor_version)`** — everything whose change means "same testimony, re-derived". The
-  basis coordinate is persisted on the occurrence records (`chunk_claims` via the chunk's
-  representation, schema §7) and on currency transitions, so "which basis produced this
-  claim occurrence" is a stored fact, never an inference.
+  chunker_version, extractor_version)`**. A change re-derives the same source version's
+  testimony. `chunk_claims` identifies the chunk of each occurrence, including its
+  full packing generation. The reconcile work records the completing grid.
 
-Problem A changes a *toolchain* coordinate (converter → new representation; blockizer,
-structurer, or extractor version); problem B changes the *source* coordinate (new version).
+Problem A changes a *toolchain* coordinate (converter, blockizer, structurer, chunker or
+extractor). Problem B changes the *source* coordinate (new version).
 In both cases, claims from the *old* basis stand in an altered relation to claims from the
 new basis — and the system needs (1) vocabulary for that relation, (2) a counting rule
 invariant under basis changes, and (3) reconciliation machinery that runs when a basis
@@ -73,7 +72,7 @@ changes. But the *semantics* differ, and the design keeps them distinct — "the
 changed" (same testimony, re-derived) and "the source changed" (new testimony) are formally
 distinct events:
 
-| | Re-derivation (converter / blockizer / extractor bump) | New version (content change) |
+| | Re-derivation (converter / blockizer / repack / extractor bump) | New version (content change) |
 |---|---|---|
 | the new claims are | a **re-transcription** of the *same* testimony | **new testimony** — the source's statement changed |
 | the old claims become | redundant copies (mechanically non-current) | still-valid *historical* testimony, dated by their version |
@@ -211,14 +210,19 @@ no-op before any bytes move; unchanged bytes are a `content_hash` no-op as today
 One new, deliberately narrow notion: a claim is **current testimony** iff it belongs to its
 lineage's current extraction basis *under the lineage's mode*:
 
-- **re-derivation**: when extraction-basis generation v2 completes for a (version, chunk),
-  that chunk's v1 claims flip non-current (`reextracted` — the reason covers any
-  basis-coordinate change: an extractor bump, a **converter bump** (a new representation — a
-  better ASR/VLM re-reading unchanged media bytes, the common media event, D65), a blockizer
-  bump, or a structurer bump) — wholesale, by coordinates; no content matching;
-- **`living` version supersession**: claims whose chunks are absent from the new current
-  version flip non-current (`version_superseded`);
+- **Re-derivation.** When the selected basis completes for a version, retire claims
+  carried only by its displaced basis as `reextracted`. Keep currency for claims
+  carried into the replacement grid or another current basis under the lineage's mode.
+  Compare occurrence links so a reused claim keeps its identity.
+- **Living version supersession.** Claims absent from the selected grid of the new
+  current version flip non-current (`version_superseded`).
 - **`snapshot`**: version succession flips nothing.
+
+For a same-version repack, both reconcile modes verify the version's selected
+grid under the lineage lock before applying currency transitions. Classify
+loss from the displaced grid as `reextracted` before evaluating living-version
+supersession. Late writes from a displaced grid record historical claims.
+[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 **What currency is not.** Not supersession, not invalidation, not a validity judgment — no
 adjudicator is involved, no `invalidated_at` exists, and nothing about the claim itself
@@ -314,19 +318,18 @@ self-healing gap (a named spike, not papered over):
    — fact IDs and outcomes, never raw claim IDs (the K stale-storm guard).
 
 **Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
-not reached a version yet, the version's reconcile runs at component version
+not reached a version yet, the grid's reconcile uses base component version
 `reconcile-2026.07:claims`. It performs steps 1–5 above (and the archived-testimony path of §8)
-exactly as the full reconcile does — so facts that already exist keep exact counts and closures,
-and connector-cycle closure still defers to finalization — but opens no fact label and no window
-review. When the facts layer later reaches the version, the full reconcile runs under its own
-key and opens them. **Living supersession guard (configured deployments):** a reconcile computes
-and applies step 2's `version_superseded` transitions in one transaction under the lineage lock,
-and only when the lineage's current version is its own version or its claim occurrences are
-complete — its `embed_chunk` succeeded for its representation and chunk grid, and every chunk's
-Selection and Claimify results are committed or the grid is empty (processing layers design §5.1);
-otherwise the current version's occurrences may not exist yet and the step is skipped — the current version's own reconcile computes it
-lineage-wide. Deployments without a layer configuration run step 2 exactly as before
-([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
+so existing facts keep exact counts and closures, including connector-cycle finalization.
+Full reconcile opens fact labeling and window review when the facts layer reaches the grid.
+
+**Living supersession guard (configured deployments).** Under the lineage lock, apply
+`version_superseded` transitions when the current version's selected grid has complete
+claim occurrences. This requires its successful `embed_chunk` and committed Selection and
+Claimify results for all of its chunks. An empty grid needs only its successful embed row.
+When a successor is still processing, its own reconcile settles the lineage. Deployments
+without a layer configuration also match occurrence links to the selected grid.
+[Processing layers §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes).
 
 **Worked example, end to end.** Living document A; version 1 was extracted by extractor v1;
 chunk with block `b2` yielded claim `c1` ("Alice works at Acme") → relation `r1

@@ -31,13 +31,13 @@ representation advisory lock)
      suffix** (e.g. append `:claim-fanout-1` to the D86 string) so legacy
      version-serial rows are not confused with new coordinators at readiness.
 2. **Fan-out** when extract barrier fires: enqueue **one normalize job per
-   accepted claim** of that representation via a **single set-based insert of
+   accepted claim** of that packing grid via a **single set-based insert of
    the complete expected claim set in the same transaction as the extract
    barrier handoff** (see §5.2). Not an open-ended “chunk batches later.”
 3. **Barrier:** enqueue version-level **downstream** work only when every
-   expected claim has `status=succeeded` at the **fan-out** normalizer
-   component version. Soft assertion drops inside a claim job still yield
-   `succeeded`. `dead_letter` / `failed` / missing rows **block**.
+   expected claim of the grid has `status=succeeded` at the **fan-out**
+   normalizer component version. Soft assertion drops inside a claim job
+   still yield `succeeded`. `dead_letter` / `failed` / missing rows **block**.
 4. **Legacy** version-level rows at the **pre-fanout** component version remain
    serial handlers until drained or coordinated by migration. New images must
    not treat a **coordinator** version-level success as “normalize complete.”
@@ -46,15 +46,14 @@ representation advisory lock)
    relation upsert.
 6. **Observations:** claim jobs **buffer** observation candidates (or write
    unresolved staging if needed) but **authoritative D43 adjudication** runs in
-   a **post-barrier, per-version ordered flush** (§5.6). Entity lock alone is
+   a **post-barrier ordered flush** (§5.6). Entity lock alone is
    not order independence.
-7. **Relation supersession:** only after barrier + observation flush policy in
-   §5.6; **version-scoped** exact relation selector in §5.5. Not worker-local
-   `relation_ids`.
+7. **Relation supersession:** after the barrier and observation flush in
+   §5.6, select the grid's relations under §5.5.
 8. **Correctness does not depend on job completion order** or FIFO queues for
    **relation evidence attach**. Observation and supersession use **source
    time (`asserted_at`)** and fixed selectors. Continuous multi-doc ingest is
-   supported because barriers are **per document version**.
+   supported because barriers are **per packing grid of a document version**.
 
 ## 2. Problem (why this exists)
 
@@ -95,15 +94,16 @@ No global “ingestion quiet” wait.
 ### 5.1 Expected claim set
 
 ```text
-expected_claim_ids(deployment_id, representation_id, version_id) =
-  claim_ids accepted for chunks of that representation
+expected_claim_ids(deployment_id, representation_id, chunker_version, version_id) =
+  distinct claim_ids linked by chunk_claims to chunks of that packing grid
   at the extract generation in force when the extract barrier fired
 ```
 
-Membership is **deployment-scoped** and must join claim → chunk → representation
-→ version so payload UUIDs cannot cross tenants or versions. Re-query is OK if
-deterministic; optional durable manifest is allowed but not required if fan-out
-is one atomic set insert (§5.2).
+Membership is **deployment-scoped** and joins claim occurrences to chunks
+of the recorded representation, full packing generation and version. The
+same claim ID can satisfy multiple grids using its normalization receipt.
+The atomic fan-out (§5.2) allows a deterministic re-query of the set.
+[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 ### 5.2 Fan-out durability (binding protocol)
 
@@ -180,10 +180,9 @@ Mirror landed D84 `complete_chunk_extract`
 5. If complete → enqueue **once** (idempotent `ON CONFLICT DO NOTHING`):
    - observation flush work if modeled as separate stage, **or** inline flush
      then:
-   - `adjudicate_supersession` (version target, payload identifies version +
-     representation + normalizer generation — **no** partial relation_ids list
-     required from workers)
-   - `embed_claim` as today
+   - `adjudicate_supersession` (version target, payload identifies version,
+     representation, full packing generation and normalizer generation)
+   - `embed_claim` for the same grid
 
 **Missed-fire race:** without the advisory lock, two last claims can each see
 the other as non-succeeded under read-committed and both skip enqueue. The lock
@@ -196,12 +195,12 @@ concurrent race test only if barrier stalls are observed in production.
 
 ### 5.5 Relation supersession selector (binding)
 
-After barrier, supersession work for version V:
+After the barrier, the supersession stage uses the completing grid G:
 
 ```text
 relation_ids =
   DISTINCT relation_id from relation_evidence
-  WHERE claim_id IN expected_claim_ids(V)
+  WHERE claim_id IN expected_claim_ids(G)
     AND normalizer_version = E3_FANOUT_VERSION  # or generation match policy
 ```
 
@@ -240,9 +239,9 @@ flush stage; that is a separate design.
 
 **Ledger grain for that flush (D90):** D88 binds per-entity ordered apply under
 the entity lock. D90 binds the **ledger work unit** for that flush as a
-**version-scoped entity unit** (durable membership + `target_kind=entity` with
+**grid-scoped entity unit** (durable membership + `target_kind=entity` with
 `target_id=unit_id`) so multiple entities flush in parallel without collapsing
-shared entities across document versions. See
+shared entities across grids. See
 [e3_entity_obs_flush_fanout_design.md](e3_entity_obs_flush_fanout_design.md).
 
 ### 5.7 Readiness, connector-cycle, cutover

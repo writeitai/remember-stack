@@ -1672,7 +1672,7 @@ CREATE TABLE chunks (
   embedding_input_policy_version text,         -- LOGICAL FK → pipeline_component_versions (embedding_input_policy)
   context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
   prefixer_version text,                       -- LEGACY context_prefixer component version
-  chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (base packing generation)
+  chunker_version text,                        -- full packing generation (algorithm and parameter values)
   embedding_version text,                      -- configured embedder/model attestation for the current chunk vector
   policy_generation text,                      -- configured embedding_input_policy_version
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key

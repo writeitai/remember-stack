@@ -153,8 +153,9 @@ the previous stage, under the layer fence and the lineage lock (§3.3):
   observation flush).
 
 **A deployment without a configuration row** enters every layer directly at its boundary.
-Claims entry uses the completed embed work's grid in both configured and unconfigured
-deployments. Any deferred handoff carries that binding to admission.
+Both boundaries use the completed work's packing grid in configured and unconfigured
+deployments. Deferred admission uses the selected grid. When a repack selects a new grid,
+reevaluate its gaps and admission under the lineage lock using its own work.
 [D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 **A configured deployment** decides by one procedure:
@@ -176,17 +177,19 @@ backfill.
 So in a configured deployment the boundary and the backfill share one admission rule: a version
 enters a layer only when every earlier version of its lineage has reached that layer's frontier,
 whether the earlier version was entered by a boundary, by a backfill, or before a switch.
-Stages after a boundary need no check: their work exists only if the boundary opened it.
+Stages after admission drain under the layer setting in force at their boundary (§4.4).
 
 ### 4.2 The claims tail and the two reconcile modes
 
-Today `embed_claim` is opened only after fact adjudication, and `reconcile` performs testimony
-currency (a claims job: claims of content that a living document dropped stop being current
-testimony, evidence lifecycle §3) together with the fact steps of evidence lifecycle §5 and two
-paid follow-ups. When the facts boundary does not enter facts, it opens the **claims tail**:
+The facts path opens `embed_claim` and full `reconcile` after the grid's fact
+adjudication. When the facts boundary does not enter facts, it opens the **claims tail**:
 
-- `embed_claim` for the version (unchanged handler);
-- `reconcile` at component version **`reconcile-2026.07:claims`**.
+- `embed_claim` for the grid's distinct claim occurrences;
+- `reconcile` for the same grid, with base component version **`reconcile-2026.07:claims`**.
+
+Both paths use the grid's delivery keys. The base component version identifies
+the reconcile mode for dispatch, follow-ups and frontier updates.
+[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 The claims-mode reconcile runs **the same handler logic as the full reconcile** — currency
 transitions, recount, the zero-support policy (including the connector-cycle deferral to
@@ -198,19 +201,15 @@ is a deliberate cost exception: when such facts exist, the profile refresh can m
 calls while the facts layer is off; when no facts exist it does nothing.
 
 When the facts layer later reaches a version that ran the claims tail, the ordinary facts chain
-ends in the full reconcile at `reconcile-2026.07` — a different idempotency key — which opens
-`label_relation` and the window review as today.
+uses full reconcile for that grid, with base component version `reconcile-2026.07`,
+to open `label_relation` and the window review.
 
-**Living supersession guard (configured deployments).** A reconcile retires a `living` lineage's
-claims that are not attached to the lineage's current version. In a configured deployment the
-current version's occurrences may not be complete yet (§5.1) — it may still be converting,
-chunking, deferred behind a predecessor, or claims may be disabled — and retiring against them
-would retire claims the current version will reuse; reuse does not restore currency. So the
-supersession step reads the current version, checks that it is this reconcile's own version or that
-its occurrences are complete, computes the stale set and
-applies the transitions **in one transaction under the lineage lock**; otherwise it skips the
-step. The current version's own reconcile computes supersession lineage-wide when it runs. In a
-deployment without a configuration row the step runs exactly as today.
+**Living supersession guard (configured deployments).** In living mode, reconcile checks for
+claims absent from the selected grid of the lineage's current version. The current version may
+still be processing and need to reuse those claims. Under the lineage lock, apply transitions
+when reconcile completes that grid or its occurrences are already complete (§5.1). A successor
+still processing applies the transitions when its own reconcile runs. Deployments without a
+configuration row also use the selected grid's occurrences.
 
 ### 4.3 The claims tail waits for earlier fact work (configured deployments)
 
@@ -258,11 +257,11 @@ today's order:
 | sources, claims | `convert`, `structure`, `chunk`, `embed_chunk`, `extract_claims`, `ground_claims`, `embed_claim`, `reconcile` |
 | sources | `convert`, `structure`, `chunk`, `embed_chunk` |
 
-With facts disabled, `reconcile` is satisfied by a succeeded row at **either** component version,
-so a version that finished the full pipeline before facts were switched off stays ready. A version
-whose gap was discharged (§5.3) reports that layer's stages as `skipped`. The capability checks
-(`p1`, `live_graph`, `p3`) are unchanged. A version with an open gap in an enabled layer is not
-ready until it is processed.
+With facts disabled, `reconcile` is satisfied by a succeeded row for the expected grid in either
+mode. A version that finished that grid's full pipeline before facts were switched off stays ready.
+A version whose gap was discharged (§5.3) reports that layer's stages as `skipped`.
+Readiness also checks `p1`, `live_graph` and `p3` capabilities. An open gap in an enabled
+layer keeps the version pending until processing completes.
 
 **Metering.** Every model call is metered per stage in `cost_ledger` as today. The managed
 meter (D150) stamps the `processing_profile_id` from the measured cost class and the layers
@@ -293,17 +292,19 @@ the work ledger, never from the mere absence of rows:
 - A version's **occurrences are complete** when its `embed_chunk` row succeeded for its current
   representation and chunker generation (so its chunk grid exists and is final) and either its
   extract barrier is ready — every chunk's Selection and Claimify results are committed, so every
-  claim occurrence for that grid is attached — or the completed grid is empty. Source and
-  claims readiness and receipts match the exact grid to its required ledger work and barriers.
+  claim occurrence for that grid is attached — or the completed grid is empty. Readiness
+  and receipts match the exact grid to all required ledger work and barriers.
   [D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
-- A version reaches a layer's **frontier** when its products are reusable by later versions:
-  - **claims** — its occurrences are complete and its `embed_claim` succeeded, so every claim it
-    carries, including claims later versions will reuse by id, has its vector;
-  - **facts** — its full reconcile succeeded.
+- A version reaches a layer's **frontier** when the selected grid's products are reusable by
+  later versions:
+  - **claims** — that grid's occurrences are complete and its `embed_claim` succeeded, so every
+    claim it carries, including claims later versions will reuse by ID, has its vector;
+  - **facts** — that grid's full reconcile succeeded.
 
-Reaching the frontier deletes the version's gap of that layer. The frontier is only the ordering
-point: readiness and receipts additionally wait for `label_relation` and the other tail stages
-(§4.5). Archiving or forgetting a version deletes its gaps (§6.3). In a facts-enabled lineage the
+Under the lineage lock, the selected grid's frontier completion deletes the layer's gap and
+advances the lineage. Readiness and receipts also wait for the other required tail stages,
+including `label_relation` in the facts path (§4.5). Archiving or forgetting a version
+deletes its gaps (§6.3). In a facts-enabled lineage the
 claims frontier comes after the version's fact adjudication (that is when `embed_claim` runs), so a
 successor's extraction waits for it; this is the price of never admitting a successor whose reused
 claims are not yet embedded.

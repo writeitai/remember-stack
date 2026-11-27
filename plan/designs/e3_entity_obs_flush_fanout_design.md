@@ -20,60 +20,55 @@ r3 ordering gap closed in this revision — binding once landed on `main`
 [REVIEW_claude-opus_e3_entity_obs_flush_fanout_design_2026-08-12.md](../../design/reviews/REVIEW_claude-opus_e3_entity_obs_flush_fanout_design_2026-08-12.md),
 [REVIEW_codex-sol_e3_entity_obs_flush_fanout_design_2026-08-12.md](../../design/reviews/REVIEW_codex-sol_e3_entity_obs_flush_fanout_design_2026-08-12.md)  
 **Amends:** D88 §5.6 flush **ledger grain** (version-serial lease →
-version-scoped entity units in parallel); handoff after claim barrier in
+entity units per packing grid in parallel); handoff after claim barrier in
 [e3_claim_level_normalize_fanout_design.md](e3_claim_level_normalize_fanout_design.md)  
 **Preserves:** D43 entity block + apply-in-order;
 [observations_design.md](observations_design.md); D86 inside claim jobs; D88
 claim normalize grain  
 **Pattern:** D84/D88 advisory lock + complete + anti-join barrier + atomic
-expected-set insert — with a **durable version↔unit membership** because entity
-ids are not version-scoped
+expected-set insert with durable packing-grid membership for each unit.
 
 ## 1. Decision
 
 1. **Primary work unit** for stage `adjudicate_observations` under the entity
-   fan-out generation is one **version-scoped entity flush unit**:
+   fan-out generation is one **entity flush unit per packing grid**:
    - Durable membership row in `obs_flush_entity_units` (name fixed in impl
      migration) keyed  
-     `(deployment_id, version_id, normalizer_version, adjudicator_version, flush_version, subject_entity_id)`
+     `(deployment_id, version_id, representation_id, chunker_version, normalizer_version, subject_entity_id)`
      with a generated `unit_id uuid` primary key.
    - Ledger row: `target_kind = entity`, `target_id = unit_id` (the membership
      PK — **not** the bare canonical `subject_entity_id`),  
      `stage = adjudicate_observations`,  
-     `component_version` is the exact composed flush generation pinned under
-     D113 §2; the pre-D113 literal remains historical provenance only.
+     `component_version` pins the composed normalizer and adjudicator generations.
 2. **Why not `target_id = subject_entity_id`:** D12 work identity is
    `(deployment_id, target_kind, target_id, stage, component_version)` with no
    version column. Canonical entities are deployment-global. Two versions that
    stage observations for the same entity would `ON CONFLICT DO NOTHING` onto
-   one row and either skip a version’s slice or open a false barrier. Chunk and
-   claim grains avoid this because their structural path to a version is durable
-   and “do once” is correct for the claim; flushing entity E for version V1 is
-   **not** correct for V2.
+   one row and either skip a version’s slice or open a false barrier. A repack
+   of the same version can also add claims for the same entity, so each grid
+   needs its own membership and completion.
 3. **Fan-out** when the claim-normalize barrier would open obs flush: in **that
    same transaction**, materialize the complete unit set + ledger rows for every
-   distinct staging entity for that version + normalizer generation (or take the
-   empty path). Mark fan-out materialized on a durable version-level flag/row so
+   distinct entity in the grid's staged applications (or take the empty path).
+   Mark fan-out materialized on a durable row for that grid so
    “missing unit” is detectable.
 4. **Barrier:** supersession + embed follow-ups enqueue only when every unit in
-   the membership set for that version + normalizer generation has a terminal
+   the membership set for that grid and normalizer generation has a terminal
    `succeeded` processing row at the fan-out component version. `dead_letter` /
    `failed` / missing processing row for a membership unit **blocks**.
-5. **Within unit (one entity, one version slice):** apply assertions **serially**
+5. **Within a unit:** apply assertions **serially**
    in total order  
    `(asserted_at NULLS LAST, claim_id, statement)`  
-   within closed D113 admission, using short D110 prepare/apply transactions (§5.7).
+   under D118's [prepare and apply contract](mutable_fact_windows_design.md#4-writes-concurrency-and-retry).
 6. **Across different `subject_entity_id` values:** concurrent units are allowed.
-7. **Across different versions of the same entity:** units may exist
+7. **Across different versions or grids of the same entity:** units may exist
    concurrently in the ledger, but **at most one apply stream for a given
    `subject_entity_id` may run at a time**. When a worker holds that exclusive
    apply, it applies **all unapplied staging for that entity** across every
    non-dead-letter unit (all versions) in the **global** total order
    `(asserted_at NULLS LAST, claim_id, statement)` — not one version slice at a
-   time by `min_asserted_at` (§5.5). Unit rows remain version-scoped for barrier
-   membership; apply order is entity-global. After the stream, every unit whose
-   staging slice is empty is completed (idempotent no-op complete if another
-   stream already drained it).
+   time by `min_asserted_at` (§5.5). Unit rows are grid-scoped for barrier
+   membership. Each unit certifies its own receipt-backed completion.
 8. **Empty staging:** no units; durable empty completion **only** via
    `obs_flush_version_state` (or equivalent), **never** via a
    `document_version` processing row at the fan-out component version (§5.1,
@@ -113,47 +108,43 @@ idle. Analysis §1.
 
 ### 5.1 Stored version and entity membership
 
-D113 §2 and its SQL define the current columns and keys. Version state is keyed
-by deployment, version, normalizer, observation adjudicator and composed flush
-generation; entity units add their normalized subject and retain a generated
-`unit_id`. State records the exact expected unit count and each version's own
-source coordinates/hash/lane. Retained assertion membership points to the semantic
-application and records certified completion; it is not discarded staging.
+`obs_flush_version_state` keys materialized, empty and completed state by
+deployment, version, representation, full packing generation and normalizer.
+`obs_flush_entity_units` adds the subject and gives each unit a `unit_id`.
+Use the grid coordinates already stored on both rows. Membership points to
+D118's reusable application receipts for the grid's `chunk_claims` set.
+[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 ### 5.2 Fan-out (claim barrier transaction)
 
-When claim barrier is ready for version V + normalizer generation N:
+When the claim barrier is ready for grid G of version V at normalizer N:
 
 1. If a **non-terminal legacy** version-level `adjudicate_observations` row exists
    for V at a **pre-entity-fanout** component version → **do not fan out**; leave
-   legacy to finish (or ops dead-letters legacy first). Mutual exclusion §5.8.
-2. If membership already materialized for (V, N) → do not re-insert units;
+   legacy to finish (or ops dead-letters legacy first). See §5.7.
+2. If membership already materialized for (V, G, N) → reuse its units;
    only ensure barrier evaluation can still fire (idempotent complete path).
-3. Else `SELECT DISTINCT subject_entity_id, doc_id …` plus per-entity
-   `min(asserted_at)` from staging joined to claims for (V, N). Coordinates
-   `representation_id`, `chunker_version`, `extractor_version` come from the
-   claim-barrier parent payload / representation catalog (must be known at
-   barrier time — same as today’s version flush payload).
-4. **Empty:** upsert `obs_flush_version_state` to `empty_complete`; enqueue
-   `adjudicate_supersession` + `embed_claim` (sibling follow-ups, same stages and
-   component versions as `AdjudicateObservationsHandler` today).
+3. Otherwise derive the staged application set from G's claim occurrences
+   at the extractor generation recorded by the barrier. Use that set to
+   scope each subject's staging membership.
+4. **Empty:** record `empty_complete` for G and enqueue
+   `adjudicate_supersession` and `embed_claim` as sibling follow-ups for G.
 5. **Non-empty:** insert one membership row + one processing_state row per
    entity (`target_kind=entity`, `target_id=unit_id`, fan-out component version);
    set `obs_flush_version_state.fanout_status=materialized`.
 
 `content_hash` / `lane` from barrier parent work.
 
-Payload on the processing row is **cache only**. Handler and barrier **must**
-load coordinates from membership / `obs_flush_version_state` by `unit_id` /
-version. Missing membership → non-retryable.
+Resolve the grid from the `unit_id` in the claimed job and read its flush
+state by (V, G, N). Missing membership is a non-retryable error.
 
 ### 5.3 Handler (entity unit)
 
-D113 §§2–4 govern the current handler. Load the exact generation-qualified unit
-by `work.target_id`; resolve its canonical entity block; admit a finite set of
-eligible assertions from materialized units; help its least unapplied ordinal.
+Load the generation-qualified unit by `work.target_id`. Resolve its canonical
+entity block, admit a finite set of eligible assertions from materialized units,
+and apply the earliest outstanding assertion.
 Preparation and completed output are durable, inference holds no database locks,
-and application reacquires/revalidates the shared D110 lock/revision set.
+and application revalidates the inputs under D118's locks.
 
 Apply identity, evidence, all re-split effects and receipt/membership retirement
 atomically. Retain the membership's `applied_at` witness rather than deleting it.
@@ -164,15 +155,11 @@ or invoke version-wide staging clear.
 ### 5.4 Completion and version barrier
 
 After releasing application locks, acquire the existing representation barrier
-lock and complete only the exact leased unit. D113 §2 requires complete expected
-assertion membership, normalizer/adjudicator/flush pins, valid application and
-support receipts, and successful terminal work for every expected unit. Missing
-or failed state blocks completion; empty output needs its explicit certificate.
-
-Coordinates come from the durable version state and units, including each
-version's own hash/lane under D56. Once complete, materialize D110's relation
-units and claim-embedding continuation atomically. The old document-version
-supersession job is no longer the relation handoff authority.
+lock and complete the leased unit. Close the grid's barrier when all of its
+expected units succeeded at the pinned flush generation and its D118
+application receipts are complete. The empty path uses its own marker.
+Commit the barrier and its `adjudicate_supersession` and `embed_claim`
+enqueues together using the grid's work coordinates, hash and lane.
 
 ### 5.5 Ordering
 
@@ -264,8 +251,8 @@ version readiness remains closed until every expected receipt is certified.
 `OBS_FLUSH_VERSION`** (claim barrier empty, all-claims-already-succeeded hop,
 E1/E2 zero-chunk paths): after the component-version bump they must either:
 
-- write `obs_flush_version_state.empty_complete` + enqueue supersession +
-  `embed_claim` directly (preferred for true empty observation sets), or  
+- write `obs_flush_version_state.empty_complete` for the grid and enqueue
+  its supersession and `embed_claim` directly for a true empty set, or
 - enqueue a **legacy-component-version** version-serial row only if a serial
   path is still required for cutover — never a `document_version` row at the
   fan-out component version.
@@ -274,8 +261,8 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 
 | Surface | Rule |
 | --- | --- |
-| Readiness | Join `obs_flush_entity_units` → `processing_state` by `unit_id` for the version; empty completion signal reports succeeded for obs stage |
-| Lifecycle / connector-cycle | Wait on unit rows for the version (include DLQ); not only document_version work |
+| Readiness | Check the expected grid's unit rows by `unit_id`, or its `empty_complete` marker |
+| Lifecycle / connector-cycle | Wait on the selected grid's unit rows, including dead letters |
 | Forget | Forget's sweep (D159) deletes **units for forgotten versions** via membership `version_id` / `doc_id` and clears their work rows' error text. Do **not** null payloads or kill units solely because `target_id` equals a canonical entity id that appears in a forgotten document’s entity set (that strand unrelated versions). Staging delete-by-doc remains. |
 
 ### 5.9 Workers and indexes

@@ -64,7 +64,8 @@ Full argument: analysis §2–3.
 ### 5.1 Enqueue after embed (`_extract_follow_up`)
 
 Inputs: `ClaimedWork` from embed (or equivalent), `ChunkSource`, chunk list for
-`representation_id` + current chunker version.
+the successful embed row's recorded representation and full packing generation.
+[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 This is the **claims boundary** (D143). In a deployment without a layer
 configuration it enters as described here. In a configured deployment it records
@@ -129,8 +130,8 @@ transaction:
 
 1. Mark the current `extract_claims` / chunk row `succeeded` (same as
    `complete`).
-2. Load the expected chunk id set for `representation_id` (+ chunker generation
-   used when those chunks were written).
+2. Load the expected chunk id set for the completing chunk's representation
+   and full packing generation.
 3. Require **for every expected chunk id** a `processing_state` row with
    `stage=extract_claims`, `target_kind=chunk`, `target_id=chunk_id`,
    `component_version=E2_EXTRACTOR_VERSION`, and `status=succeeded`.

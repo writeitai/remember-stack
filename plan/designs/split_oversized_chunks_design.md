@@ -113,24 +113,47 @@ also checks its ordered D122 producer keys.
 
 ## 3. Recover through CHUNK while the grid is unpublished
 
-A grid is the pair `(representation_id, full chunker_version)` for a
-document version. CHUNK and `embed_chunk` record that pair at enqueue and
-use it at dispatch. Keep each stage's existing ledger key for the grid it
-identifies. Under the lineage lock, use the base component version for the
-first grid at an unused key. For each additional grid, append an unambiguous
-encoding of the pair to the base component version. Repeated enqueues for
-the pair resolve to its assigned key. Legacy work without a recorded
-generation counts for a grid only if retained evidence identifies the pair.
-The D56 input keys still govern paid reuse.
+### Delivery and completion
 
-E1 completion requires success of that grid's embed row. Carry its pair
-through the claims handoff, including deferred D143 admission. E2 uses it
-for Selection and Claimify dispatch, windows and barriers through the
-normalization fan-out. For older chunk-grain E2 work, the target chunk
-identifies the pair. Version-level readiness and receipts select their
-expected representation and packing generation first, then read completion
-from that grid's work and barriers. The empty path also requires success
-of that exact grid's embed row.
+A grid is the pair `(representation_id, full chunker_version)` for a
+document version. Under the lineage lock, record the version's selected
+CHUNK row when admitting a new grid and assign version-level ledger keys
+under that same lock. Bind existing keys to their grids where retained
+evidence proves the pair. Use the base component version at an unused key
+and append an unambiguous encoding of the pair for additional grids.
+Repeated enqueues resolve to the assigned key. Every version-level job
+from CHUNK through the applicable tail records the pair at enqueue and
+uses it at dispatch.
+
+E2 starts after that grid's embed row succeeds, including the empty case.
+Immediate and deferred D143 admission use the recorded grid for Selection and
+Claimify dispatch, windows and barriers. For older chunk-grain E2 work, the
+target chunk identifies the pair. Derive the tail's distinct claim IDs from
+`chunk_claims` in that grid at the pinned extractor generation.
+`embed_claim` fills missing vectors for that set. D56 governs input reuse.
+Reuse normalization and application receipts and vector stamps by claim ID.
+
+- **Facts entered.** Materialize the D90 flush marker and entity units per
+  grid, using the normalized output of that grid's claims. Check its own
+  expected units and application receipts, or record its empty completion.
+  Release `adjudicate_supersession` and `embed_claim` together from that
+  barrier. Supersession chains full `reconcile`, which opens `label_relation`.
+  [Observation flush](e3_entity_obs_flush_fanout_design.md#51-stored-version-and-entity-membership).
+- **Claims-only tail.** When D143 opens this tail, dispatch `embed_claim`
+  and claims-mode `reconcile` for the grid. The base reconcile component
+  version identifies the mode even when the ledger key includes the grid.
+  [Processing layers](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes).
+
+Readiness and receipts select the expected grid first and check that grid's
+required work and barriers. D143 admits and closes gaps for the selected
+grid under the lineage lock. Both reconcile modes check that selection under
+the same lock before changing current testimony. Claims carried into the
+selected grid keep their currency. Claims lost solely to the repack are
+retired as `reextracted`, and late claims from a displaced grid are historical.
+Living supersession checks occurrences in the current version's selected
+grid. [Testimony currency](evidence_lifecycle_design.md#3-testimony-currency-d54).
+
+### Private size recovery
 
 Recovery starts from the failed attempt's pair. Leave legacy work in the
 dead letter queue (DLQ) if retained evidence cannot identify its grid.
@@ -144,25 +167,29 @@ If isolation is uncertain, keep the grid and dead letter.
 [E1 completion signal](processing_layers_design.md#51-gaps-and-frontiers) ·
 [Legacy visibility and replay analysis](../analysis/split_oversized_chunks_analysis.md#incident-and-scope).
 
-Re-run CHUNK on the immutable E0 inputs for the same version. Use committed
-cuts as bounds so each new piece has one recorded parent. Take the recorded
-`text_origin_at` from each intact row or piece's parent, including unknown.
+Size recovery names the failed `embed_chunk` row and attempt number. Load
+the grid's immutable E0 inputs and take the lineage and work-row locks. If
+the row advanced past that dead letter, return its current state and
+re-announce any pending work. A later failure requires its own attempt
+number. Verify the exact failed attempt, liveness, E1 incompleteness and
+continuous isolation under the locks.
+
+Invoke CHUNK's shared fit-and-refine routine directly in that transaction
+with the qualified binding for the resumed embed. Ordinary CHUNK delivery
+replays committed cuts. Use those cuts as bounds so each new piece has one
+recorded parent. Take `text_origin_at` from each intact row or piece's parent,
+including unknown.
 For an unstamped pre-D140 intact row with both `text_origin_at` and
 `reuse_identity_hash` unset, use E2's legacy fallback from the same version
 (`source_modified_at`, then `published_at`, then unknown). Store the effective
 date on rebuilt rows and use it in the date-sensitive Selection key under
 §2, the E2 header and fresh claims' `asserted_at`.
 
-Under the lineage lock, fence obsolete attempts and verify liveness, E1
-incompleteness, continuous isolation and the failed work row for the exact
-grid. Replace any recut private grid and remove its superseded embedding
-stamps and P1 rows before reopening that same embed ledger row. Keep its
-attempt count and error history. Hold the work row lock through replacement
-and reset, then announce the committed work. If all cuts still fit, CHUNK
-keeps the grid and reopens embed work through the same ledger transition.
-Repeated requests for the failed attempt resume the selected work. E1 writes
-verify liveness and a running, unexpired attempt under the same locks through
-commit.
+Replace any recut private rows, remove their superseded embedding stamps and
+P1 rows, and reopen only the failed embed row with its attempt count and error
+history. If all cuts fit, commit just the replay transition. Announce pending
+work after commit. E1 writes verify liveness and a running, unexpired attempt
+under the same locks through commit.
 
 ## 4. Rejection and retry
 
@@ -245,13 +272,23 @@ fitting grid can inherit tagged keys from an earlier split grid and pass
 them to the next fitting version.
 
 Repack one representation with a parameter change after its original grid
-completes. Check that the original ledger keys still resolve, the new grid
-gets its own delivery, and readiness checks that grid's embed and required
-claims work, including the empty case. Check immediate and deferred claims
-handoffs. Recover a failed private grid with a newer generation present.
-Check that recovery reopens the exact failed row and E2 uses that grid even
-when its configured generation differs. An ambiguous legacy failure stays
-dead-lettered.
+completes. Run with facts enabled and disabled. Require a new claim to get a
+stored vector and the new grid to finish its applicable tail, including
+flush, full reconcile and labels with facts enabled, or claims-mode
+reconcile with facts disabled. The facts-enabled case reuses a subject from
+the old flush and requires a new unit and applied receipt for the new claim.
+Verify that reconcile retires old-only testimony, that prior ledger keys resolve,
+and that readiness and receipts wait for the new grid. Cover immediate and
+deferred claims handoffs and empty completion. Verify zero paid passage
+embeddings for unchanged D80 inputs.
+
+With CHUNK already succeeded, dead-letter private `embed_chunk` on size and
+issue repeated recovery requests for that exact failed attempt while a newer
+grid exists. Require one recut and one replay allowance, the same succeeded
+CHUNK row, and the same embed row and preserved error history. E2 must use
+the recovered grid even when its configured generation differs. A repeated
+request for the first failure must leave a later dead letter alone. An
+ambiguous legacy failure stays dead-lettered.
 
 In private recovery, recut a dated grid's neighbor while the intact target's
 recorded origin predates the version. Check that the rebuilt Selection key,
