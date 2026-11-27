@@ -8188,6 +8188,11 @@ must qualify before advertising chargeable evidence.
 > amends the migration lock wait and retry policy. The session guard and
 > resumable concurrent-index procedure still apply.
 
+> **Proposed fact-path amendment (2026-11-27).** Apply the fact gate's
+> per-partition allowance to claim and chunk coordinates reached through
+> the candidate's evidence. Bind survivor walks to stored endpoints and
+> retain D153's source, visibility and sharing rules. [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
+
 **Status:** accepted design on this PR's merge; implementation not yet qualified.
 **Date:** 2026-11-12. **Authority:** owner requested Claude Opus approval before
 implementation; Opus 5.5 HIGH approved revision `431900b1d` after three reviews.
@@ -8738,3 +8743,30 @@ generations, retrieval and rendering use their existing code and identities.
 [Analysis](plan/analysis/ingestion_migration_contention_20261127.md) ·
 [Corpus publication §6.5](plan/designs/e0_files_design.md#65-incremental-work-publication-order-and-reader-observations) ·
 [Migration compatibility §6.1](plan/designs/packaging_distribution_design.md#61-migration-compatibility).
+
+## D163. Drive fact eligibility from its own evidence
+
+**Status:** Proposed. **Date:** 2026-11-27. **Amends:** D153's physical fact path.
+
+**Decision.** Bind each D140 fact gate to its candidate's evidence, then look
+up only those claims' occurrences and readable versions. Use the same gate
+before eligibility cuts in nomination and final confirmation. Bind both
+relation survivor walks to the stored endpoints before recursion and keep
+D153's shared visibility checks for the resolved endpoints.
+
+**Why.** On the hosted WriteIt brain, the planner made about 1.99 million
+evidence probes after starting from chunks. A paired evidence-first probe
+returned the same eligible IDs in 0.43 s and 2.92 s. The remaining relation
+cost included a repeated deployment-wide survivor walk. Opaque claim and
+chunk IDs still require a point probe per retained range partition for a
+known key. The candidate's own evidence supplies those keys.
+
+**Consequences.** Reuse the existing indexes and normal join planning. D140
+scope, D142 ranking/budgets, #542 count pruning and embedding reuse, D153
+statement-local sharing, public shapes and D56 ingestion identities and
+paid calls are preserved. Qualify against v0.22.4 at fixed snapshots on the
+LoCoMo and hosted-shaped stores, and measure work and latency at scale.
+
+[D153 §4.3](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
+[Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·
+[Hosted evidence](plan/analysis/evidence_driven_fact_eligibility_20261127.md).

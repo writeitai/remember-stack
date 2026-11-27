@@ -909,15 +909,16 @@ excludes that edition. The gate closes this without touching fact windows:
   the candidate set before bounded relevance ranking; a global top-k followed by scope
   filtering is forbidden"), in-scope support is part of the eligibility check of every
   nomination channel (semantic, lexical, entity-anchored and graph expansion) and of
-  confirmation, before the relevance cut (for P1 channels, D142's confirmation step). Concretely each channel adds `EXISTS (evidence → chunk_claims → chunk →
-  document_version_scope)` probed through primary keys and `ix_chunkclaims_claim`, the same
-  shape as §3.2, for current-belief reads. For a supplied past `believed_at` (open-query callers
+  confirmation, before the relevance cut (for P1 channels, D142's confirmation step).
+  The current-belief check asks whether a path exists from the fact's evidence through
+  `chunk_claims` and the chunk to `document_version_scope`. The proposed D163 amendment
+  binds the native probes in that order. For a supplied past `believed_at` (open-query callers
   and belief-pinned graph helpers) the projection cannot answer; the probe instead collects the
   candidate fact's bounded set of supporting lineages and evaluates them with
   `versions_in_scope(…, believed_at, doc_ids)`, i.e. the ledgers. The ranking, `FACTS_CONTEXT_CANDIDATE_K` and work budget are unchanged; a
   fact supported only by out-of-force text is simply not a candidate, so it can never crowd an
   in-force fact out of the top k. Evidence is hydrated after confirmation and only from in-scope
-  claims.
+  claims. [D153 fact-path design](shared_retrieval_eligibility_design.md#evidence-driven-d140-time-gate)
 - The gate never changes stored counts (D54), windows (D118) or currency; it is a visibility
   rule on evidence.
 - **Inside graph traversal.** The graph role that runs traversal cannot read evidence, so it
