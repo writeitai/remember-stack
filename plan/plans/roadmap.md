@@ -50,8 +50,8 @@ needs to restate it:
   the source of truth; migrations implement it, never fork it).
 - **The engine — fixed everywhere, never abstracted (D61 anti-goal):** PostgreSQL 19
   (the spine, P1 search, SQL/PGQ live graph, and bounded recursive traversal),
-  the E/K/P data model, PageIndex (structure), semchunk
-  (packing), Codex/OpenCode (K producers) with cross-family checkers (D53).
+  the E/K/P data model, PageIndex (structure), [E1 chunking](../designs/e1_chunks_design.md),
+  and Codex/OpenCode (K producers) with cross-family checkers (D53).
 - **The substrate — reached only through the D61 ports**, each with a self-host and a GCP
   reference adapter: object store (S3-compatible/local ↔ GCS), task queue (**delivery-only** over
   `processing_state`: the pg `LISTEN/NOTIFY`+`SKIP LOCKED` shell ↔ Cloud Tasks push, one

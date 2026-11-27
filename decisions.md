@@ -1948,8 +1948,9 @@ identity rules per source kind are a named spike.
 > this decision's cost promise did not hold. Everything else here remains binding.
 
 > **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> adds split-piece content hashes and preserves the legacy neighbour hash
-> for equivalent whole-block windows in the Selection and text-origin keys.
+> adds split-piece content hashes. A whole-block neighbour can retain its
+> legacy hash in the Selection and text-origin keys after verifying the
+> actual donor's consumed window.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -1998,6 +1999,10 @@ speaker labels, model family). D57–D58 formalize the chunking-strategy design 
 
 ## D57. The block substrate — a deterministic blockizer owns identity; sections snap to the block grid
 
+> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
+> uses the block grid and section ranges for base packing. Provider-fit
+> cuts address exact character spans within those candidates.
+
 **Decision.** Between conversion and everything else sits one deterministic layer: the
 **blockizer** (ours, versioned `blockizer_version`) derives the document's **block sequence**
 (paragraph-grain structural atoms: paragraphs, headings, list items, atomic tables, code
@@ -2039,8 +2044,9 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
 > **Proposed amendment.** [D162](#d162-split-oversized-chunks-before-embedding)
-> uses the anchored whitespace-token packer for whole-block candidates and
-> replaces the oversized-block rules with provider-qualified non-overlapping cuts.
+> replaces the `semchunk` choice and oversized-block fallback with anchored
+> whitespace-token packing of whole-block candidates and lossless cuts for
+> provider fit. Section ownership and non-overlap apply to the final chunks.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2209,6 +2215,10 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
 > (since the D98 RC 1 amendment, a relational one-hop join instead of SQL/PGQ).
+
+> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
+> replaces the `semchunk` choice with the engine's anchored packer and
+> provider-fit cuts.
 
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
@@ -7244,6 +7254,10 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 > occurrence selection, the evidence gate and `scope_pending` semantics are unchanged, except
 > that `scope_pending` gains `complete` (false when a replayed nomination stopped on a bound).
 
+> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
+> verifies the donor's consumed neighbour windows before inheriting a date
+> across a split boundary.
+
 **Status:** accepted when merged. **Date:** 2026-09-30. **Refines:** D36, D55, D56,
 D79, D134 (in-entry notes mark each); D118 is unchanged and gains one adjudication
 input.
@@ -8756,8 +8770,10 @@ generations, retrieval and rendering use their existing code and identities.
 
 Measure the full D80 input with a pinned tokenizer and provider-qualified
 ceiling. Split only failing candidates and preserve exact spans and
-provenance under the existing chunker version and ID allocator. Fitting
-grids retain their full rows. Drain durable legacy CHUNK and EMBED_CHUNK
+provenance under the existing chunker version and ID allocator. Preserve
+fitting grids with legacy-only reuse state. Verify split-neighbour windows
+against the actual donor before carrying Selection or text origin forward.
+Drain durable legacy CHUNK and EMBED_CHUNK
 work under the outgoing binding before enabling split writes and embed
 fit checks together. Confirmed input rejections are typed terminal
 failures. Dead-lettered versions stay failed, with ordinary ingest of a

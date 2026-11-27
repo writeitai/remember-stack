@@ -1660,7 +1660,7 @@ CREATE TABLE chunks (
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
-  text_origin_at  timestamptz,                 -- D140: recorded once at creation: the text origin time of the earliest matching chunk (same reuse_identity_hash) in a non-deleted version of the lineage, else this version's source_modified_at or published_at; the E2 header date, the reuse-key date, and fresh claims' asserted_at
+  text_origin_at  timestamptz,                 -- D140: recorded once from the earliest eligible origin after D162 window checks, else this version's source_modified_at or published_at; feeds the E2 header, the Selection key, and fresh claims' asserted_at
   reuse_identity_hash text,                    -- D140: date-free identity for the text-origin lookup (e1_chunks_design.md §7)
   extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)

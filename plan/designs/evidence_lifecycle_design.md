@@ -372,17 +372,18 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
    discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
-   origin time of the earliest chunk of a non-deleted version of the lineage with the same
-   date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
-   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
+   origin time of the earliest eligible donor with the same date-free reuse identity in a
+   non-deleted version of the lineage. The donor date must be at or before this version's date,
+   and D162 checks consumed windows at split boundaries. Without an eligible donor, the chunk
+   takes its version's `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
    E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
    version's own date instead would change every key whenever the source stamps a new
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
-   A matching key can reuse frozen Selection after remapping. Claimify also needs
-   a matching D122 key and remappable spans to reuse claim IDs. A changed neighbour
-   window can require fresh Selection for an intact target. Vector reuse also
+   A matching key can reuse frozen Selection after D162 window checks and remapping.
+   Claimify also needs a matching D122 key and remappable spans to reuse claim IDs. A changed
+   neighbour window can require fresh Selection for an intact target. Vector reuse also
    checks the rendered input and policy under D80. **The mechanics — block-hash diff alignment,
    anchor-stabilized boundaries, the carry-forward rules — are bound in
    `e1_chunks_design.md` §7 (D57–D58)**; this design owns the contract.

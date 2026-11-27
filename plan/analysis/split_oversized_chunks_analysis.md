@@ -61,14 +61,34 @@ second item's exact old window. The third item consumes the same neighbour
 text, passages and origins. Both E1 key builders currently take the
 neighbour's stored content hash, so the split discriminator alone would
 change the third item's Selection key and make D140 fall back to the edit
-date. The legacy block hash is sufficient in the neighbour slot for a
-whole-block window. Keep the split hash for the piece's own keys and for
-neighbour windows with partial blocks or nonblank gaps the legacy block
-hash cannot represent.
+date. The legacy hash can preserve both keys when the donor consumed the
+same window.
 [Packer](../../src/rememberstack/core/chunker.py#L198-L238) ·
 [Key builders](../../src/rememberstack/workers/e1.py#L656-L765) ·
-[Selection input](../../src/rememberstack/workers/e2.py#L752-L787) ·
-[Origin lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345).
+[Selection input](../../src/rememberstack/workers/e2.py#L752-L787).
+
+A local probe replaced an HTML comment between two paragraphs with the
+same number of spaces and simulated a cut that restored the two-paragraph
+window. The blockizer skipped the comment, the packer hashed only the
+blocks, and the relative converter-origin intervals stayed the same.
+Selection received the full Markdown slice, including the gap. With the
+legacy hash the target kept its Selection key and inherited January's date
+in February. Checking the saved donor slice and using the split hash for
+the changed window gave the target February's date and a new Selection key.
+The identical-window control kept January's date and both keys.
+[Blockizer](../../src/rememberstack/core/blockizer.py#L165-L193) ·
+[Origin hash](../../src/rememberstack/core/source_origins.py#L55-L65) ·
+[Neighbour text](../../src/rememberstack/workers/e2.py#L1819-L1834).
+
+D140 takes the earliest eligible origin. Selection picks the newest frozen
+result, and remapping can succeed with no cards to compare. Verify each
+actual donor's window before applying the stage's ordering. The indexed keys
+find candidates, and their saved Markdown and blocks supply the comparison.
+This confines the extra reads to reuse across split windows and keeps the
+stored legacy keys available for exact matches.
+[Origin lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345) ·
+[Selection lookup](../../src/rememberstack/spine/selection_catalog.py#L102-L138) ·
+[Card remapping](../../src/rememberstack/workers/extraction_references.py#L156-L173).
 
 ## Previous-release readers
 

@@ -24,8 +24,8 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
             ┌── registries: entities, predicates ──┐
             ▼                  ▼                    ▼
  inputs ─► E0 files ─► E1 chunks ─► E2 claims ─► E3 relations
-           (raw+md+         (semchunk,   (claimify,    (normalization,
-            PageIndex,      ctx prefix)  coref)        evidence, supersession)
+           (raw+md+         (pack, fit,  (claimify,    (normalization,
+            PageIndex,      embed)       coref)        evidence, supersession)
             placement)      │            │   │
                  │          │            │   │      PLANE K — KNOWLEDGE (debounced,
                  │          │            │   │      LLM-compiled; git is truth)
@@ -124,11 +124,12 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    **structure** (PageIndex tree + roles + spans + summaries + a **placement hint**,
    D39) → **crossref** (citations). Bodies live in GCS (raw + artifacts buckets); Postgres holds only
    metadata + the queryable section index (D37).
-2. **E1** (design: `e1_chunks_design.md`, D57–D58): the **blockizer** derives the deterministic
-   block sequence from document.md; PageIndex sections snap to the block grid; semchunk packs
-   whole blocks into non-overlapping, section-bounded, anchor-stabilized chunks → context
-   (the E1 prefix — exists under the D63 default conventional embedder; a contextual-embedder port config deletes it, D63) → embed
-   → P1. Unchanged blocks reuse prior claims/embeddings across document versions (D56).
+2. **E1.** The blockizer derives the block grid from Markdown and PageIndex sections snap to
+   that grid. Anchors and a whitespace budget pack whole-block candidates within sections.
+   D162 checks each full D80 embedding request and cuts failing candidates into non-overlapping
+   pieces that preserve the exact Markdown. E1 embeds the final chunks for P1. Matching inputs
+   reuse prior claims and embeddings across document versions (D56).
+   [E1 chunking](e1_chunks_design.md).
 3. **E2 → E3** (every chunked document — there is no pre-extraction value gate, D25): coreference
    (D19: in the E2 extraction call, all languages) → **Claimify extraction with in-call Selection**
    (proposition-level verifiability KEEP/REWRITE/DROP — the value filter that replaces any

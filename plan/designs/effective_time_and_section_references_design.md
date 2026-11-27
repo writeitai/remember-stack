@@ -535,23 +535,22 @@ the target's content hash, same-section neighbour hashes, header facts other tha
 (title, file name, source kind, language, the extraction-eligibility policy marker),
 `blockizer_version`, `structurer_version`, `extractor_version`, and canonical converter-origin
 hashes of the target and consumed same-section neighbours. Origin coordinates are relative
-to each window. Indexed on `(deployment_id, doc_id,
-reuse_identity_hash)`. D162 uses the same neighbour-window hash for this
-identity and the Selection key.
+to each window. Indexed on `(deployment_id, doc_id, reuse_identity_hash)`.
 [D162 hash rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 
 **Rule, at chunk creation.** When E1 creates the chunks of a new version of lineage `L`:
 
-1. compute `reuse_identity_hash`;
+1. compute candidate `reuse_identity_hash` values from the final windows using D162;
 2. let `d` be the new version's own date, `source_modified_at or published_at` (the value E2
-   uses today). A chunk of `L` is an **eligible match** when it has the same
+   uses today). A chunk of `L` is an **eligible match** when it has a candidate
    `reuse_identity_hash`, belongs to a version that is non-deleted at this moment, and has a
-   known `text_origin_at` that is **not later than `d`**. If `d` is unknown there is no
-   eligible match;
-3. with eligible matches, the new chunk's `text_origin_at` is the smallest of their
+   known `text_origin_at` that is **not later than `d`**. Apply the D162 comparison to
+   the candidate's consumed windows when a split neighbour is involved. If `d` is
+   unknown there is no eligible match;
+3. with verified eligible matches, the new chunk's `text_origin_at` is the smallest of their
    `text_origin_at` (ties broken by `version_no`, then `ordinal`). Otherwise
-   `text_origin_at = d` (`NULL` for an unknown date). E2 uses the recorded date
-   in its Selection key.
+   `text_origin_at = d` (`NULL` for an unknown date). D162 chooses the neighbour hashes
+   for the final identity and Selection key, which includes the recorded date.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the

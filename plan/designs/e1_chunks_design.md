@@ -208,9 +208,8 @@ The base packer groups **whole blocks within one section** to a whitespace-token
 budget. A block larger than that budget forms its own candidate.
 
 - [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates) cuts
-  candidates whose complete embedding input exceeds the qualified limit. The
-  converter's whole-block rules describe base packing. For split pieces,
-  character spans determine coverage and block ordinals can repeat.
+  candidates that fail the qualified provider's input or singleton-request limits.
+  For split pieces, character spans determine coverage and block ordinals can repeat.
 - **Never cross a section boundary** (§3 makes this well-defined).
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
@@ -323,14 +322,15 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   documents.
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
   inputs are unchanged.** E2 reuses Selection when `extraction_input_hash` matches
-  and D119 remapping succeeds. Claimify also requires the full D122 producer key.
+  and D162 window checks and D119 remapping succeed. Claimify also requires the
+  full D122 producer key.
   Unchanged regions keep the prior version's structure under `structurer_version`.
   LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own content hash + same-section neighbour hashes + stable
   header facts + consumed converter-origin hashes + extractor_version + structurer_version)`.
-  Both this key and the D140 identity use D162's whole-block neighbour hash where
-  a split piece contributes an equivalent window.
+  At split boundaries, both this key and the D140 identity can keep the
+  donor's neighbour hashes after verifying its consumed windows.
   [D162 hash rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
   **Stable header facts** are the deterministic document metadata the E2 bundle
   feeds the extractor. They include title, **file name**
@@ -339,7 +339,7 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
   LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
   `published_at` header facts. It is recorded once when the chunk is created: the
-  smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
+  smallest `text_origin_at` (ties by version number, ordinal) among verified chunks of non-deleted
   versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
   and **not later than this version's own date** (so a back-filled older edition never inherits
   a later date) — own content and same-section neighbour hashes, non-date
@@ -412,13 +412,10 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
    corpus; the number that validates the whole D56 economy.
 5. **Structurer snap distortion** — how often PageIndex boundaries land mid-block (conversion
    quality signal); structurer re-run stability across versions.
-6. **Oversized-block handling** — frequency and retrieval behavior of atomic-oversize chunks
-   (tables); whether tables need type-specific embedding treatment.
+6. **Provider-fit cuts (D162)** — split frequency and retrieval recall for affected chunks,
+   including dense tables and long paragraphs.
 7. **E2 batch size** — quality vs cost of multi-chunk extraction calls (attention dilution in
    very long calls vs bundle-overhead savings).
-7a. **Oversized-block constants** — the token threshold above which an atomic block becomes
-   its own oversized chunk, and the deterministic sentence-splitter (library + version, pinned
-   like the blockizer) for the pathological-giant-paragraph fallback.
 8. **Embedding-input-policy quality (D63/D80/D94)** — model default remains
    `qwen3-embedding-8b` (conventional) and the reference dimension is fixed at
    1,536. The existing golden set may still compare body-only vs compact/full
