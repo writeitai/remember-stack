@@ -6,14 +6,9 @@ object listing or slice-1 mutable object-store capability is required.
 """
 
 import hashlib
-from html.parser import HTMLParser
 import posixpath
 from typing import Annotated
-from urllib.parse import unquote
-from urllib.parse import urlsplit
 
-from markdown_it import MarkdownIt
-from markdown_it.token import Token
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
@@ -27,6 +22,8 @@ from rememberstack.core.corpus_export import original_name
 from rememberstack.core.corpus_export import PIPELINE_ASSET_KINDS
 from rememberstack.core.corpus_export import READER_ASSET_KINDS
 from rememberstack.core.corpus_export import render_document
+from rememberstack.core.corpus_reader import GitTargets
+from rememberstack.core.corpus_reader import render_reader
 from rememberstack.model import ObjectKey
 from rememberstack.model.conversion import AssetName
 from rememberstack.model.conversion import ConversionCoverage
@@ -74,6 +71,7 @@ def load_document_export(
     *,
     artifact_store: ObjectStorePort,
     policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
+    git_targets: GitTargets | None = None,
 ) -> DocumentExport:
     """Select exact E0 files from recorded URIs, checking inventory integrity."""
     manifest = _read(artifact_store, document.conversion_uri, document.manifest_hash)
@@ -150,11 +148,18 @@ def load_document_export(
             if parent in paths:
                 raise ValueError(f"reader file conflicts with a directory: {parent}")
             parent = posixpath.dirname(parent)
-    _validate_links(markdown.decode("utf-8"), paths)
+    reader = render_reader(
+        markdown.decode("utf-8"),
+        document=document,
+        paths=paths,
+        git_targets=git_targets,
+    )
     disclosure = inventory.model_dump(
         mode="json", exclude={"markdown_sha256", "source_map", "derived_assets"}
     )
-    return render_document(document, files=files, disclosure=disclosure, policy=policy)
+    return render_document(
+        document, files=files, reader=reader, disclosure=disclosure, policy=policy
+    )
 
 
 def _read(store: ObjectStorePort, uri: str, expected_hash: str) -> bytes:
@@ -162,55 +167,3 @@ def _read(store: ObjectStorePort, uri: str, expected_hash: str) -> bytes:
     if hashlib.sha256(content).hexdigest() != expected_hash:
         raise ValueError(f"immutable corpus input hash mismatch: {uri}")
     return content
-
-
-class _HtmlLinks(HTMLParser):
-    """HTML media survives Markdown conversion too, so inspect its links."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.urls: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        for name, value in attrs:
-            if value and name in {"src", "href", "poster", "data"}:
-                self.urls.append(value)
-            if value and name == "srcset":
-                self.urls.extend(
-                    part.strip().split()[0] for part in value.split(",") if part.strip()
-                )
-
-
-def _validate_links(markdown: str, paths: set[str]) -> None:
-    urls: list[str] = []
-    parser = _HtmlLinks()
-
-    def visit(tokens: list[Token]) -> None:
-        for token in tokens:
-            if token.type in {"link_open", "image"}:
-                url = token.attrGet("href" if token.type == "link_open" else "src")
-                if isinstance(url, str):
-                    urls.append(url)
-            if token.type in {"html_inline", "html_block"}:
-                parser.feed(token.content)
-            if token.children:
-                visit(token.children)
-
-    visit(MarkdownIt("commonmark").parse(markdown))
-    for url in [*urls, *parser.urls]:
-        parsed = urlsplit(url)
-        if (
-            (parsed.scheme and parsed.scheme != "file")
-            or parsed.netloc
-            or not parsed.path
-        ):
-            continue
-        path = unquote(parsed.path)
-        if (
-            parsed.scheme == "file"
-            or path.startswith("/")
-            or "\\" in path
-            or ".." in path.split("/")
-            or posixpath.normpath(path) not in paths
-        ):
-            raise ValueError(f"unresolved local reader link: {url}")

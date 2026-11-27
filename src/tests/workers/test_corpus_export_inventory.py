@@ -1,8 +1,10 @@
-"""D155 inventory allowlist, exact reader bytes and local-link integrity."""
+"""D155 inventory allowlist, exact source bytes and reader navigation."""
 
 from dataclasses import replace
 import json
+import posixpath
 
+from lxml import html
 import pytest
 
 from rememberstack.core.corpus_export import CopyFile
@@ -12,12 +14,14 @@ from rememberstack.core.corpus_export import DocumentExport
 from rememberstack.core.corpus_export import GeneratedFile
 from rememberstack.core.corpus_export import json_bytes
 from rememberstack.core.corpus_export import READER_ASSET_KINDS
+from rememberstack.core.corpus_export import READER_PAGE
 from rememberstack.model import ObjectKey
 from rememberstack.workers.corpus_export import load_document_export
 from tests.core.test_corpus_export import _check_indexes
 from tests.corpus_export_support import authority
 from tests.corpus_export_support import AuthorityStore
 from tests.corpus_export_support import digest
+from tests.corpus_export_support import document
 
 
 def _manifest(
@@ -71,6 +75,9 @@ def test_exact_recorded_original_markdown_source_map_and_active_pageindex() -> N
     ):
         assert not any(forbidden in path for path in files)
     metadata = json.loads(files["document.json"])
+    reader = next(file for file in metadata["files"] if file["path"] == READER_PAGE)
+    assert reader["sha256"] == digest(files[READER_PAGE])
+    assert reader["media_type"] == "text/html"
     assert metadata["coverage"]["gaps"] == ["page 2 unreadable"]
     assert metadata["warnings"] == ["Blurred scan"]
     assert metadata["derivation_ranges"][0]["derivation_kind"] == "ocr"
@@ -185,22 +192,44 @@ def test_duplicate_files_and_file_directory_conflicts_fail(
 
 
 @pytest.mark.parametrize(
-    "markdown",
+    "markdown,urls",
     [
-        b"![image](./media/nested/plot.png#view)\n",
-        b"[asset](media/nested/plot.png?download=1)\n",
-        b"![image][plot]\n\n[plot]: media/nested/plot.png\n",
-        b'<img src="media/nested/plot.png">\n',
-        b'<video poster="media/nested/plot.png"></video>\n',
-        b'<img srcset="media/nested/plot.png 1x, media/nested/plot.png 2x">\n',
-        b"[web](https://example.com/elsewhere) [anchor](#heading)\n",
-        b"`![code](media/missing.png)`\n\n```md\n![code](media/missing.png)\n```\n",
+        (b"![image](./media/nested/plot.png#view)\n", ["media/nested/plot.png#view"]),
+        (
+            b"[asset](media/nested/plot.png?download=1)\n",
+            ["media/nested/plot.png?download=1"],
+        ),
+        (
+            b"![image][plot]\n\n[plot]: media/nested/plot.png\n",
+            ["media/nested/plot.png"],
+        ),
+        (b'<img src="media/nested/plot.png">\n', ["media/nested/plot.png"]),
+        (
+            b'<video poster="media/nested/plot.png"></video>\n',
+            ["media/nested/plot.png"],
+        ),
+        (
+            b'<img srcset=", media/nested/plot.png 1x, /bad 2x, media/nested/plot.png 3x,">\n',
+            ["media/nested/plot.png 1x, media/nested/plot.png 3x"],
+        ),
+        (
+            b"[web](https://example.com/elsewhere) [anchor](#heading)\n",
+            ["https://example.com/elsewhere", "#heading"],
+        ),
+        (
+            b"`![code](media/missing.png)`\n\n```md\n![code](media/missing.png)\n```\n",
+            [],
+        ),
     ],
 )
-def test_reader_links_resolve_without_rewriting_markdown(markdown: bytes) -> None:
-    source, store, _ = authority(markdown=markdown)
-    load_document_export(source, artifact_store=store)
-    assert store.objects[source.markdown_uri] == markdown
+def test_reader_links_resolve_without_rewriting_markdown(
+    markdown: bytes, urls: list[str]
+) -> None:
+    source, store, raw = authority(markdown=markdown)
+    files = _bytes(load_document_export(source, artifact_store=store), store, raw)
+    reader = html.fromstring(files[READER_PAGE])
+    assert reader.xpath("//@href | //@src | //@poster | //@srcset") == urls
+    assert files["document.md"] == store.objects[source.markdown_uri] == markdown
 
 
 @pytest.mark.parametrize(
@@ -210,16 +239,93 @@ def test_reader_links_resolve_without_rewriting_markdown(markdown: bytes) -> Non
         b"[asset](media/provider.json)\n",
         b"![image](../outside.png)\n",
         b"![image](/outside.png)\n",
+        b"[absolute](%2fetc/config) [drive](C:/config) [host](//outside/config)\n",
         b"![image](media/%2e%2e/private.png)\n",
+        b"[file](FiLe://host/private/image.png)\n",
         b'<img src="file:///private/image.png">\n',
         b'<video poster="media/private.png"></video>\n',
         b'<source srcset="media/missing.png 1x">\n',
+        b'<a href="https://[malformed">Malformed</a>\n',
     ],
 )
-def test_missing_private_or_escaping_local_links_fail(markdown: bytes) -> None:
-    source, store, _ = authority(markdown=markdown)
-    with pytest.raises(ValueError, match="unresolved local reader link"):
-        load_document_export(source, artifact_store=store)
+def test_missing_private_or_escaping_local_links_are_inert(markdown: bytes) -> None:
+    source, store, raw = authority(markdown=markdown)
+    files = _bytes(load_document_export(source, artifact_store=store), store, raw)
+    reader = html.fromstring(files[READER_PAGE])
+    assert not reader.xpath("//@href | //@src | //@poster | //@srcset")
+    assert files["document.md"] == markdown
+
+
+def test_git_links_resolve_within_repository_and_keep_fragments() -> None:
+    markdown = """## D100 — One Shared Runtime
+
+[Decision](../decisions.md#d100--one-shared-runtime)
+[App](../app-experience.md)
+[Sibling](forward-only-deployment-and-autoscaling.md)
+[Space](a%20file.md?read=1#note)
+[Self](./foo.md#d100--one-shared-runtime)
+[Missing](../analysis/actual-cost-settlement.md)
+[Skill](.agents/skills/design-corpus/SKILL.md)
+[Escape](../../../decisions.md)
+[Encoded escape](%2e%2e/%2e%2e/%2e%2e/decisions.md)
+[Encoded separator](..%5cdecisions.md)
+[Malformed](%00.md)
+[Reference][sibling]
+
+[sibling]: forward-only-deployment-and-autoscaling.md#heading
+
+<a href="../decisions.md#d100--one-shared-runtime">HTML</a>
+<base href="file:///outside/"><img src="media/nested/plot.png" onerror="alert(1)">
+<script>ignored()</script>
+"""
+    source, store, raw = authority(markdown=markdown.encode())
+    source = replace(source, source_kind="git", source_ref="repo:design/designs/foo.md")
+    targets = {
+        "repo:design/decisions.md": document(2, title="Decisions", placement_path=None),
+        "repo:design/app-experience.md": document(3, title="App"),
+        "repo:design/designs/forward-only-deployment-and-autoscaling.md": document(
+            4, title="Sibling"
+        ),
+        "repo:design/designs/a file.md": document(5, title="Space"),
+    }
+
+    def lookup(refs: set[str]) -> dict[str, CorpusDocument]:
+        assert refs == targets.keys() | {
+            "repo:design/analysis/actual-cost-settlement.md",
+            "repo:design/designs/.agents/skills/design-corpus/SKILL.md",
+        }
+        return targets
+
+    files = _bytes(
+        load_document_export(source, artifact_store=store, git_targets=lookup),
+        store,
+        raw,
+    )
+    reader = html.fromstring(files[READER_PAGE])
+    links = {link.text_content(): link.get("href") for link in reader.xpath("//a")}
+    fragment = "#d100--one-shared-runtime"
+    target_paths = [
+        posixpath.relpath(f"{target.path}/{READER_PAGE}", source.path)
+        for target in targets.values()
+    ]
+    assert links == {
+        "Decision": target_paths[0] + fragment,
+        "App": target_paths[1],
+        "Sibling": target_paths[2],
+        "Space": target_paths[3] + "?read=1#note",
+        "Self": READER_PAGE + fragment,
+        "Missing": None,
+        "Skill": None,
+        "Escape": None,
+        "Encoded escape": None,
+        "Encoded separator": None,
+        "Malformed": None,
+        "Reference": target_paths[2] + "#heading",
+        "HTML": target_paths[0] + fragment,
+    }
+    assert reader.xpath("//h2/@id") == [fragment[1:]]
+    assert reader.xpath("//img/@src") == ["media/nested/plot.png"]
+    assert not reader.xpath("//base | //script | //@onerror")
 
 
 @pytest.mark.parametrize("field", ["markdown_uri", "conversion_uri"])

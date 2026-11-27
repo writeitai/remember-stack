@@ -26,7 +26,8 @@ from rememberstack.core.format_registry import FAMILIES
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.format_registry import FORMAT_MIMES
 
-CORPUS_BUILDER_VERSION: Final = "p3-reader-2026.11d:d155"
+CORPUS_BUILDER_VERSION: Final = "p3-reader-2026.11e:d155"
+READER_PAGE: Final = "reader.html"
 CORPUS_TYPES: Final = (
     "email",
     "chat",
@@ -59,6 +60,7 @@ _RESERVED: Final = frozenset(
         "llms.txt",
         "document.json",
         "document.md",
+        READER_PAGE,
         "pageindex.json",
         "source_map.json",
         "media",
@@ -191,7 +193,7 @@ class CopyFile:
 
 @dataclass(frozen=True)
 class GeneratedFile:
-    """Small deterministic metadata, relative to its containing export."""
+    """Deterministic bytes, relative to the containing export."""
 
     path: str
     content: bytes
@@ -386,11 +388,13 @@ def render_document(
     document: CorpusDocument,
     *,
     files: Iterable[CopyFile],
+    reader: bytes,
     disclosure: dict[str, object],
     policy: CorpusPolicy = DEFAULT_CORPUS_POLICY,
 ) -> DocumentExport:
-    """Render exact files/disclosure loaded from the recorded E0 inventory."""
+    """Inventory the reader view and the exact files from the recorded E0 inventory."""
     copies = tuple(sorted(files, key=lambda file: file.path))
+    reader_page = GeneratedFile(READER_PAGE, reader)
     revision = desired_export_revision(document, policy=policy)
     inventory = [
         {
@@ -400,6 +404,14 @@ def render_document(
         }
         for file in copies
     ]
+    inventory.append(
+        {
+            "path": reader_page.path,
+            "kind": "reader",
+            "media_type": "text/html",
+            "sha256": reader_page.sha256,
+        }
+    )
     metadata = {
         "doc_id": document.doc_id,
         "suffix": corpus_suffix(document.doc_id),
@@ -433,15 +445,16 @@ def render_document(
         "",
         _cell(document.root_summary or "no summary"),
         "",
-        "Original and reader derivatives belong to the displayed completed reading.",
+        f"[Read the document]({READER_PAGE}).",
+        "The original and reader files belong to the displayed completed reading.",
         "Derivation labels, coverage gaps and warnings are in [document.json](document.json).",
-        "The Markdown and sidecars are exact copies; the reading may contain model-derived text.",
+        "Source offsets are into the exact `document.md` copy. The reading may contain model-derived text.",
         "",
         "[Parent](../_index.md)",
         "",
     ]
     indexes = render_document_indexes(
-        ((file.path, file.kind, file.sha256) for file in copies),
+        ((file["path"], file["kind"], file["sha256"]) for file in inventory),
         intro=intro,
         policy=policy,
     )
@@ -449,7 +462,7 @@ def render_document(
         GeneratedFile("document.json", json_bytes(metadata)),
         *(GeneratedFile(path, content) for path, content in sorted(indexes.items())),
     )
-    return DocumentExport(document, revision, (*copies, *generated))
+    return DocumentExport(document, revision, (*copies, reader_page, *generated))
 
 
 def render_document_indexes(
@@ -699,7 +712,7 @@ def render_navigation(
         "",
         "One completed reading per live document.",
         "",
-        "Read type/topic/navigation _index.md, then a folder's _index.md, then document.md or its original.",
+        "Read type/topic/navigation _index.md, then a folder's _index.md, then reader.html or its original.",
         "New stored uploads leave the served reading intact until processing completes.",
         "Folders move when type, topic or title changes. Store doc_id and re-resolve through MCP p3_path.",
         "Offline lookup: sha256(doc_id.bytes).hexdigest()[:24], then",
