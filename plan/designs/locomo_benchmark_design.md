@@ -498,9 +498,11 @@ returns at most 400 lines from a file no larger than 256 KiB. These operative
 limits are present in the hashed descriptors, not only in implementation
 constants.
 
-No benchmark tool reads Postgres, the object store, graph files, or internal
-handlers directly. Product reads go through `MemoryClient`; filesystem reads
-stay inside the normal P3 mount.
+Reader tools use `MemoryClient` and the normal P3 mount. The proposed D163
+protection adds an operator preflight that checks the serving image and live
+schema on an isolated, unmigrated restore before a protected run retrieves
+anything. It is part of benchmark setup.
+[Protected run contract](shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
 
 ## 7. Answer loop
 

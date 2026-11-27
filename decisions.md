@@ -1312,10 +1312,11 @@ surviving semantic requirement is redirect-safe, deployment-keyed, temporal
 graph views over PostgreSQL authority data. D98 drops the six snapshot-export
 `v_graph_*` views named below and replaces them with no-row private live source
 views plus SQL/PGQ metadata (the metadata was removed by the D98 RC 1
-amendment; the views remain). Only `v_graph_survivor` remains as the private
-merge-resolution authority behind `v_memory_entity_survivor`; it is not a graph
-export or public query surface. The D98 graph design owns the current schema
-and contracts.
+amendment; the views remain). `v_graph_survivor` remains as private identity
+infrastructure. [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
+proposes moving the single walk into `v_memory_entity_survivor` and keeping
+`v_graph_survivor` as its two-column projection. The graph design owns the
+current graph schema and contracts.
 
 **Decision.** The Postgres→LadybugDB (P2) projection is defined by a set of read-only **Postgres views**
 (`v_graph_entities`, `v_graph_documents`, `v_graph_relates`, `v_graph_mentioned_in`, `v_graph_crossref`,
@@ -8190,8 +8191,8 @@ must qualify before advertising chargeable evidence.
 
 > **Proposed fact-path amendment (2026-11-27).** Apply the fact gate's
 > per-partition allowance to claim and chunk coordinates reached through
-> the candidate's evidence. Bind survivor walks to stored endpoints and
-> retain D153's source, visibility and sharing rules. [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
+> the candidate's evidence. Bind the seed and each hop of survivor walks
+> and retain D153's source, visibility and sharing rules. [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
 
 **Status:** accepted design on this PR's merge; implementation not yet qualified.
 **Date:** 2026-11-12. **Authority:** owner requested Claude Opus approval before
@@ -8219,11 +8220,10 @@ No ranking thresholds, public row shapes, ingestion generations, ID minting,
 model calls or paid reuse keys change. No cache, persisted visibility flag,
 legacy fallback, reranker or automatic DLQ repair is introduced.
 
-**Qualification.** The pre-change oracle is a real `p9_46_0067` database, not
-hand-picked old DDL. Complete row/count, deletion/merge/time, 120-partition,
-large unrelated-data, concurrency/cancellation, manifest/ACL and native completion
-gates are mandatory before merging runtime changes. Single-reader prototypes
-are evidence for the design, not proof of a shipped speedup.
+**Original D153 qualification.** The pre-D153 oracle was a database migrated
+to `p9_46_0067`. Row/count, deletion/merge/time, 120-partition, unrelated-data,
+concurrency/cancellation, manifest/ACL and native completion gates are in
+the delivery record. D163 uses the later archive-aware schema.
 
 **Design:** [shared retrieval eligibility](plan/designs/shared_retrieval_eligibility_design.md).
 **Analysis:** [measured SQL amplification](plan/analysis/retrieval_filtering_reliability_20261112.md).
@@ -8748,11 +8748,11 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27. **Amends:** D153's physical fact path.
 
-**Decision.** Bind each D140 fact gate to its candidate's evidence, then look
-up only those claims' occurrences and readable versions. Use the same gate
-before eligibility cuts in nomination and final confirmation. Bind both
-relation survivor walks to the stored endpoints before recursion and keep
-D153's shared visibility checks for the resolved endpoints.
+**Decision.** Bind the fact's raw evidence before claim source qualification
+and before the D140 occurrence and readable-version probes. Use the same
+gate in nomination and confirmation before eligibility cuts. Key the
+single forward merge walk by deployment and entity at the stored endpoint
+and at every redirect. Keep D153's shared survivor visibility checks.
 
 **Why.** On the hosted WriteIt brain, the planner made about 1.99 million
 evidence probes after starting from chunks. A paired evidence-first probe
@@ -8761,11 +8761,13 @@ cost included a repeated deployment-wide survivor walk. Opaque claim and
 chunk IDs still require a point probe per retained range partition for a
 known key. The candidate's own evidence supplies those keys.
 
-**Consequences.** Reuse the existing indexes and normal join planning. D140
-scope, D142 ranking/budgets, #542 count pruning and embedding reuse, D153
-statement-local sharing, public shapes and D56 ingestion identities and
-paid calls are preserved. Qualify against v0.22.4 at fixed snapshots on the
-LoCoMo and hosted-shaped stores, and measure work and latency at scale.
+**Consequences.** Reuse existing indexes and normal join planning. Preserve
+D140 scope, D142 ranking and budgets, #542 count pruning and embedding reuse,
+D153 sharing, D159 archive behavior and D56 ingestion identities. Qualify
+against the deployed `p9_55_0076` authority at fixed snapshots and measure
+work and latency at scale. Protected LoCoMo and BEAM runs require their
+pinned engine and a verified live schema from their unmigrated store. D163
+benchmark evaluation uses a separate run identity.
 
 [D153 §4.3](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
 [Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·

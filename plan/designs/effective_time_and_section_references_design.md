@@ -915,10 +915,11 @@ excludes that edition. The gate closes this without touching fact windows:
   binds the native probes in that order. For a supplied past `believed_at` (open-query callers
   and belief-pinned graph helpers) the projection cannot answer; the probe instead collects the
   candidate fact's bounded set of supporting lineages and evaluates them with
-  `versions_in_scope(…, believed_at, doc_ids)`, i.e. the ledgers. The ranking, `FACTS_CONTEXT_CANDIDATE_K` and work budget are unchanged; a
-  fact supported only by out-of-force text is simply not a candidate, so it can never crowd an
-  in-force fact out of the top k. Evidence is hydrated after confirmation and only from in-scope
-  claims. [D153 fact-path design](shared_retrieval_eligibility_design.md#evidence-driven-d140-time-gate)
+  `versions_in_scope(…, believed_at, doc_ids)`, i.e. the ledgers. Context candidate
+  depth comes from `ContextRetrievalBudget.candidate_depth`. It uses the supplied
+  `candidate_k` or defaults to `max(4 × k, 60)`. A fact supported only by
+  out-of-force text takes no result slot. Evidence is hydrated after confirmation
+  and only from in-scope claims. [D153 fact-path design](shared_retrieval_eligibility_design.md#evidence-driven-d140-time-gate)
 - The gate never changes stored counts (D54), windows (D118) or currency; it is a visibility
   rule on evidence.
 - **Inside graph traversal.** The graph role that runs traversal cannot read evidence, so it

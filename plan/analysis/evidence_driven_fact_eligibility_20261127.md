@@ -8,6 +8,9 @@ and starts with the candidate's evidence. [Design](../designs/shared_retrieval_e
 
 ## Captured workload
 
+The [hosted capture receipt](evidence_driven_fact_eligibility_hosted_capture_20261127.md)
+records file hashes, redacted plans, the paired SQL and native replay counters.
+
 The investigation ran on RememberStack v0.22.4 (`c1f15b783`, schema
 `p9_55_0076`) on a 2-vCPU/4-GB PostgreSQL 18.6 host. The Project contained
 40 documents and 40 versions, 812 chunks, 3,274 claims and 3,274 chunk–claim
@@ -96,6 +99,49 @@ sometimes used local sequential scans. The relation object walk still seeded
 518,415 chains in the rewritten plan. The capture measures the gate rewrite
 only. Hosted latency for the endpoint change and equivalence with periodised,
 replaced, deleted or contradiction-only evidence still need qualification.
+
+## Source helper and survivor probes
+
+The deployed memory survivor view joins the seed and terminal deployment
+around a walk that joins the entity registry again on each redirect. A
+correlated lookup of that view constrains its result. A seed keyed by the
+stored endpoint and a separately keyed lookup inside recursion constrain the
+work. Put the walk in the deployment-keyed view so the graph adapter can
+project it without maintaining a second walk.
+[Memory adapter](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L64) ·
+[Forward walk](../../src/rememberstack/spine/migrations/versions/p9_45_0066_fact_counts_demand.py#L13)
+
+PostgreSQL can pull up an `EXISTS` with the candidate correlation in its
+top-level `WHERE` as a semi-join. A claim lookup can be correctly keyed
+while that join still does broad evidence work. Putting the fact and
+deployment predicates inside the raw evidence lateral probe makes the
+dependence explicit before either claim arm runs.
+[PostgreSQL 18.6 planner](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/optimizer/plan/subselect.c#L1452-L1512) ·
+[Deployed source helper](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L316-L363)
+
+A disposable PostgreSQL 18.7 fixture used the seed and recursive hop keys
+from §4.3, the existing entity indexes, and 64 hash leaves per evidence
+table. The prepared source-helper query fixed the deployment, kind and
+fact ID. It used two fixed candidates per kind and grew unrelated entities
+and evidence rows per kind together. The positive relation had three
+subject and five object redirects. The positive observation used the same
+subject. The negative candidates had one invisible claim and one carried
+claim at a mismatched document coordinate.
+
+| Unrelated rows per table | Prepared plan modes | Relation subject index searches (seed + hops) | Relation object index searches (seed + hops) | Observation subject index searches (seed + hops) | Negative evidence per kind (leaves / rows returned by raw probe / rows rejected by raw probe) |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1,000 | custom and generic | 1 + 3 | 1 + 5 | 1 + 3 | 1 / 2 / 7 |
+| 100,000 | custom and generic | 1 + 3 | 1 + 5 | 1 + 3 | 1 / 2 / 0 |
+| 1,000,000 | custom and generic | 1 + 3 | 1 + 5 | 1 + 3 | 1 / 2 / 0 |
+
+The entity index conditions used both deployment and entity ID. At 1,000
+unrelated rows the negative probes scanned one small leaf. At both larger
+sizes each used one fact-ID index search. The result was one row for each
+positive candidate and zero for each negative. Missing seeds, cycles,
+dangling targets and wrong-deployment seeds or redirects also returned no
+survivor. The fixture modeled claim visibility with boolean flags. Full
+qualification uses the migrated authority and real historical and carried
+membership paths. [D163 qualification](../designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
 
 ## Prior qualification and alternatives
 
