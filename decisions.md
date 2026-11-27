@@ -1946,8 +1946,9 @@ identity rules per source kind are a named spike.
 > facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
 > this decision's cost promise did not hold. Proposed
-> [D162](#d162-split-oversized-chunks-before-embedding) also admits a verified
-> slice match for the date and checks paid reuse separately.
+> [D162](#d162-split-oversized-chunks-before-embedding) keys split grids on exact
+> consumed slot bytes, admits a verified slice match for the date and checks
+> paid reuse separately.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -7243,6 +7244,7 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).** An exact, uniquely verified
 > fragment and context can inherit the earlier source span's D140 date.
+> A date match involving a split grid requires exact consumed slot bytes.
 > The date cutoff applies. Verify paid reuse separately. Same-version
 > recovery copies the verified parent's recorded date to its pieces and
 > preserves the original date evidence through publication.
@@ -8770,6 +8772,7 @@ qualified provider limits. Split oversized candidates losslessly at
 structural or scalar boundaries with exact provenance. Split grids add a
 packing and delivery generation. Fitting grids retain their packing and paid
 input identities.
+Split grids key extraction and D140 reuse on exact consumed slot bytes.
 Every CHUNK recovery has a distinct embed delivery.
 
 Refine the grid at CHUNK for new versions and explicit recovery of oversize
@@ -8778,12 +8781,12 @@ Enroll new representations as pending for passages at E0 readiness. The
 selected E1 delivery publishes passages and supplies the packing stamp for
 claim embedding and reconciliation. Grids that could already serve retain
 their cuts and handles. Confirmed per-input rejection is terminal, and
-capacity retries stay bounded. LoCoMo and BEAM require frozen-grid,
-ingest-delivery and public tool-response parity. Protected ingest, replay
-and reads stay on the pinned path unless the runtime worker, reader,
-schema, embedding bindings and effective serving settings match the qualified
-candidate. The exact LoCoMo binding must qualify at 22,528 Qwen tokens or
-higher.
+capacity retries stay bounded. LoCoMo and BEAM require frozen-grid and
+ingest-delivery parity plus public tool-response parity on the published
+replay stores. Candidate admission binds the worker, reader, schema,
+embedding bindings and effective serving settings to the qualified inputs
+and published store. The exact LoCoMo binding must qualify at 22,528 Qwen
+tokens or higher.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

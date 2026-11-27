@@ -91,7 +91,19 @@ at the line seam and 293 at the 128-scalar cut. At a 332-byte cap, the scalar
 probes through 128 fit while that seam overflows. Checking each proposed cut
 and retaining the last passing probe allows the split to proceed.
 [D80 renderer](../../src/rememberstack/core/embedding_input_policy.py#L204-L223),
-[request serializer](../../src/rememberstack/adapters/openrouter.py#L1034-L1045).
+[payload construction](../../src/rememberstack/adapters/openrouter.py#L1034-L1046),
+[HTTPX JSON POST](../../src/rememberstack/adapters/openrouter.py#L1126-L1128).
+
+A local probe changed `Friday` to `Monday` in a skipped HTML comment
+between two paragraphs that can survive a split as a whole-block prefix.
+The block hashes, relative origin hashes, date-free identity and Selection
+key matched, while E2 received the edited comment in the full source slice.
+Hashing the exact bytes of the three consumed slots catches this edit and
+keeps invalidation local. The block hashes still describe the packing.
+[Blockizer](../../src/rememberstack/core/blockizer.py#L177-L193),
+[packed span](../../src/rememberstack/core/chunker.py#L198-L215),
+[relative origin hash](../../src/rememberstack/core/source_origins.py#L55-L65),
+[E2 bundle](../../src/rememberstack/workers/e2.py#L1596-L1619).
 
 D140 records the inherited date before embedding. A fresh lookup after the
 original donor is deleted can move relative dates from the inherited date to
@@ -175,6 +187,17 @@ that difference before a protected ingest changes worker.
 [Decoder](../../src/rememberstack/adapters/openrouter.py#L1034-L1077),
 [P1 validation](../../src/rememberstack/ports/p1_index.py#L26-L49).
 
+Equal stored vectors can yield different search results. Legacy E1 inserts
+each successful batch into P1. D162 inserts the grid at publication, changing
+when its rows enter the approximate nearest-neighbour index (HNSW).
+An insertion schedule can change which rows this bounded search visits.
+Replay reads on the stores both ingests actually publish, with the indexes
+they built. Reads on retained stores still test historical serving parity.
+[Legacy write](../../src/rememberstack/workers/e1.py#L535-L572),
+[P1 upsert](../../src/rememberstack/adapters/postgres_p1.py#L255-L285),
+[HNSW nomination](../../src/rememberstack/adapters/postgres_p1.py#L891-L913),
+[nomination bound](../../src/rememberstack/adapters/p1_ranked.py#L319-L322).
+
 Matching IDs and quotes can coexist with different SQL values or fact windows.
 Conversely, identical SQL runs generate fresh request IDs and timings.
 Freeze evaluation instants and normalize the per-call telemetry to measure
@@ -186,9 +209,13 @@ before using them to isolate reader changes.
 
 The published LoCoMo serving revision pins PostgreSQL 19 RC 1. The physical
 backup contains the stopped PostgreSQL volume. A logical copy into PostgreSQL
-18 rebuilds indexes, which can change the order of retrieved candidates. Verify
-public reads across the copy. Preserve the database name because migrations
-and the running reader derive the query and graph roles from it.
+18 rebuilds indexes, which can change the order of retrieved candidates.
+The reader's declared PostgreSQL major also contributes to the SQL surface
+hash it returns. Use the recorded image for exact historical parity and
+label the 18 copy as a diagnostic. Preserve the database name because
+migrations and the running reader derive the query and graph roles from it.
 [Published server image](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/Dockerfile.postgres#L1),
 [volume backup](../../benchmarks/locomo/sharding/store_backup.py#L1248-L1263),
+[manifest member](../../src/rememberstack/spine/query_space/manifest.py#L1061-L1076),
+[returned hash](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061-L1065),
 [retained-store restore evidence](evidence_driven_fact_eligibility_20261127.md#retained-store-oracle).

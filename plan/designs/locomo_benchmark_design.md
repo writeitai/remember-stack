@@ -68,17 +68,19 @@ component generations and reported model bindings with the composed engine.
 
 The proposed D162 gate requires 22,528 Qwen tokens or higher on the exact
 ingestion binding. A candidate E1 path needs transport-replay parity for
-delivery and stored passage vectors. Candidate readers, schemas and query
-embedding paths require public tool parity. At runtime, protected ingest,
-replay and reads require the exact candidate fingerprint that passed those
-checks, including the serving layer states and retrieval budgets. Use the
-pinned path if the candidate identity is missing or differs.
+delivery and stored passage vectors, plus public tool parity on the stores
+those replays publish. Candidate readers, schemas and query embedding paths
+also require public tool parity. Admission binds the runtime fingerprint,
+including layer states and retrieval budgets, to the qualified frozen inputs
+and published store. Use the pinned path until those checks pass and whenever
+the candidate identity is missing or differs.
 [D162 release checks](split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
 
 The published 94.09% run used retained Full-v45 ingestion and frozen image
 inputs. For historical parity, use that run's recorded serving and answer-prompt
-revisions, copies of its retained stores with their original attestation, and
-its saved tool traces. [Published run and revisions](../../benchmarks/locomo/README.md#published-results).
+revisions, PostgreSQL 19 RC 1 image, copies of its attested retained stores with
+their original indexes, and its saved tool traces.
+[Published run and revisions](../../benchmarks/locomo/README.md#published-results).
 
 ### 2.1 Model roles and independent judging
 

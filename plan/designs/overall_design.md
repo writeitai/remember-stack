@@ -132,8 +132,9 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    final rendered pieces before embedding for P1. D56 vector reuse requires matching
    content, rendered input, policy and model, with full-delivery proof under D162.
    Extraction reuse depends on the consumed target and same-owner neighbours, their
-   provenance, stable source facts and processing generations. Claimify also checks its
-   ordered D122 context, and reused evidence must remap to the source.
+   provenance, stable source facts and processing generations. D162 split grids key
+   reuse on the exact bytes of those slots. Claimify also checks its ordered D122
+   context, and reused evidence must remap to the source.
 3. **E2 → E3** (every chunked document — there is no pre-extraction value gate, D25): coreference
    (D19: in the E2 extraction call, all languages) → **Claimify extraction with in-call Selection**
    (proposition-level verifiability KEEP/REWRITE/DROP — the value filter that replaces any

@@ -318,13 +318,17 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 - **A3 — Carry forward derived context when inputs match.** Selection reuses
   results that match `extraction_input_hash`. Claimify also checks its D122
   reference window. Unchanged regions keep the prior version's structure under
-  `structurer_version`. Proposed D162 keys split layouts on consumed content
-  and verifies equivalent inputs before reusing paid results across layouts.
-  LLM output stays out of identity keys (D7). [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
-  Consequently the **extraction reuse key contains only stable components**:
+  `structurer_version`. LLM output stays out of identity keys (D7).
+  The **extraction reuse key contains only stable components**.
   `extraction_input_hash = hash(own and neighbour content identities + stable header
-  facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
-  deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
+  facts + consumed converter-origin hashes + extractor_version + structurer_version)`.
+  Legacy keys use block content identities. Proposed D162 keys split grids on
+  exact consumed slot bytes, including gaps and separators. If either grid is
+  split, verify each slot's bytes by role for D140 and paid extraction.
+  [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
+
+  **Stable header facts** come from the deterministic document metadata the E2
+  bundle feeds the extractor. They include title, **file name**
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
   the old one), source kind, the chunk's **text origin time**, language (from
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never

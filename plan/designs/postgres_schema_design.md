@@ -1638,8 +1638,10 @@ links and D80 location facts. [Proposed D162](split_oversized_chunks_design.md)
 allows pieces from the same block to have distinct character spans. A
 same-version recovery piece inherits its verified parent's recorded
 `text_origin_at`. Recut representations retain the first grid's date-matching
-metadata outside P1, indexed by document for erasure. New D162
-representations record pending passage enrollment at E0 readiness, before
+metadata outside P1, indexed by document for erasure. Both extraction and
+date-free reuse keys for split grids hash exact consumed slot bytes, including
+gaps and separators, as specified in [E1 §7](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
+New D162 representations record pending passage enrollment at E0 readiness, before
 chunk rows exist. The selected embed delivery controls
 [first publication](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk).
 
@@ -1660,7 +1662,7 @@ CREATE TABLE chunks (
   block_start     integer NOT NULL,            -- first source block ordinal (D57/D58)
   block_end       integer NOT NULL,            -- last block ordinal (inclusive)
   chunk_content_hash text NOT NULL,            -- ordered block hashes (D58) or tagged exact piece bytes (proposed D162)
-  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own and neighbor content identities + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, the chunk's text_origin_at (D140 — not the version's own date), language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
+  extraction_input_hash text NOT NULL,         -- D56: stable E2 inputs with recorded text_origin_at, per E1 §7
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)

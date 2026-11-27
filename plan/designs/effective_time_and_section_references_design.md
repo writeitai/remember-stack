@@ -542,12 +542,13 @@ header facts), the E2 header, and the `asserted_at` of claims freshly extracted 
 The version's own date remains on the version for everything else.
 
 **Reuse identity.** Each chunk also stores `reuse_identity_hash` — the date-free identity:
-own block hashes, neighbour block hashes, the header facts other than dates (title, file name,
+target and neighbour content, the header facts other than dates (title, file name,
 source kind, language, the extraction-eligibility policy marker), `blockizer_version`,
 `structurer_version`, `extractor_version`, and canonical converter-origin hashes
-of the target and consumed same-section neighbors. Coordinates are relative to
-each window; absolute document offsets are excluded. Indexed on `(deployment_id, doc_id,
-reuse_identity_hash)`.
+of the target and consumed same-section neighbors. Legacy identity uses the block
+hashes. Proposed D162 uses exact, role-tagged slot byte digests with explicit
+absence for split grids. Origins use window-relative coordinates. Index the key
+on `(deployment_id, doc_id, reuse_identity_hash)`.
 
 **Rule, at chunk creation.** E1 assigns a date to each new chunk of lineage `L`.
 
@@ -556,9 +557,10 @@ reuse_identity_hash)`.
    A date donor must be in a non-deleted version of `L` and have a known
    `text_origin_at` no later than `d`. Match on `reuse_identity_hash`. Under
    proposed D162, look in earlier versions and also accept a uniquely verified
-   slice match for the target and its consumed context. For a recut version,
-   both matches use the first grid's retained origin evidence, even after
-   publication. An unknown `d` has no eligible donor.
+   slice match. If either grid is split, require the exact bytes of each
+   consumed slot to match by role, including gaps and separators. For a recut
+   version, both matches use the first grid's retained origin evidence, even
+   after publication. An unknown `d` has no eligible donor.
    [D162 slice verification](split_oversized_chunks_design.md#2-coordinates-and-reuse).
 3. Record the smallest eligible `text_origin_at` (ties by `version_no`, then
    `ordinal`), or `d` if none qualifies. This records `NULL` when the date is
