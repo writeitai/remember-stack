@@ -27,10 +27,10 @@ D12, D17–D19. Full research + evidence: `plan/analysis/claimify_research/SYNTH
 ```
 E0 ─────────► E1 ──────────► E2 ───────────────► E3
 files         chunks         claims              relations
-(Markdown,    (anchored      (Claimify-staged:   ( (subject,predicate,object) facts;
- PageIndex     packing,       Selection →         entity resolution T0–T4;
- hierarchy +   D80 render     decontextualize →   supersession; evidence_count )
- summaries)    and embed)     decompose; coref
+(Markdown,    (semchunk +    (Claimify-staged:   ( (subject,predicate,object) facts;
+ PageIndex     a context      Selection →         entity resolution T0–T4;
+ hierarchy +   prefix per     decontextualize →   supersession; evidence_count )
+ summaries)    chunk; embed)  decompose; coref
                               in-call)
 ```
 
@@ -190,14 +190,10 @@ against the **union of**:
 2. Deterministic document header (source-derived fields)  
 3. Same-section neighbour chunk bodies  
 4. **Typed `LocationElement` texts** (`e1_embedding_input_policy.md` §3.3)
-5. Verbatim passages from admitted D122 reference cards cited by the claim
 
 **Out of union:** free-form location headers / legacy `context_prefix` prose; section summaries;
 model_derived orientation; policy labels; pure ordinals. Wrong `added_context` tags cannot reject
 text that exists elsewhere in the union (token-tolerant rule below unchanged).
-
-Apply the same deterministic grounding checks to remapped claims before
-attaching a split donor's completion. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 **Amendment (2026-07-29, token-tolerant union grounding):** the membership unit is now a token,
 not the whole added connective phrase. E2 tokenizes Unicode words and punctuation, splitting a

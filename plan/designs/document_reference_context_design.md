@@ -78,10 +78,8 @@ results, its generation and stable source-input basis. Normalize temporary label
 to validated source descriptors before persistence; preserve exact text and
 range/origin information needed for occurrence remapping.
 
-Reuse a matching prior-version Selection result when its evidence remaps.
-A split target requires a matching split donor for both Selection and Claimify.
-[D162 donor rule](split_oversized_chunks_design.md#2-split-only-failing-candidates).
-Retries replay the committed response. Uncommitted concurrent calls may race, but only
+Matching prior-version inputs reuse the frozen Selection output; retries never
+regenerate a committed response. Uncommitted concurrent calls may race, but only
 one accepted result becomes authoritative through existing transaction/CAS
 patterns. Do not add a second queue or distributed cache. Associate results with
 each consuming chunk occurrence so position changes do not corrupt evidence.
@@ -99,7 +97,7 @@ call. Empty representations follow the existing empty completion path.
 ## Reuse, including negative dependencies
 
 Selection's stable reuse basis is its existing own/neighbor source context,
-header and generation. Claimify's lookup adds the ordered stable
+header and generation. Claimify's effective basis adds the ordered stable
 Selection-input bases of every owning unit in its eligible preceding region,
 including units that emitted no cards, and the reference-policy generation.
 Those Selection bases include any neighbor source used to define their cards.
@@ -109,39 +107,14 @@ competing referent even though the old cited card is unchanged. Hashing the enti
 document is unnecessarily broad. A fixed source region captures both positive
 and negative dependencies while bounding the spread of invalidation.
 
-The hash finds reuse candidates. Compare with the frozen inputs that produced
-the donor's completion or a previously verified equivalent. Mark the target's
-frozen Selection result as verified for its Claimify completion when the
-completion is fresh or reuse passes this check. Commit the mark with the
-claims or zero-claim transcript. A legacy result with claims can prove its
-basis if all claims were minted on that occurrence and its original freezes
-are available. A legacy copy, including a copied zero-claim transcript, needs
-separate proof of its basis. If no eligible verified donor matches, complete
-Claimify from the current frozen results. Existing completions replay as recorded.
-
-In each occurrence use the Claimify request builder to rank and cap cards
-from all ordered producers. Compare the target's ordered Selection decisions,
-the ordered admitted cards, and the admitted passages that support them.
-Match names, aliases, exact support text, relative source ranges and converter
-origins after D119 remapping. Match temporary labels by the passages they
-identify. A changed unadmitted card permits reuse when admitted inputs match.
-Record cap diagnostics for the current occurrence, including on zero-claim
-reuse. Two committed empty Selection results match. A missing prior result,
-a difference in compared inputs or a failed remap disqualifies that candidate.
-Missing current results keep Claimify at the Selection barrier. Fresh Selection
-still permits Claimify reuse when an eligible donor's admitted inputs match.
-
-Keep `claimify_input_hash` on its stable input basis. Remap every claim span
-into the new occurrence under D119 before reattaching claim IDs under D56.
-For a split donor, apply the current occurrence's deterministic D32 checks
-to each remapped claim. Verify its citations against the current passages
-and its origin against current keeps. Test stored added context against
-the current target, header, same-section neighbours, typed D80 location
-elements and cited passages from admitted cards. Use D32's valid-time
-allowance for the claim's stored bounds. A grounding failure disqualifies
-the whole donor completion. If no donor passes, run Claimify from the
-current frozen Selection results.
-[D32 grounding](e2_e3_claims_relations_design.md#33-grounding--staying-honest-while-rewriting-d32).
+Do not include absolute offsets, document-version IDs, temporary labels or freshly
+generated summaries in content identity. Identical stable inputs must reuse the
+same frozen Selection decision, not call the model to obtain new cards. For each
+new occurrence remap all selected evidence into its allowed source units, including
+reference-card passages. Reject ambiguous repeated-text remapping; never take the
+first global substring match. Existing D56 same-claim-ID reuse and D119 occurrence
+evidence stay mandatory. Header timestamp changes retain their documented broader
+invalidation; shifting chunk boundaries can also change actual input context.
 
 ## Relationship to E3 and entity resolution
 

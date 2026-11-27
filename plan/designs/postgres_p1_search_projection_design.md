@@ -873,10 +873,6 @@ share an entry; equal scores across different embedding contexts remain.
 There is one active embedding per searchable record. Permanent dual generations
 are removed from the P1 contract.
 
-Setup and model maintenance share [D162's deployment-level pin admission lock](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
-Refuse a model or dimension change while an incompatible pin is live,
-including a dead-lettered replacement CHUNK with outstanding recovery.
-
 For a compatible repair, the worker recomputes missing or mismatched rows in
 place. For an incompatible model, dimension, or input-policy change:
 

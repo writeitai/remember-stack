@@ -231,9 +231,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   views (SQL/PGQ until the D98 RC 1 amendment); bounded recursive SQL
   supplies depth-two, variable, and shortest traversal. There is no Ladybug/P2 graph
   data snapshot (D98).
-- Document structure is **PageIndex**. Chunking uses deterministic, section-bounded
-  packing with a whitespace-token budget and content anchors (D58) and provider-qualified
-  cuts (D162). Claim extraction follows the **Claimify** principle.
+- Document structure: **PageIndex**. Chunking: **semchunk**. Claim extraction: **Claimify**
+  principle.
 - Plane K compilation: **Codex / OpenCode** as the planner/writer agents over a **single git
   repo**, orchestrated by the manifest-driven compile driver — one automated committer,
   dependency-ordered compiles; no concurrent sessions editing shared files (D45).

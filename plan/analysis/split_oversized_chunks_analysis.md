@@ -1,215 +1,83 @@
 # Oversized E1 chunks
 
-## Incident and choice
+## Why split at E1
 
-The owner reported that two of 40 hosted WriteIt documents dead-lettered at
-`embed_chunk`. One chunk had 71,710 characters and 3,021 whitespace tokens.
-The packer can emit a whole oversized block. Dense YAML, OCR tables and long
-turns can exceed an embedder's limit even within that whitespace budget.
-[Packer](../../src/rememberstack/core/chunker.py#L173-L240) ·
-[D80 renderer](../../src/rememberstack/core/embedding_input_policy.py#L188-L234).
+Two of 40 hosted WriteIt documents reportedly dead-lettered at `embed_chunk`.
+One chunk had 71,710 characters and 3,021 whitespace tokens. The packer counts
+whitespace tokens and can emit a whole oversized block. Dense YAML, OCR tables
+and long turns can exceed a model's limit under that packing rule.
+[Base packer](../../src/rememberstack/core/chunker.py#L173-L240).
 
-The owner reported accepting a 19,960-token input and a 45,919-token batch
-on Qwen3-Embedding-8B via OpenRouter `nebius/bf16`. Larger singleton probes
-returned generic 429s. Qualification must establish full delivery and the
-effective limits for the actual route. A bare 429 cannot identify a size
-failure. [Adapter retries](../../src/rememberstack/adapters/openrouter.py#L1079-L1124).
+Hosted probes reportedly accepted a 19,960-token input and a 45,919-token
+batch on Qwen3-Embedding-8B via OpenRouter `nebius/bf16`. Larger probes returned
+generic 429s. Acceptance alone gives no evidence of full delivery, and a 429
+alone gives no cause. Qualify the actual route and its request limits.
+[Adapter retries](../../src/rememberstack/adapters/openrouter.py#L1079-L1124).
 
-A smaller whitespace budget still admits oversized singletons. A blanket
-16 KiB byte limit would split the 46,833-byte LoCoMo OCR sample. Cutting in
-E0 changes the block map and reuse inputs for other stages. Cutting only
-failing E1 candidates preserves grounding in the same Markdown. Each cut
-must be checked on its own rendered input since D80 can select a larger
-header for a shorter body. [Mode selection](../../src/rememberstack/core/embedding_input_policy.py#L204-L223).
+A smaller whitespace budget still admits oversized singletons. A 16 KiB
+limit would cut a 46,833-byte LoCoMo OCR sample. Splitting in E0 would change
+the block map, sections and reuse identities. Checking complete D80 inputs
+in E1 confines changes to over-limit spans and the fields that depend on
+their order, count or extraction windows. D80 can add a larger header to a
+shorter body, so each piece needs its own fit check.
+[D80 rendering](../../src/rememberstack/core/embedding_input_policy.py#L188-L234).
 
-E0 accepts two eligible blocks separated by an ineligible label covering
-only `\n\n` because the label intersects neither block. Cutting at both label
-boundaries would force a blank piece. Determine the split's eligibility
-from nonblank text and retain separators and their provenance on the
-adjacent pieces. [E0 eligibility check](../../src/rememberstack/core/extraction_eligibility.py#L50-L71).
+## Existing version behavior
 
-The legacy row builder allocates UUIDv4 and stores the span and ordinal as
-separate fields. A split can move a following chunk's ordinal and change
-the count stored in every D80 location snapshot. Full-row equality holds
-with identical inputs and allocations. In mixed versions fitting spans
-keep their original bytes and cuts, and fields that depend on final order,
-count or changed extraction windows reflect those inputs.
-[Row builder](../../src/rememberstack/workers/e1.py#L694-L731) ·
-[D80 prepare](../../src/rememberstack/workers/e1.py#L290-L295) ·
-[D80 snapshot write](../../src/rememberstack/workers/e1.py#L535-L572).
+At the same source identity, D55 registers changed bytes as a new version
+and returns the existing latest version for identical bytes. With explicit
+D140 keys, a new key creates a version and an identical retry of the latest
+key returns it. Convert is keyed by version ID. Structure makes the new
+version current by version number. Configured D143 claims and facts
+admission skips earlier versions whose embed stage never succeeded.
+[Ingest](../../src/rememberstack/spine/document_catalog.py#L221-L250) ·
+[Convert key](../../src/rememberstack/spine/document_catalog.py#L360-L375) ·
+[Explicit keys](../../src/rememberstack/spine/effective_time.py#L218-L249) ·
+[Current pointer](../../src/rememberstack/spine/document_catalog.py#L1383-L1393) ·
+[Admission](../../src/rememberstack/spine/processing_layers.py#L734-L750) ·
+[Source completion](../../src/rememberstack/spine/processing_layers.py#L778-L808).
 
-A split at a block boundary can leave a piece with the same ordered block
-hashes and rendered D80 input as an earlier whole chunk. A new UUID only
-changes same-row recovery. Vector carry-forward, Selection and Claimify
-look up older results by hashes. Record that the row is a split piece so
-its first processing can require fresh results even on a whole-chunk hash
-match. Matching completed split pieces can serve later versions under D56.
-Otherwise an edit in another section would buy the same work again.
-[Content hash](../../src/rememberstack/core/chunker.py#L135-L138) ·
-[D80 render](../../src/rememberstack/core/embedding_input_policy.py#L188-L234) ·
-[Vector reuse](../../src/rememberstack/workers/e1.py#L319-L356) ·
-[Selection reuse](../../src/rememberstack/workers/e2.py#L655-L671) ·
-[Claimify reuse](../../src/rememberstack/workers/e2.py#L817-L838).
+D140 matches persisted chunks by date-free identity in non-deleted versions,
+including embed failures. The earliest known origin no later than the new
+version's source date wins. It records when the words were observed, even
+when that observation produced no claims. Without an eligible match the
+chunk uses its own version's date or remains undated.
+[Origin query](../../src/rememberstack/spine/chunk_catalog.py#L332-L345) ·
+[Origin rule](../../src/rememberstack/core/text_origin.py#L54-L85).
 
-Selection can run fresh after an equal-input result fails to remap. The
-Claimify hash includes that producer's input hash, and remapping the old
-claim's citations can still succeed after its reference cards change. The
-legacy lookup can select a copy whose own frozen cards differ from those
-that produced the claims. The attachment stamps the same hash for copied
-claims and copied zero-claim transcripts, leaving their original inputs
-unidentified.
-Require proof of the original inputs or a verified equivalent before reuse.
-[Selection fallback](../../src/rememberstack/workers/e2.py#L655-L695) ·
-[Claimify hash](../../src/rememberstack/core/selection_references.py#L70-L86) ·
-[Legacy donor lookup](../../src/rememberstack/spine/claim_catalog.py#L425-L447) ·
-[Legacy attachment](../../src/rememberstack/spine/claim_catalog.py#L164-L203).
+An embed dead letter prevents pipeline readiness and the claims handoff.
+E0 can already have published the structured source and its chunk addresses.
+Search can see a vector from a batch committed before the failure.
+[Claims handoff](../../src/rememberstack/spine/work_ledger.py#L294-L329) ·
+[E0 publication](../../src/rememberstack/spine/document_catalog.py#L827-L852) ·
+[Chunk visibility](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L700-L719) ·
+[P1 qualification](../../src/rememberstack/adapters/postgres_p1.py#L833-L852).
 
-Comparing every published card would repeat a paid call when, for example,
-only the ninth-ranked card changes and the same eight cards still fit.
-Rank and cap the full window in each occurrence so a newly competitive
-card can enter the request. Compare the admitted cards and passages after
-remapping. The ordered producer keys still cover the whole window, and
-generated text stays out of those keys.
-[Ranking and cap](../../src/rememberstack/core/selection_references.py#L277-L306) ·
-[Admitted passages and request](../../src/rememberstack/workers/e2.py#L911-L960).
+## Previous-release readers
 
-Renaming a section from `Orchard` to `Terrace` can leave the extraction keys,
-Selection decisions and cited text equal. The rename can remove the only
-D32 support for `Orchard` in a claim's added context. Run the existing
-grounding check against the successor's typed location and remapped
-evidence. A location change that still grounds every claim can reuse the
-completion under the same keys.
-[Claimify attachment](../../src/rememberstack/workers/e2.py#L832-L859) ·
-[D32 grounding elements](../../src/rememberstack/workers/e2.py#L1622-L1659).
-
-## Why replay is limited to unpublished versions
-
-`embed_chunk` releases E2 only after success. The ledger commits embed
-success with the claims handoff. Deferred claims admission also requires
-sources completion. With a terminal embed failure, readiness diagnostics
-show expected downstream stages missing and blocked by `embed_chunk`. That
-ordering explains why the normal path has no claims, observations, relations or
-facts for the failed version. Replay verifies the actual rows as well.
-[Claims handoff](../../src/rememberstack/workers/e1.py#L422-L442) ·
-[Ledger completion](../../src/rememberstack/spine/work_ledger.py#L266-L329) ·
-[Sources completion](../../src/rememberstack/spine/processing_layers.py#L794-L808) ·
-[Deferred admission guard](../../src/rememberstack/spine/processing_layers.py#L734-L744) ·
-[Readiness layers](../../src/rememberstack/spine/readiness.py#L113-L134) ·
-[Readiness blockers](../../src/rememberstack/spine/readiness.py#L42-L87).
-
-Publication is independent evidence. E0 marks the version ready before
-CHUNK and can enqueue corpus publication. SQL can expose persisted chunk
-IDs at that point. E1 commits P1 vectors batch by batch. A dead letter by
-itself cannot prove the grid was private. Previously served versions and
-versions with uncertain exposure history are ineligible for replay.
-[E0 ready and corpus enqueue](../../src/rememberstack/spine/document_catalog.py#L827-L879) ·
-[SQL exposure](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719) ·
-[P1 batch writes](../../src/rememberstack/workers/e1.py#L527-L572).
-
-D140 can use a chunk from an unpublished, embed-failed version. If a
-February version packs after January's grid is removed and before its
-replacement commits, unchanged text can permanently acquire February's
-date. This changes its Selection key and claim assertion date. The
-cleanup transaction's locks end before CHUNK rebuilds the grid. Drain and
-hold other-version work for the lineage across both transactions to
-preserve D140's donor rule.
-[D140 lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L346) ·
-[Origin assignment](../../src/rememberstack/workers/e1.py#L167-L217) ·
-[Claim date](../../src/rememberstack/workers/e2.py#L1345-L1348).
-
-A local PostgreSQL 18 probe committed one embed batch, then forced a
-provider failure to dead-letter. Readiness showed every expected downstream
-stage missing. Claims, occurrences, observations and fact relations were
-empty. The SQL view exposed eight chunk IDs, and P1 held one partial vector.
-
-The normal enqueue deduplicates against the succeeded CHUNK row. Normal
-CHUNK delivery also replays persisted cuts. Clear the private cuts and
-explicitly reschedule the existing row in one transaction. The failed
-embed row must remain attached to any billable partial batches. Let CHUNK
-completion reopen it so it cannot run against a missing grid.
-The claim predicate requires unused attempts even when a row previously
-succeeded. Generic dead-letter replay would reopen EMBED_CHUNK directly.
-[Work key](../../src/rememberstack/spine/work_ledger.py#L1996-L2023) ·
-[CHUNK replay](../../src/rememberstack/workers/e1.py#L132-L165) ·
-[Claim predicate](../../src/rememberstack/spine/work_ledger.py#L2154-L2167) ·
-[Generic replay](../../src/rememberstack/spine/work_ledger.py#L1026-L1098) ·
-[Cost foreign key](../../src/rememberstack/spine/migrations/versions/p0_02_0002_infrastructure_registries.py#L139-L159).
-
-A reaped CHUNK attempt can still reach the chunk insert after its replacement
-succeeds and the failed grid is deleted. The current attempt check at completion
-comes after the insert. EMBED_CHUNK also writes P1 and chunk stamps separately.
-Checking the ledger under lock in each data write transaction serializes those
-writes with reclaim and replay. Cost attribution already uses this pattern.
-[Lease reclaim](../../src/rememberstack/spine/work_ledger.py#L2290-L2322) ·
-[Chunk insert](../../src/rememberstack/spine/chunk_catalog.py#L74-L80) ·
-[Embed writes](../../src/rememberstack/workers/e1.py#L569-L607) ·
-[Cost attribution](../../src/rememberstack/spine/work_ledger.py#L1100-L1131).
-
-Polling and named deliveries use the same deployment, stage and lane
-predicate. D162 keeps the work keys, so drain legacy handlers for all four
-affected stages before activation. Legacy Selection's fallback labels a gap
-only if the entire catalogue is empty. A clipped neighbour block can leave
-a gap-only target without a label. Legacy Claimify can persist a donor
-attachment without checking which Selection inputs produced it.
-[Claim route](../../src/rememberstack/spine/work_ledger.py#L2176-L2201) ·
-[Passage fallback](../../src/rememberstack/core/source_passages.py#L124-L148) ·
-[Claim attachment](../../src/rememberstack/workers/e2.py#L832-L859).
-
-Setup checks stored vector stamps before publishing new semantic channels.
-It can see zero vectors after CHUNK pins model A, publish model B and leave
-the resulting A vectors excluded by semantic search. Serialize pin admission
-and model publication. Check live pins and stored vectors in one snapshot
-so an embedding completing during setup cannot fall between the two checks.
-[Setup](../../src/rememberstack/profiles/selfhost.py#L1269-L1286) ·
-[Stored model guard](../../src/rememberstack/adapters/postgres_p1.py#L201-L222) ·
-[Semantic filter](../../src/rememberstack/adapters/postgres_p1.py#L874-L889).
-
-Replacement CHUNK can exhaust its attempts while EMBED_CHUNK is still
-dead-lettered. Binding the recovery pin to ordinary claimability would let
-setup switch models while the lineage still waits for a grid. Keep the
-hold and pin on the outstanding CHUNK recovery. The operator can reopen
-that row with fresh bounded attempts or cancel by tombstoning the failed
-version and repointing the lineage through the existing lifecycle path.
-[Terminal transition](../../src/rememberstack/spine/work_ledger.py#L793-L826) ·
-[Version tombstone](../../src/rememberstack/spine/lifecycle.py#L658-L709).
-
-OpenRouter rejects successful HTTP responses with missing or empty vectors.
-Legacy E1 can isolate that error and stamp a successful skip for a nonblank
-singleton. This can advance the version without a semantic passage. Require
-a P1-usable vector and use the ledger's bounded attempts for unusable replies.
-[Adapter validation](../../src/rememberstack/adapters/openrouter.py#L1052-L1077) ·
-[Singleton skip](../../src/rememberstack/workers/e1.py#L463-L478) ·
-[Vector validity](../../src/rememberstack/ports/p1_index.py#L26-L49).
-
-Provider-confirmed size errors can also reveal an incorrect local ceiling.
-Repacking with the same fit check would repeat the cuts, discard partial
-vectors and grant fresh attempts. A corrected qualification has to make the
-rejected input fail locally before replay can fix that case.
+An eligible target needs a label over its own text. Legacy Selection starts
+with no keep ranges and clips E0 blocks to the target and its neighbours.
+It falls back to whole-window labels only when **none** of those windows
+has a block intersection. A gap-only target beside a block-backed neighbour
+therefore has no target label. Markdown can contain an HTML block between
+two paragraphs. The converter retains it, the blockizer skips it, and the
+candidate spans it. A local fixture with 180,000 repeated words in the HTML
+block measured about 90,000 Qwen tokens per half. Fitting pieces cannot all
+touch either paragraph while partitioning that gap.
+[Text conversion](../../src/rememberstack/adapters/converters/text.py#L56-L84) ·
+[Blockizer](../../src/rememberstack/core/blockizer.py#L165-L193) ·
+[Candidate extent](../../src/rememberstack/core/chunker.py#L198-L215) ·
+[Selection](../../src/rememberstack/workers/e2.py#L752-L763) ·
+[Label fallback](../../src/rememberstack/core/source_passages.py#L124-L158).
 
 ## Benchmark sizing
 
-The published LoCoMo 94.09% result uses Full-v45. The author-reported
-audit of 272 frozen sessions found a 21,567-token OCR singleton in
-`conv-41/D19` including the end token. The size bound with headers was
-22,337 tokens before route framing. Reviewers reproduced a conservative
-14,958-token bound on the public BEAM 100K/1 sample before route framing.
-These are sizing estimates. The benchmark requires the exact retained
-inputs and a qualified ceiling of at least 22,528 tokens.
-[LoCoMo result](../../benchmarks/locomo/README.md#published-results) ·
-[Frozen store restore](../../benchmarks/locomo/sharding/README.md#4-restore-one-conversation) ·
-[Pinned BEAM input](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json).
-
-Embedding hashes alone miss changed ordinals, headers in the indexed
-body and lost typed E2 location elements. The full-row check covers
-these dependencies and recomputes D122 stamps and ordered producers.
-[D122 window](../../src/rememberstack/workers/extraction_references.py#L56-L63) ·
-[Body fetch](../../src/rememberstack/surfaces/query_sandbox/nomination.py#L811-L832) ·
-[E2 location handling](../../src/rememberstack/workers/e2.py#L1691-L1737).
-
-Legacy E1 removes skips and reused vectors before batching the remaining
-inputs in order by item count. A lower aggregate cap can split such a batch
-even when every input fits alone. Saved vectors indexed by individual input
-hash would mask that change. Compare whole requests at the provider boundary
-and qualify the benchmark binding against every legacy batch as sent.
-[Legacy batching](../../src/rememberstack/workers/e1.py#L388-L409) ·
-[Request framing](../../src/rememberstack/adapters/openrouter.py#L1034-L1046).
+The author-reported Full-v45 audit found a 21,567-token OCR singleton
+(`conv-41/D19`) and a 22,337-token bound including headers before route framing.
+Reviewers reproduced a 14,958-token bound for public BEAM 100K/1 before framing.
+At least 22,528 qualified tokens are required for the benchmark binding.
+A saved vector per input hash can conceal changed batch boundaries.
+Compare the exact ordered requests as well as the stored rows.
+[LoCoMo publication](../../benchmarks/locomo/README.md#published-results) ·
+[Pinned BEAM input](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json) ·
+[Request batching](../../src/rememberstack/workers/e1.py#L388-L409).

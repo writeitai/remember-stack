@@ -547,16 +547,9 @@ reuse_identity_hash)`.
    known `text_origin_at` that is **not later than `d`**. If `d` is unknown there is no
    eligible match;
 3. with eligible matches, the new chunk's `text_origin_at` is the smallest of their
-   `text_origin_at` (ties broken by `version_no`, then `ordinal`). Otherwise
-   `text_origin_at = d` (possibly `NULL`, today's "date unknown"). Extraction reuse
-   separately requires an eligible result and successful remapping.
-   [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
-
-A stored chunk can supply the date even if embedding failed for its version.
-D162 recovery blocks processing of other versions of that lineage from before
-cleanup until replacement CHUNK hands off a durable grid or an operator
-cancels recovery and tombstones the failed version.
-[Recovery preconditions](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
+   `text_origin_at` (ties broken by `version_no`, then `ordinal`), and the chunk reuses that
+   match's extraction; otherwise `text_origin_at = d` (possibly `NULL`, today's "date
+   unknown") and the chunk is extracted or reused under today's key rules.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the
@@ -709,13 +702,6 @@ assign version keys at ingest.
 Two operations, on HTTP, SDK and the MCP catalogue (D136 parity). Both read the private tables
 through a fixed, authorization-checked operation query (`memory:read`), not through the open
 query space.
-
-For both operations, `first_chunk_ids` for a keyed section identifies the
-chunk containing the section's first block start in the resolved version
-and representation. Compare the stored section start with the chunk's
-half-open character span (`chunk.char_start <= section.char_start < chunk.char_end`).
-A split first block yields its leading piece. An uncovered start yields an
-empty list.
 
 **`document_references`** — input: either `chunk_id`, or `doc_id` with an optional
 `section_key`; `direction` (`outgoing` | `incoming` | `both`, default `both`); optional `kinds`;

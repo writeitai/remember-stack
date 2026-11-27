@@ -174,10 +174,9 @@ membership is still **token-in-union** (existing D32 token rule).
 Changing any of the above is a **new policy version**.
 
 [D162](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
-qualifies provider size limits independently of this renderer. CHUNK and
-EMBED_CHUNK measure the full rendered input plus framing with the pinned
-provider tokenizer. Admit the pin against P1's active model and dimensions.
-The policy's own length counter still chooses the header mode.
+uses a pinned provider tokenizer to check the full rendered input and framing
+after D80 chooses the mode. CHUNK and EMBED_CHUNK use the same qualified
+binding through retries. D80's length counter still chooses the header mode.
 
 ### 4.2 Modes
 
@@ -280,8 +279,6 @@ produced from different text.
 Content-hash-only vector carry-forward is **insufficient** when embedding text
 includes location. Block-level **extraction** reuse (D56 A1–A3) remains
 content-addressed without LLM output in identity keys.
-[D162 split targets](split_oversized_chunks_design.md#2-split-only-failing-candidates)
-require a matching split donor for carry-forward.
 
 **Maintenance cutover:** an incompatible model, dimension, or policy change
 makes semantic search unavailable while disposable vector state is rebuilt and
@@ -350,9 +347,9 @@ pack chunks
   (size from embedder capabilities; starting hypothesis 64–128 texts). Normative
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
-- **Document readiness.** Every nonblank D80 input has a usable P1 vector and
-  matching attestation. `empty_body` is the only skip. See the
-  [D162 failure contract](split_oversized_chunks_design.md#4-rejection-and-retry).
+- **Document readiness:** all in-scope chunks have prepare stamps and successful
+  embed matching the configured current state. The only successful skip is
+  `empty_body`. [D162 failures](split_oversized_chunks_design.md#3-terminal-failure-and-the-next-version).
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.

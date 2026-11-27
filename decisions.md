@@ -1937,11 +1937,6 @@ identity rules per source kind are a named spike.
 
 ## D56. Content-addressed reuse — the cost of a new version is proportional to the edit
 
-> **Proposed D162 amendment.** Split targets require a matching split donor
-> for paid reuse. First processing across a new split boundary is fresh.
-> Later versions reuse completed split inputs when they still match.
-> [D162 reuse](plan/designs/split_oversized_chunks_design.md#2-split-only-failing-candidates).
-
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The date among the "stable header facts" is the
 > chunk's **text origin time**, recorded once when the chunk is created: the text origin
 > time of the earliest chunk, dated no later than the new version, of a non-deleted version
@@ -2039,12 +2034,9 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
-> **Proposed D162 amendment.** The section-bounded packer counts whitespace
-> tokens and forces boundaries at accepted content anchors. Whole blocks
-> form base candidates. Provider-qualified cuts supersede the oversized
-> exceptions below and preserve non-overlap. D80 governs embedding input.
-> [D162](#d162-split-oversized-chunks-before-embedding) ·
-> [D80 design](plan/designs/e1_embedding_input_policy.md#4-embedding-input-policy).
+> **Proposed amendment.** [D162](#d162-split-oversized-chunks-before-embedding)
+> uses the anchored whitespace-token packer for whole-block candidates and
+> replaces the oversized-block rules with provider-qualified non-overlapping cuts.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2189,9 +2181,6 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 ---
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
-
-> **Proposed D162 amendment.** The fixed engine uses the section-bounded
-> whitespace-token packer with content anchors. [E1 packing](plan/designs/e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58).
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -6389,11 +6378,6 @@ promising billed tokens or a fixed saving.
 
 ## D122. Share frozen source reference context between extraction chunks
 
-> **Proposed D162 amendment.** Before reusing a Claimify completion, confirm
-> that the inputs admitted from frozen Selection match those of the original
-> completion or a verified equivalent after remapping. A split donor's
-> claims must also pass D32 grounding in the current occurrence.
-> [Reuse contract](plan/designs/document_reference_context_design.md#reuse-including-negative-dependencies).
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -8764,31 +8748,18 @@ generations, retrieval and rendering use their existing code and identities.
 
 ## D162. Split oversized chunks before embedding
 
-**Status:** Proposed. **Date:** 2026-11-27.
+**Status** Proposed. **Date** 2026-11-27.
 
-Use a pinned tokenizer and provider-qualified ceiling over the complete
-D80 input. Split only failing candidates, preserving exact slices and
-provenance. Use the legacy chunker version, ID allocator and work keys.
-READY versions retain their grids permanently. New versions use the fix.
-A typed size dead letter can restart at CHUNK if the stored input fails the
-qualified fit check, the version has never published, and there is no embed
-success or downstream work or evidence. Replay requires exclusive lineage
-processing through replacement CHUNK handoff. A replacement dead letter
-keeps the lineage hold and pin for bounded replay of that CHUNK or explicit
-cancellation by version tombstone. Activation drains legacy CHUNK,
-EMBED_CHUNK, Selection and Claimify handlers. CHUNK and EMBED_CHUNK share a
-qualification through retries and verify the current attempt on writes. Pin
-admission and P1 model changes use the same deployment lock. Repacking
-after another embed size rejection requires a changed fit decision.
+Measure the full D80 input with a pinned tokenizer and provider-qualified
+ceiling. Split only failing candidates and preserve exact spans and
+provenance under the existing chunker version and ID allocator. Fitting
+grids retain their full rows. Confirmed input rejections are typed terminal
+failures. Dead-lettered versions stay failed, with ordinary ingest of a
+successor or D159 forget and re-add available to the document.
 
-Split targets require matching split donors for paid reuse. Keep the stable
-D122 keys and verify the donor's admitted inputs before Claimify reuse.
-Recheck remapped claims from a split donor against current D32 grounding.
-An unverified legacy donor can require fresh Claimify on demand. Nonblank
-D80 inputs require usable vectors. Confirmed rejections are terminal.
-Unusable replies and capacity errors have bounded retries.
-Require offline equality of legacy embedding requests and full rows on
-frozen LoCoMo v45 and BEAM with a benchmark ceiling of at least 22,528 tokens.
+Qualify hosted embeddings starting at 16,384 tokens. Require at least 22,528
+for the benchmark binding and offline equality of legacy requests and
+full rows on frozen LoCoMo Full-v45 and BEAM.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

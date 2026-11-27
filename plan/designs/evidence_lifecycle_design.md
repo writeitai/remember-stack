@@ -360,14 +360,17 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
 2. **Content-object no-op** — bytes hash to a known object: new version row, everything else
    reused (and `UNIQUE` dedup means a copy in another folder reuses conversion too).
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
-4. **Chunk-grain extraction reuse.** Selection looks up `extraction_input_hash`.
-   The key covers own block or fragment hashes, same-section neighbor hashes,
-   consumed converter-origin hashes, stable header facts (title, file name,
-   source kind, text origin time and language), and the extractor and
-   structurer versions. A structurer version bump can change section roles,
-   which affect what Selection keeps. D7 carries committed model-derived
-   context forward for unchanged regions. The **text origin time** (D140),
-   recorded once at chunk creation, is the text
+4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
+   **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
+   block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
+   metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
+   extractor version + the
+   structurer version (a stable config string — a deliberate structurer bump is a
+   re-extraction boundary, since section roles feed Selection).
+   **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
+   non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
+   LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
+   discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
    origin time of the earliest chunk of a non-deleted version of the lineage with the same
    date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
    `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
@@ -376,11 +379,12 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
-   A matching eligible donor lets the new chunk reuse prior claims after D119
-   remapping and the [D122 reuse checks](document_reference_context_design.md#reuse-including-negative-dependencies).
-   Vector carry-forward also matches the full D80 input hash, policy and model.
-   A split target needs a matching split donor for each paid stage.
-   [E1 reuse mechanics](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
+   A chunk whose key is already extracted for this lineage **reuses its claims**
+   (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
+   re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
+   embedding version) the same way. **The mechanics — block-hash diff alignment,
+   anchor-stabilized boundaries, the carry-forward rules — are bound in
+   `e1_chunks_design.md` §7 (D57–D58)**; this design owns the contract.
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,
    stale no K pages.
 
