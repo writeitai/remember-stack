@@ -625,10 +625,11 @@ database-level, with recorded or fake model providers:
    edit inside a multi-chunk section with untouched sections before and after) ingest with claims
    off; claims are switched on. The backfill does no `chunk` or `embed_chunk` work and makes no
    chunk-embedding call; v1's Selection runs for every chunk; v2's Selection runs only for the edited
-   chunk and its same-section neighbours; every v2 chunk with unchanged Selection and text-origin
-   identity keeps them; each v2 chunk with matching Claimify hashes and equivalent frozen Selection
-   inputs reuses v1's claim IDs after remapping;
-   per-stage provider call counts equal those of an always-on run of the same versions. The D122
+   chunk and its same-section neighbours. Every v2 chunk with unchanged Selection and text-origin
+   identity keeps them. Each v2 chunk with a matching Claimify hash and verified equivalent
+   admitted inputs reuses v1's claim IDs after remapping under
+   [D122](document_reference_context_design.md#reuse-including-negative-dependencies).
+   Per-stage provider call counts equal those of an always-on run of the same versions. The D122
    window and packing-boundary cases are covered by expected-failure tests naming the known gap. The
    existing Rule 4 tests (`test_reuse_lifecycle.py`, `test_d140_text_origin_pg.py`) pass unchanged.
 7. **Living backfill.** A living lineage with three versions ingested with claims off is processed

@@ -13,6 +13,18 @@ Start hosted qualification at **16,384 tokens** for Qwen3-Embedding-8B on
 OpenRouter `nebius/bf16`. The benchmark binding requires **at least 22,528**.
 [Embedding policy](e1_embedding_input_policy.md#4-embedding-input-policy).
 
+Before activating D162 for ordinary ingestion or replay, stop legacy CHUNK
+and EMBED_CHUNK workers from claiming work. Wait for their in-flight
+handlers to exit, including reclaimed attempts. Resume those routes with
+workers that apply the write checks in §3.
+
+Ordinary CHUNK pins the active qualification on its work row before packing
+and passes it to EMBED_CHUNK in the handoff. Both stages honor that pin on
+retries and reclaims, including after configuration changes. Unpinned embed
+work already queued at cutover pins the active qualification at its first
+D162 attempt and checks the persisted grid under it. A worker must be able
+to honor the pin before writing a grid or calling the provider.
+
 CHUNK uses the existing section-bounded, anchored packer. Check each
 candidate's full D80 input, including normalized body, header, separators
 and provider framing. Fit also requires that the input fit alone in a request.
@@ -57,8 +69,8 @@ content-key functions. Intact chunks retain their block hashes and legacy
 key inputs wherever their extraction windows are unchanged. Use the final
 consumed neighbour text and clipped provenance where a window changes. Use
 D140 text origins and D119 evidence remapping. For Claimify reuse, compare the
-frozen Selection inputs as well as the D122 hash, including when a split
-piece ran Selection fresh. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
+current inputs against those that produced the donor's completion, even when
+a split piece ran Selection fresh. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 An input past the provider's real limit could never embed. D162 writes
 one chunk grid per version under the existing chunker version and work
@@ -80,8 +92,16 @@ lock their `processing_state` row in the data transaction. Require the
 same running `(processing_id, attempt)` and hold the lock through commit.
 Write each vector batch and its chunk stamps together. Recovery locks the
 same work rows. A write from an older attempt either commits before cleanup
-or finds that its attempt no longer owns the row. Enable replay after all
-workers that can write the grid use these checks and older attempts have drained.
+or finds that its attempt no longer owns the row.
+
+Replay requires exclusive processing for the lineage. Before cleanup,
+pause lineage intake, block other versions' work and replays from starting,
+and drain their in-flight attempts. Hold that exclusion across handoff,
+retries and restarts through the replacement CHUNK grid commit. Refuse
+replay if the exclusion cannot be guaranteed.
+D140 can inherit a text origin from an unpublished, embed-failed version.
+Another CHUNK that reads while the old grid is absent can permanently give
+unchanged text a later date. [D140 origin rule](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
 
 Operator and automatic replay target the `embed_chunk` dead letter by
 processing ID and observed attempt. The generic dead-letter replay entry
@@ -144,7 +164,10 @@ check commands with implementation.
 
 Test structural and scalar cuts, labelled gaps, exact reconstruction and
 provenance, full-input fit when a shorter body gets a larger header, and
-terminal size rejection versus bounded throttling. Exercise replay with a
+terminal size rejection versus bounded throttling. At activation, verify
+legacy workers cannot claim new work. Change the active qualification after
+ordinary CHUNK pins it and verify CHUNK and EMBED_CHUNK keep the same pin
+through handoff, retries and reclaims. Exercise replay with a
 partial vector batch and CHUNK already succeeded on its last attempt. Use
 the generic replay entry point. Cover repeat and stale requests, rollback,
 and refusal for publication or downstream evidence. Resume reclaimed CHUNK
@@ -152,9 +175,20 @@ and EMBED_CHUNK attempts after recovery and require zero writes. A second
 provider rejection under the same fit qualification must preserve partial
 vectors and attempt limits. Verify recovery after a corrected fit decision.
 
+Verify replay leaves the grid and ledger intact without enforceable lineage
+exclusion. Pause replay after cleanup and attempt to process a dated successor,
+including across replacement CHUNK retries and worker restarts. It must wait
+until the replacement grid commits, then inherit the earlier origin for a
+matching unchanged chunk.
+
 With two dated versions, verify that untouched regions keep their claim IDs
 and make zero embedding, Selection and Claimify calls when inputs match.
-Fresh Selection for an equal-hash split piece with different published cards
-must block dependent Claimify reuse. Equivalent cards after remapping and
-two committed empty results must permit reuse. Update the E1 acceptance
-checks with implementation. [E1 check](../implementation_evals/eval_checks/e1_chunks_whole_blocks_no_overlap.yaml).
+For equal hashes, verify a fresh Selection card blocks dependent reuse if it
+changes the admitted inputs. A changed ninth-ranked card that stays outside
+the cap must allow reuse without a Claimify call. Test a legacy V2 that
+copied V1's completion under different admitted inputs. A V3 that matches
+only V2's inputs must refuse the copy, with claims or a zero-claim transcript.
+Equivalent admitted inputs after remapping and committed empty Selection
+results must permit reuse from a verified donor.
+Update the E1 acceptance checks with implementation.
+[E1 check](../implementation_evals/eval_checks/e1_chunks_whole_blocks_no_overlap.yaml).

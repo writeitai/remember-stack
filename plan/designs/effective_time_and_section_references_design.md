@@ -547,9 +547,15 @@ reuse_identity_hash)`.
    known `text_origin_at` that is **not later than `d`**. If `d` is unknown there is no
    eligible match;
 3. with eligible matches, the new chunk's `text_origin_at` is the smallest of their
-   `text_origin_at` (ties broken by `version_no`, then `ordinal`), and the chunk reuses that
-   match's extraction; otherwise `text_origin_at = d` (possibly `NULL`, today's "date
-   unknown") and the chunk is extracted or reused under today's key rules.
+   `text_origin_at` (ties broken by `version_no`, then `ordinal`). Otherwise
+   `text_origin_at = d` (possibly `NULL`, today's "date unknown"). Extraction reuse
+   separately requires an eligible result and successful remapping.
+   [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
+
+A stored chunk can supply the date even if embedding failed for its version.
+D162 recovery blocks processing of other versions of that lineage from before
+cleanup until the replacement CHUNK grid commits.
+[Recovery preconditions](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the

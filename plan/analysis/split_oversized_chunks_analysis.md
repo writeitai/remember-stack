@@ -34,13 +34,25 @@ count or changed extraction windows reflect those inputs.
 
 Selection can run fresh after an equal-input result fails to remap. The
 Claimify hash includes that producer's input hash, and remapping the old
-claim's citations can still succeed after its reference cards change. Compare
-the bounded frozen Selection results before attaching a Claimify completion.
-This catches newly introduced competitors, preserves reuse for equivalent
-results and keeps generated text out of the identity keys.
+claim's citations can still succeed after its reference cards change. The
+legacy lookup can select a copy whose own frozen cards differ from those
+that produced the claims. The attachment stamps the same hash for copied
+claims and copied zero-claim transcripts, leaving their original inputs
+unidentified.
+Require proof of the original inputs or a verified equivalent before reuse.
 [Selection fallback](../../src/rememberstack/workers/e2.py#L655-L695) ·
 [Claimify hash](../../src/rememberstack/core/selection_references.py#L70-L86) ·
-[Claim reuse](../../src/rememberstack/workers/e2.py#L817-L860).
+[Legacy donor lookup](../../src/rememberstack/spine/claim_catalog.py#L425-L447) ·
+[Legacy attachment](../../src/rememberstack/spine/claim_catalog.py#L164-L203).
+
+Comparing every published card would repeat a paid call when, for example,
+only the ninth-ranked card changes and the same eight cards still fit.
+Rank and cap the full window in each occurrence so a newly competitive
+card can enter the request. Compare the admitted cards and passages after
+remapping. The ordered producer keys still cover the whole window, and
+generated text stays out of those keys.
+[Ranking and cap](../../src/rememberstack/core/selection_references.py#L277-L306) ·
+[Admitted passages and request](../../src/rememberstack/workers/e2.py#L911-L960).
 
 ## Why replay is limited to unpublished versions
 
@@ -52,7 +64,8 @@ ordering explains why the normal path has no claims, observations, relations or
 facts for the failed version. Replay verifies the actual rows as well.
 [Claims handoff](../../src/rememberstack/workers/e1.py#L422-L442) ·
 [Ledger completion](../../src/rememberstack/spine/work_ledger.py#L266-L329) ·
-[Deferred admission](../../src/rememberstack/spine/processing_layers.py#L794-L808) ·
+[Sources completion](../../src/rememberstack/spine/processing_layers.py#L794-L808) ·
+[Deferred admission guard](../../src/rememberstack/spine/processing_layers.py#L734-L744) ·
 [Readiness layers](../../src/rememberstack/spine/readiness.py#L113-L134) ·
 [Readiness blockers](../../src/rememberstack/spine/readiness.py#L42-L87).
 
@@ -64,6 +77,17 @@ versions with uncertain exposure history are ineligible for replay.
 [E0 ready and corpus enqueue](../../src/rememberstack/spine/document_catalog.py#L827-L879) ·
 [SQL exposure](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719) ·
 [P1 batch writes](../../src/rememberstack/workers/e1.py#L527-L572).
+
+D140 can use a chunk from an unpublished, embed-failed version. If a
+February version packs after January's grid is removed and before its
+replacement commits, unchanged text can permanently acquire February's
+date. This changes its Selection key and claim assertion date. The
+cleanup transaction's locks end before CHUNK rebuilds the grid. Drain and
+hold other-version work for the lineage across both transactions to
+preserve D140's donor rule.
+[D140 lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L346) ·
+[Origin assignment](../../src/rememberstack/workers/e1.py#L167-L217) ·
+[Claim date](../../src/rememberstack/workers/e2.py#L1345-L1348).
 
 A local PostgreSQL 18 probe committed one embed batch, then forced a
 provider failure to dead-letter. Readiness showed every expected downstream
@@ -92,6 +116,14 @@ writes with reclaim and replay. Cost attribution already uses this pattern.
 [Chunk insert](../../src/rememberstack/spine/chunk_catalog.py#L74-L80) ·
 [Embed writes](../../src/rememberstack/workers/e1.py#L569-L607) ·
 [Cost attribution](../../src/rememberstack/spine/work_ledger.py#L1100-L1131).
+
+Ordinary CHUNK claims use the same deployment, stage and lane predicate
+as named deliveries. Legacy workers can claim that route during rollout
+because D162 keeps the work keys. Drain legacy E1 workers before activation
+and carry the qualified binding through handoff and retries so both stages
+use the same fit rules.
+[Claim route](../../src/rememberstack/spine/work_ledger.py#L2176-L2201) ·
+[Embed handoff](../../src/rememberstack/workers/e1.py#L794-L812).
 
 Provider-confirmed size errors can also reveal an incorrect local ceiling.
 Repacking with the same fit check would repeat the cuts, discard partial

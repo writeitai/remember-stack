@@ -189,7 +189,8 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 1. **Claiming row.** One `processing_state` row owns an embed attempt for a **document
    version / representation** at stage `embed_chunk` (or an equivalent representation-scoped
    stage). Pure prepare (location facts + render) may run in that job before provider calls;
-   it does not require separate ledger rows.
+   it does not require separate ledger rows. Use CHUNK's qualified binding for the handoff
+   and retries. [D162 activation](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
    configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
    (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder

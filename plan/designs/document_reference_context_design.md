@@ -107,16 +107,28 @@ competing referent even though the old cited card is unchanged. Hashing the enti
 document is unnecessarily broad. A fixed source region captures both positive
 and negative dependencies while bounding the spread of invalidation.
 
-The hash finds a reuse candidate. Before attaching its Claimify completion,
-compare the frozen target's ordered Selection decisions and each preceding
-producer's ordered published cards in the two occurrences. Compare cards
-before ranking or capping them for Claimify. Match names, aliases, order,
-and exact supporting text, relative ranges and converter origins after D119
-remapping. Use relative source slots so document movement and temporary labels
-do not affect the result. Two committed empty results match. A missing prior
-result, a difference or failed remap makes the candidate ineligible for reuse.
-Missing current results keep Claimify at the Selection barrier. The same check
-applies when a split piece ran Selection fresh. [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+The hash finds reuse candidates. Compare with the frozen inputs that produced
+the donor's completion or a previously verified equivalent. Mark the target's
+frozen Selection result as verified for its Claimify completion when the
+completion is fresh or reuse passes this check. Commit the mark with the
+claims or zero-claim transcript. A legacy result with claims can prove its
+basis if all claims were minted on that occurrence and its original freezes
+are available. A legacy copy, including a copied zero-claim transcript, needs
+separate proof of its basis. If no eligible verified donor matches, complete
+Claimify from the current frozen results. Existing completions replay as recorded.
+
+In each occurrence use the Claimify request builder to rank and cap cards
+from all ordered producers. Compare the target's ordered Selection decisions,
+the ordered admitted cards, and the admitted passages that support them.
+Match names, aliases, exact support text, relative source ranges and converter
+origins after D119 remapping. Match temporary labels by the passages they
+identify. A changed unadmitted card permits reuse when admitted inputs match.
+Record cap diagnostics for the current occurrence, including on zero-claim
+reuse. Two committed empty Selection results match. A missing prior result,
+a difference in compared inputs or a failed remap disqualifies that candidate.
+Missing current results keep Claimify at the Selection barrier. Apply the same
+check when a split piece ran Selection fresh.
+[D162](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 
 Keep `claimify_input_hash` on its stable input basis. A successful check
 still requires D119 to remap every claim span into the new occurrence before
