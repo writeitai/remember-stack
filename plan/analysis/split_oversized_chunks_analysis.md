@@ -53,6 +53,23 @@ Search can see a vector from a batch committed before the failure.
 [Chunk visibility](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L700-L719) ·
 [P1 qualification](../../src/rememberstack/adapters/postgres_p1.py#L833-L852).
 
+## Text origin at a split boundary
+
+An edit to the first of three list items can make the whitespace packer join
+it with the second item. Splitting the oversized candidate can restore the
+second item's exact old window. The third item consumes the same neighbour
+text, passages and origins. Both E1 key builders currently take the
+neighbour's stored content hash, so the split discriminator alone would
+change the third item's Selection key and make D140 fall back to the edit
+date. The legacy block hash is sufficient in the neighbour slot for a
+whole-block window. Keep the split hash for the piece's own keys and for
+neighbour windows with partial blocks or nonblank gaps the legacy block
+hash cannot represent.
+[Packer](../../src/rememberstack/core/chunker.py#L198-L238) ·
+[Key builders](../../src/rememberstack/workers/e1.py#L656-L765) ·
+[Selection input](../../src/rememberstack/workers/e2.py#L752-L787) ·
+[Origin lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345).
+
 ## Previous-release readers
 
 An eligible target needs a label over its own text. Legacy Selection starts
@@ -70,14 +87,42 @@ touch either paragraph while partitioning that gap.
 [Selection](../../src/rememberstack/workers/e2.py#L752-L763) ·
 [Label fallback](../../src/rememberstack/core/source_passages.py#L124-L158).
 
+## Durable handoffs at cutover
+
+STRUCTURE enqueues CHUNK. CHUNK persists its grid before the ledger
+completes the job and enqueues EMBED_CHUNK. A retried CHUNK can find those
+rows and hand them off without packing again. Pending and backed-off ledger
+rows survive a worker restart. Applying a 16,384-token fit check to an
+18,000-token legacy row could dead-letter it before dispatch or committed
+vector recovery. Fencing new legacy work and draining the durable handoffs
+with the outgoing binding keeps the first checked embeds paired with the
+new packer. The same replay branch explains why the offline candidate run
+must start with the target grid absent.
+[STRUCTURE follow-up](../../src/rememberstack/workers/e0.py#L2185-L2202) ·
+[CHUNK write and replay](../../src/rememberstack/workers/e1.py#L132-L191) ·
+[Atomic ledger completion](../../src/rememberstack/spine/work_ledger.py#L231-L264) ·
+[Due-work predicate](../../src/rememberstack/spine/work_ledger.py#L2154-L2174) ·
+[Vector recovery](../../src/rememberstack/workers/e1.py#L319-L336).
+
 ## Benchmark sizing
 
 The author-reported Full-v45 audit found a 21,567-token OCR singleton
 (`conv-41/D19`) and a 22,337-token bound including headers before route framing.
-Reviewers reproduced a 14,958-token bound for public BEAM 100K/1 before framing.
 At least 22,528 qualified tokens are required for the benchmark binding.
 A saved vector per input hash can conceal changed batch boundaries.
 Compare the exact ordered requests as well as the stored rows.
 [LoCoMo publication](../../benchmarks/locomo/README.md#published-results) ·
-[Pinned BEAM input](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json) ·
 [Request batching](../../src/rememberstack/workers/e1.py#L388-L409).
+
+For public BEAM 100K/1, flatten the batches and turn groups in file order.
+Render each of the 188 messages as `{role}: {content}` in Markdown, with a
+blank line between messages. Blockize it and enumerate every singleton and
+every contiguous block run whose summed whitespace count is at most 400.
+The largest D80-normalized body is 14,187 NFC UTF-8 bytes. Bound Qwen's
+byte-level tokens by those bytes, allow up to `48 × 4 × 4 + 2 = 770` for the
+D80 header and two newlines (four canonical decomposition scalars per code
+point and four UTF-8 bytes per scalar), and add one end token. The result
+is a conservative 14,958-token bound before route framing.
+[Pinned BEAM input](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json) ·
+[D80 render](../../src/rememberstack/core/embedding_input_policy.py#L188-L234) ·
+[Pinned Qwen tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).

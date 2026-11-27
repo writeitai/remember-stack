@@ -177,6 +177,8 @@ Changing any of the above is a **new policy version**.
 uses a pinned provider tokenizer to check the full rendered input and framing
 after D80 chooses the mode. CHUNK and EMBED_CHUNK use the same qualified
 binding through retries. D80's length counter still chooses the header mode.
+The rollout gates embed fit enforcement and split writes together.
+[D162 rollout](split_oversized_chunks_design.md#rollout).
 
 ### 4.2 Modes
 

@@ -18,12 +18,12 @@ Keep that binding active while admitted work can still run. Use
 [D80's maintenance cutover](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse)
 for incompatible binding changes.
 
-CHUNK checks legacy whole-block candidates for input and singleton-request
-fit. If all fit, equal inputs and allocations produce byte-identical
-`chunks` and `chunk_search` rows. In a mixed grid, fitting candidates keep
-their spans and legacy row builder. Derive count, order and extraction
-windows from the final grid. A change from one to multiple chunks can
-change D80 headers, so check again after that transition.
+With D162 enabled, CHUNK checks legacy whole-block candidates for input and
+singleton-request fit. If all fit, equal inputs and allocations produce
+byte-identical `chunks` and `chunk_search` rows. In a mixed grid, fitting
+candidates keep their spans and legacy row builder. Derive count, order
+and extraction windows from the final grid. A change from one to multiple
+chunks can change D80 headers, so check again after that transition.
 EMBED_CHUNK verifies fit before reuse or dispatch. Keep the legacy ordered
 batches of inputs that need vectors, subdividing only to meet request limits.
 
@@ -51,14 +51,20 @@ can repeat across pieces. Section references and history take the entry
 chunk whose character span contains the first block's start.
 [Legacy row builder](../../src/rememberstack/workers/e1.py#L694-L731).
 
-Use the existing hash builders. For a split piece, hash the ordered exact
-block fragments and gap bytes with a fixed split discriminator so a
-whole-block donor cannot match. Matching split inputs can carry paid
-results forward under D56 and D119. Intact chunks retain their keys wherever
-their inputs are unchanged. E2 uses final same-section neighbours and clipped
-provenance for its window and D140 uses its existing text-origin lookup.
-D122 uses the final document order and the previous eight Selection
-producers, including frozen empty results.
+Keep the existing hash builders and key versions. A split piece's content
+hash covers the ordered exact block fragments and gap bytes with a fixed
+split discriminator. Use that hash for the piece's own Selection and D140
+keys and vector reuse. Matching split inputs can carry paid results forward
+under D56 and D119.
+
+For both Selection and D140, hash the final same-section neighbour windows.
+If a split neighbour spans exactly the start of its first intersected
+block to the end of its last, with only whitespace between blocks, use
+the legacy ordered-block hash in that neighbour slot. Use the split hash
+for other pieces. This preserves the intact target's keys when a cut
+restores the same whole-block window and the other key inputs match. Hash
+converter origins from the actual consumed spans. D122 uses the final document
+order and the previous eight Selection producers, including frozen empty results.
 
 In Selection and Claimify, label each nonblank gap-only window by its exact
 span even when a neighbour has clipped blocks. Keep Claimify origins tied
@@ -66,9 +72,16 @@ to target keeps and use exact spans and typed location elements for grounding.
 [Legacy label fallback](../../src/rememberstack/core/source_passages.py#L124-L168) ·
 [D122 ordering](../../src/rememberstack/workers/extraction_references.py#L40-L76).
 
-Under [D160](packaging_distribution_design.md#61-migration-compatibility),
-enable split writes only after previous-release CHUNK, EMBED_CHUNK, Selection,
-Claimify and section-entry readers have drained.
+### Rollout
+
+Pause STRUCTURE claims and settle running attempts to fence admission to
+legacy CHUNK. Keep the outgoing workers and binding until every legacy
+CHUNK and EMBED_CHUNK job is terminal in the durable ledger across all
+lanes. Include delayed jobs, leases, retries and CHUNK replays of already
+written grids. Retire previous-release CHUNK, EMBED_CHUNK, Selection and
+Claimify workers and section-entry readers. Enable split writes and
+EMBED_CHUNK fit enforcement together, then resume admission.
+[D160](packaging_distribution_design.md#61-migration-compatibility).
 
 ## 3. Terminal failure and the next version
 
@@ -93,9 +106,12 @@ D140's existing origin lookup can match saved chunks of a failed predecessor.
 
 ## 4. Acceptance
 
-Use frozen LoCoMo Full-v45 and BEAM E0 artifacts, settings and reuse state.
-Replay UUIDs and clocks at allocation. Match the complete ordered provider
-requests, including routing and framing, and use only matching saved replies.
+Use frozen LoCoMo Full-v45 and BEAM E0 artifacts, settings and prior reuse state.
+Start the candidate run with the target grid's chunk and search rows and
+completed E1 jobs absent. Run CHUNK through packing and fit before embedding.
+Use the saved target rows as the comparison reference. Replay UUIDs and
+clocks at allocation. Match the complete ordered provider requests,
+including routing and framing, and use only matching saved replies.
 Fail if the benchmark binding would change any request, even when each
 input fits alone. Require zero splits and zero model calls. Compare all
 columns of `chunks` and `chunk_search`, including nulls, and compare D122
@@ -105,10 +121,19 @@ Test structural and scalar cuts, labelled gaps and blank separators, exact
 reconstruction and provenance, and a header growing after a cut. Exercise
 a gap-only target beside block-backed neighbours through Selection,
 Claimify and grounding, the section-entry handle and D122's prior eight.
-Exercise the D160 gate and the shared CHUNK-to-EMBED_CHUNK binding.
-Test typed terminal rejection versus bounded throttling and invalid-vector
-retries. With two dated versions, count calls and compare claim IDs for
-unchanged whole and split ranges on both sides of an edit. Cover anchors
-and mark the existing D122 cross-section reuse gap as an expected failure.
+Rehearse the rollout with a legacy grid above the incoming ceiling, a CHUNK
+retry after its grid write, and pending and backed-off EMBED_CHUNK work.
+Verify a backed-off job holds the gate closed even with no active leases.
+Verify legacy dispatch or committed-vector recovery completes before cutover
+and fresh work uses the shared binding after cutover. Test typed terminal
+rejection versus bounded throttling and invalid-vector retries.
+
+With two dated versions, count calls and compare claim IDs for unchanged
+whole and split ranges on both sides of an edit. Include three same-section
+list items where an edit to the first causes D162 to restore the second
+item's original whole-block window. Put a relative date in the third item.
+Verify it keeps both keys and its origin date with zero new Selection calls.
+Its Claimify key follows the D122 producer window. Cover anchors and mark
+the existing D122 cross-section reuse gap as an expected failure.
 Verify that identical ingest returns the failed version and an edited
 successor publishes with the matching origin.

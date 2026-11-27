@@ -1641,8 +1641,8 @@ stored as derived metadata, not body text).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
--- chunks — semchunk units, section-aware (never split mid-section, D39). Body = markdown_uri sliced
--- by [char_start,char_end] (NOT stored in the authority row, D37). P1 is keyed by chunk_id. Large
+-- chunks — section-bounded E1 units (D58, D162). Body is the [char_start,char_end)
+-- slice of representation Markdown (D37). P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (
@@ -1653,15 +1653,15 @@ CREATE TABLE chunks (
   representation_id uuid NOT NULL,             -- LOGICAL FK → document_representations (D65): the reading whose block grid + document.md offsets this chunk is cut from — the basis coordinate on every occurrence
   section_id      uuid,                        -- LOGICAL FK → document_sections; section (role/path signal for E2)
   ordinal         integer NOT NULL,            -- position within the document
-  block_start     integer NOT NULL,            -- first block ordinal packed into this chunk (D57/D58: a chunk = a run of whole blocks)
-  block_end       integer NOT NULL,            -- last block ordinal (inclusive)
-  chunk_content_hash text NOT NULL,            -- hash of the chunk's ORDERED BLOCK HASHES (D58) — embedding-reuse + occurrence identity
-  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, the chunk's text_origin_at (D140 — not the version's own date), language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
+  block_start     integer NOT NULL,            -- first intersected block ordinal, or preceding block for a gap-only piece (D162)
+  block_end       integer NOT NULL,            -- last intersected block ordinal (inclusive), or same as block_start for a gap-only piece
+  chunk_content_hash text NOT NULL,            -- ordered block hashes or D162 split hash
+  extraction_input_hash text NOT NULL,         -- stable Selection inputs including text_origin_at (e1_chunks_design.md §7)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
   text_origin_at  timestamptz,                 -- D140: recorded once at creation: the text origin time of the earliest matching chunk (same reuse_identity_hash) in a non-deleted version of the lineage, else this version's source_modified_at or published_at; the E2 header date, the reuse-key date, and fresh claims' asserted_at
-  reuse_identity_hash text,                    -- D140: date-free identity (own + neighbour block hashes, non-date header facts, blockizer/structurer/extractor versions) for the text-origin lookup
+  reuse_identity_hash text,                    -- D140: date-free identity for the text-origin lookup (e1_chunks_design.md §7)
   extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
@@ -1672,14 +1672,14 @@ CREATE TABLE chunks (
   embedding_input_policy_version text,         -- LOGICAL FK → pipeline_component_versions (embedding_input_policy)
   context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
   prefixer_version text,                       -- LEGACY context_prefixer component version
-  chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (semchunk config)
+  chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (base packer config)
   embedding_version text,                      -- configured embedder/model attestation for the current chunk vector
   policy_generation text,                      -- configured embedding_input_policy_version
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
+  'Section-bounded E1 retrieval units, one row per (version, position). Private chunk_search holds normalized search text and current vectors (D94). The authority row stores offsets, section link, D80 policy and location stamps, version stamps, and D56 extraction reuse keys. Vector carry-forward matches the content hash, embedding text hash, policy and model (D80). Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup

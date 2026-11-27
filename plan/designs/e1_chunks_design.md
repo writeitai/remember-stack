@@ -209,8 +209,8 @@ budget. A block larger than that budget forms its own candidate.
 
 - [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates) cuts
   candidates whose complete embedding input exceeds the qualified limit. The
-  converter and schema's whole-block rules describe base packing. For split
-  pieces, character spans determine coverage and block ordinals can repeat.
+  converter's whole-block rules describe base packing. For split pieces,
+  character spans determine coverage and block ordinals can repeat.
 - **Never cross a section boundary** (§3 makes this well-defined).
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
@@ -322,13 +322,18 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
-  inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
-  when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
-  under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
+  inputs are unchanged.** E2 reuses Selection when `extraction_input_hash` matches
+  and D119 remapping succeeds. Claimify also requires the full D122 producer key.
+  Unchanged regions keep the prior version's structure under `structurer_version`.
+  LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
-  `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
-  facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
-  deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
+  `extraction_input_hash = hash(own content hash + same-section neighbour hashes + stable
+  header facts + consumed converter-origin hashes + extractor_version + structurer_version)`.
+  Both this key and the D140 identity use D162's whole-block neighbour hash where
+  a split piece contributes an equivalent window.
+  [D162 hash rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+  **Stable header facts** are the deterministic document metadata the E2 bundle
+  feeds the extractor. They include title, **file name**
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
   the old one), source kind, the chunk's **text origin time**, language (from
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
@@ -337,22 +342,14 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
   versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
   and **not later than this version's own date** (so a back-filled older edition never inherits
-  a later date) — own and neighbour
-  block hashes, non-date header facts, consumed converter-origin hashes,
-  blockizer/structurer/extractor versions, indexed per
-  lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
-  and replayed, never recomputed; deleting the origin version later does not change it. The
-  E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
-  in unchanged text stay resolved against the time the text was written, and a dated new
-  version reuses its unchanged chunks (with the version's own date in the key, nearly every
-  new version would miss every key) — **no LLM *output* participates in the
-  key** (refines D56's original sketch, which had let the section path and prefix in — a key
-  no re-run would ever match, the ~0 %-reuse hazard named in the stress test). Including
-  `structurer_version` — a stable config string, not LLM output — closes the context-drift
-  gap (Codex review F10): within a lineage, carried-forward structure *is* the binding context
-  of reused claims, so section roles cannot drift under them silently; and a **deliberate
-  structurer bump** (which may reclassify sections — a `body` → `references` role change
-  alters what Selection keeps) is a re-extraction boundary by key construction.
+  a later date) — own content and same-section neighbour hashes, non-date
+  header facts, consumed converter-origin hashes, and blockizer/structurer/extractor
+  versions, indexed per lineage — otherwise this version's `source_modified_at` or
+  `published_at`. The recorded date stays fixed through replay and deletion of the
+  origin version. E2 uses it in the header and as `asserted_at` for fresh claims
+  so relative dates stay anchored to when the text was written. A deliberate
+  `structurer_version` bump re-keys extraction because section roles can change
+  what Selection keeps.
 - **Passage embedding reuse (D80 refinement).** Passage identity is the composite
   `(embedding_input_policy_version, embedding_text_hash, embedder_generation)`. Provider
   re-embed is required when the hash or embedder generation changes; a policy-only bump that

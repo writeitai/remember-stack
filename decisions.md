@@ -1947,6 +1947,10 @@ identity rules per source kind are a named spike.
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
 > this decision's cost promise did not hold. Everything else here remains binding.
 
+> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
+> adds split-piece content hashes and preserves the legacy neighbour hash
+> for equivalent whole-block windows in the Selection and text-origin keys.
+
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
 only**: the chunk's own block hashes + neighbor-chunk block hashes + stable header facts + the
@@ -8753,7 +8757,9 @@ generations, retrieval and rendering use their existing code and identities.
 Measure the full D80 input with a pinned tokenizer and provider-qualified
 ceiling. Split only failing candidates and preserve exact spans and
 provenance under the existing chunker version and ID allocator. Fitting
-grids retain their full rows. Confirmed input rejections are typed terminal
+grids retain their full rows. Drain durable legacy CHUNK and EMBED_CHUNK
+work under the outgoing binding before enabling split writes and embed
+fit checks together. Confirmed input rejections are typed terminal
 failures. Dead-lettered versions stay failed, with ordinary ingest of a
 successor or D159 forget and re-add available to the document.
 

@@ -361,12 +361,13 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    reused (and `UNIQUE` dedup means a copy in another folder reuses conversion too).
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
 4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
-   **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
-   block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
+   **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's
+   content hash + same-section neighbour hashes + stable header facts (deterministic document
    metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
-   extractor version + the
+   consumed converter-origin hashes + the extractor version + the
    structurer version (a stable config string — a deliberate structurer bump is a
    re-extraction boundary, since section roles feed Selection).
+   [D162 hash rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
@@ -379,10 +380,10 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
-   A chunk whose key is already extracted for this lineage **reuses its claims**
-   (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
-   re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
-   embedding version) the same way. **The mechanics — block-hash diff alignment,
+   A matching key can reuse frozen Selection after remapping. Claimify also needs
+   a matching D122 key and remappable spans to reuse claim IDs. A changed neighbour
+   window can require fresh Selection for an intact target. Vector reuse also
+   checks the rendered input and policy under D80. **The mechanics — block-hash diff alignment,
    anchor-stabilized boundaries, the carry-forward rules — are bound in
    `e1_chunks_design.md` §7 (D57–D58)**; this design owns the contract.
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,
