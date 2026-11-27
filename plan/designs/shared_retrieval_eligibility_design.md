@@ -388,12 +388,22 @@ deployment and candidate fact ID in that probe's `WHERE`. A second
 `LATERAL (... OFFSET 0)` probe binds the evidence row's
 `(deployment_id, claim_id, doc_id)` inside both sides of
 `claims_visible_history UNION ALL v_memory_claim_carried_periodised`.
-In the carried-claim view, bind its occurrence lookup by deployment and
-claim ID, then its chunk lookup by deployment and chunk ID, using the same
-lookup boundary. Keep the reading, readiness, period and origin predicates.
 Binding the raw evidence inside its probe prevents semi-join conversion even
 when no claim qualifies. Either stance can qualify, including claims carried
 by a newer occurrence after loss of the origin.
+
+Put the shared origin probe in `memory_v1.claims_visible_history`. From the
+claim row, look up its origin chunk in `LATERAL (... OFFSET 0)` using the
+claim's `(deployment_id, doc_id, chunk_id)` inside the lookup. From that
+chunk, use a second such lookup to check its visible version and ready
+representation by their full coordinates. Keep the existing live-lineage
+and historical visibility rules, including ready origins in superseded
+versions or replaced representations.
+In `v_memory_claim_carried_periodised`, use `NOT EXISTS (... OFFSET 0)`
+against that same history view keyed by the claim's deployment and ID.
+Keep the current-testimony and period predicates. Bind the carried
+occurrence by deployment and claim ID, then its chunk by deployment and
+chunk ID, and check that version's current ready reading using those inputs.
 
 Keep the widened `v_memory_fact_claim_live` for current-lineage membership.
 D54 counts still come from `v_memory_evidence_lineage_live` through a left
@@ -472,10 +482,13 @@ EXISTS (
 ```
 
 Accept if the supports-only probe succeeds, or if a fact-ID probe finds
-**zero raw `supports` rows** and the either-stance probe succeeds. The
-existence of a raw support row disables contradiction fallback even when
-its only occurrence was deleted or left in a replaced reading. An empty
-evidence set fails. `scope_window` is D140's inclusive `TextScope` window.
+**zero raw `supports` rows** and the either-stance probe succeeds. In both
+fact kinds, put `OFFSET 0` inside the raw-support `NOT EXISTS` along with the
+correlated deployment and fact IDs and `stance = 'supports'`. This keeps
+PostgreSQL from turning the absence check into a hashed scan of unrelated
+evidence. A raw support row disables contradiction fallback even when its
+only occurrence was deleted or left in a replaced reading. An empty evidence
+set fails. `scope_window` is D140's inclusive `TextScope` window.
 The scope row enforces live lineage/version membership. Undeclared lineages
 keep their any-live-version case, while periodised lineages require a
 selectable version overlapping the window. Reused claims qualify through
@@ -557,15 +570,23 @@ D159's archive-aware `FACT_SOURCE_ARCHIVE_DDL`. The `p9_46_0067` oracle and
 pin transitions belong to [D153's historical delivery](../plans/shared_retrieval_eligibility.md).
 [Archive migration](../../src/rememberstack/spine/migrations/versions/p9_55_0076_archive.py#L187)
 
-In one new Alembic revision, use `CREATE OR REPLACE VIEW` to install the
-deployment-bound `v_memory_entity_survivor` first, then its
-`v_graph_survivor` projection. Install the keyed carried-claim view before
-the fact source helper. Preserve columns, types, owners, grants and public
-comments. On downgrade, restore
-the exact `p9_55_0076` definitions and comments for the changed views.
-Restore `v_graph_survivor` before restoring the adapter that depends on it.
-Historical migrations stay immutable. Keep one runtime SQL path using
-typed builders with fixed table and column choices and bound values.
+Use `CREATE OR REPLACE VIEW` in separate Alembic revisions, one view per
+transaction. Upgrade in this order:
+
+1. `v_memory_entity_survivor`, with the deployment-bound walk.
+2. `v_graph_survivor`, projecting that walk.
+3. `memory_v1.claims_visible_history`, with the shared origin probe.
+4. `v_memory_claim_carried_periodised`, using the keyed origin-absence check.
+5. `v_memory_fact_source_qualified`, with bounded source membership.
+
+Downgrade in reverse order, restoring the exact `p9_55_0076` definitions and
+comments. Between the survivor replacements both views walk `entities`
+directly, so callers can use either view and see the same results on valid
+chains. Preserve columns, types, owners, grants and public comments at every
+step. Each commit releases the target's exclusive lock. A reader can then
+finish through a dependency before the migration needs an exclusive lock on
+the reader's caller view. Keep historical migrations immutable and keep one
+serving path using typed builders with fixed SQL identifiers and bound values.
 
 Register the changed authored DDL in `source_definitions.py`, retaining the
 widened `v_memory_fact_claim_live` and `v_memory_claim_carried_periodised`
@@ -577,10 +598,11 @@ pins in `storage_capture_guard.py` and `storage_capture_catalog.py` from
 `p9_55_0076` to the new head. Qualify the guards and resource inventory at
 that head. Protected benchmark identities follow §9.1.
 
-Verify previous-release reads and writes during the migration handoff under
-D160. Apply D161's session migration lock, three-second default lock wait
-and bounded `55P03` retry from the committed revision. Exercise contention
-on the affected views. [Migration compatibility](packaging_distribution_design.md#61-migration-compatibility)
+Verify previous-release reads and writes at each intermediate revision under
+D160. Keep the D161 session migration lock across the commits, with the
+three-second default lock wait and bounded `55P03` retry from the last
+committed revision. Start the new release at the final head.
+[Migration compatibility](packaging_distribution_design.md#61-migration-compatibility)
 
 No converter, structurer, extractor, resolver, normalizer or embedding generation
 changes. No new paid-product key, source identity or source-origin input.
@@ -713,7 +735,19 @@ and boundary metadata. Include scoped and keyed nomination, broad batch
 confirmation, final hydration and contradiction members. Apply §9's
 visibility, snapshot and cancellation checks to the changed path. Exercise
 populated upgrade and downgrade with live catalog and row comparisons at
-`p9_55_0076` and at the new head.
+`p9_55_0076` and at the new head. In both directions, admit a previous-release
+reader between replacements and hold its transaction open through the next
+contended view replacement. Check that the reader completes and that the
+migration resumes from the last committed revision after `55P03`. Any `40P01`
+fails the test.
+
+Use a legacy-corruption fixture with a redirect from deployment A through
+deployment B to a terminal in A. The composite redirect foreign key prevents
+this in normal writes. The deployed adapter accepts that chain because its
+seed and terminal share a deployment. D163 rejects the first foreign hop, so
+the chain has no survivor and a fact using that endpoint is absent. Record
+those differences explicitly in the oracle and require equality on valid
+chains.
 
 Seed the hosted-shaped store with both fact kinds under D140 `current`, `at`,
 `overlap` and `history`, including disjoint periods, exact interval boundaries,
@@ -740,13 +774,24 @@ leaf per probe, claim/chunk-keyed range probes and one seed per stored endpoint.
 Hold candidate IDs and leaf counts fixed as unrelated rows grow. Measure
 both relation endpoints separately with multi-hop chains and verify that
 each step visits only its next entity. Explain both source-helper arms
-separately from the time gate. Include facts with raw evidence and zero
-qualifying historical or carried claims so early exit cannot hide work.
-Grow unrelated evidence in the candidate's own leaf. Require bounded rows
-read and rejected as that data grows. Run forced custom and generic prepared
-plans under sparse and refreshed statistics. At each scale, pair full native
-runs on the same data. Include absent and high-fanout evidence, cold cache and
-eight-reader behavior under the existing deadline. [PostgreSQL 18 probe evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#source-helper-and-survivor-probes)
+separately from the time gate. Use the real history and carried views with a
+missing origin chunk, testing both a qualifying carried occurrence and no
+qualifying occurrence. Grow unrelated chunks in the claim's own document
+and require origin work to stay keyed to its chunk ID, with only the
+existing range-leaf overhead. A visible origin still excludes the claim
+from the carried branch.
+
+Exercise the raw-support absence check for both kinds with in-scope
+contradictions. A contradiction-only fact passes. Adding raw support whose
+occurrences are all out of scope makes it fail. Confirm from executed plans
+that the absence check visits only the candidate evidence leaf as unrelated
+evidence grows, including in that leaf. Also measure source qualification
+when raw evidence exists and no historical or carried claim qualifies.
+Require bounded rows read and rejected as unrelated rows grow. Run forced
+custom and generic prepared plans under sparse and refreshed statistics.
+At each scale, pair full native runs on the same data. Include absent and
+high-fanout evidence, cold cache and eight-reader behavior under the
+existing deadline. [PostgreSQL 18 probe evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#source-helper-and-survivor-probes)
 
 Proposed warm single-reader p95 targets on PostgreSQL 18.6, 2 vCPU/4 GB, with
 frozen vectors and the existing `k=50` and candidate depth 200:
@@ -761,29 +806,42 @@ The timed requests must complete without early stops. Also measure the
 unchanged 50,000-raw-row scoped edge under the existing operation deadline.
 Keep the recorded values distinct from these proposed acceptance targets.
 
-**Protected LoCoMo and BEAM runs.** The published 94.09% LoCoMo run pins
-serving revision `78a83408011fddbd1d62ed8957b799f456b23bbd` and schema
-`p9_48_0069`. Each protected BEAM run uses its own recorded engine and
-schema. Serve each run from a verified, isolated restore of its pinned store
-with migrations disabled throughout. Before retrieval and on every resume,
-the benchmark operator's preflight checks the serving image and uses its
-database connection target to read the live catalog. Compare the
-`public.alembic_version` and catalog definitions of the views changed by
-D163 to the pins recorded for that restore. An older image can report its
-packaged manifest while executing replacement SQL. Keep that manifest check
-and require live schema agreement independently. Missing evidence or a
-mismatch aborts before any retrieval or reader call. In both harnesses, test
-that the pinned engine with the correct store passes and that the same engine
-with a migrated copy is rejected before retrieval even when its packaged
-manifest hash still matches.
+**Benchmark admission.** LoCoMo `answer` and live `retrieval-ablation`, and
+BEAM `answer-retrieval`, must verify the saved pins on every invocation,
+including resume and BEAM `--force`. The immutable run record pins the
+resolved endpoint, serving revision, packaged manifest hash, live Alembic
+revision and definitions of the views changed by D163, and store identity
+(deployment ID and verified snapshot or restore manifest digest). Resolve
+the database and backing store targets from the running benchmark service
+behind that endpoint, such as the running Compose service. Verify those
+bindings against the run's store record. Read `public.alembic_version` and
+`pg_get_viewdef` from the service's actual database. An older image can report
+its packaged manifest while executing replacement SQL, so check both. Keep
+the service and its store bindings fixed through answering.
+
+A missing pin, unverifiable binding or mismatch aborts before retrieval,
+reader calls or answer writes. Recover legacy pins only from original run
+records or a verified restore tied to that run. The published 94.09% LoCoMo
+run pins serving revision `78a83408011fddbd1d62ed8957b799f456b23bbd` and
+schema `p9_48_0069`. Each protected BEAM run uses its own recorded pins.
+Serve protected runs from verified, isolated restores with migrations disabled.
 [Published LoCoMo run](../../benchmarks/locomo/README.md#published-results) ·
-[BEAM reader](../../benchmarks/rs_harness_beam/answer_agent.py#L449) ·
+[BEAM resume](../../benchmarks/rs_harness_beam/answer_agent.py#L725) ·
 [Packaged discovery](../../src/rememberstack/surfaces/query_sandbox/discovery.py#L106)
 
-**Qualification for benchmark adoption.** Give D163 a separate run identity
-with its actual engine, store and live schema. Pin clocks, vectors and
-budgets. Replay the saved LoCoMo call sequence and run BEAM's retrieval
-and rendering on both paths. Compare ordered calls and the serialized
+Test both ordinary CLI resume paths with a partially answered run. The
+original endpoint and store permit resume. A switched endpoint, a store
+swap at the same endpoint or a migrated copy behind the pinned image must
+abort before retrieval, with answer files and checkpoints byte-identical.
+Repeat the BEAM refusal cases with `--force`. Require the same checks when
+starting a run with no answers.
+
+**Qualification for benchmark adoption.** Require explicit D163 opt-in when
+creating a fresh run identity and output directory. Save the opt-in with
+the pins and verify it on resume. Test that D163 is rejected without the
+opt-in and that an existing protected run refuses conversion. Pin clocks,
+vectors and budgets. Replay the saved LoCoMo call sequence and run BEAM's
+retrieval and rendering on both paths. Compare ordered calls and the serialized
 LoCoMo tool payloads and BEAM evidence the readers receive, including live
 context and SQL results. Record typed negatives, errors and deadlines,
 including calls that abort answering. A deadline becoming a success changes

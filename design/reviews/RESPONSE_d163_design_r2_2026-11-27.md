@@ -1,0 +1,22 @@
+# Response to the D163 design review, round 2
+
+Review of PR #682 at `d441b89d9`. All five findings accepted.
+
+| Finding | Resolution |
+| --- | --- |
+| P0 · Benchmark admission | BEAM accepts the CLI endpoint and skips existing answers by arm and question. LoCoMo's discovery reads the packaged manifest. Both harnesses must verify immutable endpoint, engine, live catalog and store pins before retrieval or writes on every start and resume. D163 requires explicit opt-in with fresh output. The ordinary CLI resume tests switch endpoints, swap the store at the same endpoint, and try a migrated copy behind the pinned image. Repeat the refusal cases with BEAM `--force`. [BEAM CLI](../../benchmarks/rs_harness_beam/cli.py#L26) · [BEAM resume](../../benchmarks/rs_harness_beam/answer_agent.py#L725) · [LoCoMo checks](../../benchmarks/locomo/runner.py#L641) · [Design §9.1](../../plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) |
+| P1 · Migration deadlock | PostgreSQL locks the replacement target exclusively. A reader can hold the fact view while waiting on the survivor view, and the runner retries only `55P03`. Give each compatible replacement its own revision and undo them in reverse order. Qualify both directions with a reader between commits and check that retry resumes from the last committed revision. [PostgreSQL view locking](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/commands/view.c#L89-L107) · [Native runner](../../src/rememberstack/spine/migrations/env.py#L68) · [Design §6](../../plan/designs/shared_retrieval_eligibility_design.md#6-implementation-contracts-and-migration) |
+| P1 · Raw-support absence | The hosted rewrite left the raw `NOT EXISTS` eligible for a hashed scan. Put `OFFSET 0` directly inside it. Qualify the executed absence check for each fact kind with contradiction-only evidence and with raw support outside the requested scope, and require one evidence leaf per probe as unrelated rows grow. [Hosted SQL](../../plan/analysis/evidence_driven_fact_eligibility_hosted_capture_20261127.md#paired-sql) · [PostgreSQL `EXISTS` simplification](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/optimizer/plan/subselect.c#L1620-L1641) · [Design time gate](../../plan/designs/shared_retrieval_eligibility_design.md#evidence-driven-d140-time-gate) |
+| P1 · Historical origin | The deployed history view has reorderable chunk and version joins, and the carried view tests absence through it. Put the claim-keyed origin-chunk lookup inside the history view, bind readability to that chunk, and reuse it in the carried view's fenced absence check. Qualify both views with missing origins and growing same-document chunks. [History joins](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L257) · [Carried origin check](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174) · [Design §4.3](../../plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) |
+| P2 · Malformed redirects | The deployed adapter can resolve a corrupt A → B → A chain because it compares the seed and terminal deployments. The composite foreign key prevents this during normal writes. Add that round trip to the legacy-corruption fixture and expect the survivor and dependent fact to disappear under D163. [Deployed adapter](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L64) · [Redirect foreign key](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L32) · [Existing fixture](../../src/tests/spine/test_d153_eligibility_pg.py#L1047) · [Design §9.1](../../plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) |
+
+Disposable PostgreSQL 18.7 fixtures reproduced `40P01` with combined view
+replacement and completed split upgrade and downgrade after `55P03`.
+The corrupt round trip resolved only with the deployed adapter. The
+unfenced support check ran 64 leaf scans at 30,000 unrelated evidence
+rows. The fenced check used one leaf per candidate at 30,000 and 300,000
+rows. In a minimal schema using the authored history and carried views,
+the fences preserved membership. A missing origin used one chunk-key
+probe per range leaf and skipped readability checks at 10,000 and 100,000
+unrelated chunks in the same document. The full populated migration and
+benchmark CLI tests are implementation acceptance criteria.

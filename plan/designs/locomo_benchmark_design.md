@@ -498,11 +498,12 @@ returns at most 400 lines from a file no larger than 256 KiB. These operative
 limits are present in the hashed descriptors, not only in implementation
 constants.
 
-Reader tools use `MemoryClient` and the normal P3 mount. The proposed D163
-protection adds an operator preflight that checks the serving image and live
-schema on an isolated, unmigrated restore before a protected run retrieves
-anything. It is part of benchmark setup.
-[Protected run contract](shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
+Reader tools use `MemoryClient` and the normal P3 mount. Under the proposed
+D163 admission rule, `answer` and live retrieval ablations verify the saved
+endpoint, serving image, live schema and store before retrieving or writing
+answers on every start and resume. Protected runs use an isolated, unmigrated
+restore. Using D163 requires explicit opt-in under a fresh run identity.
+[Benchmark admission](shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
 
 ## 7. Answer loop
 

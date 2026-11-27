@@ -143,6 +143,44 @@ survivor. The fixture modeled claim visibility with boolean flags. Full
 qualification uses the migrated authority and real historical and carried
 membership paths. [D163 qualification](../designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
 
+## Round-two source checks
+
+- BEAM skips saved answers by arm and question ID and uses the supplied URL
+  for the rest. LoCoMo checks serving revision and discovery, which reads a
+  packaged manifest. Neither check proves which database serves the next
+  request. Compare the live catalog and verified restore binding in the
+  harness before any question runs. This also works with the published
+  engine, which needs no new endpoint.
+  [BEAM loop](../../benchmarks/rs_harness_beam/answer_agent.py#L725) ·
+  [LoCoMo checks](../../benchmarks/locomo/runner.py#L641) ·
+  [Discovery](../../src/rememberstack/surfaces/query_sandbox/discovery.py#L106)
+- The hosted replay exercised the supports-only path. A plain correlated
+  `NOT EXISTS` can be planned as a hashed scan across evidence leaves.
+  `OFFSET 0` inside that subquery prevents the rewrite. At the source-view
+  boundary, knowing the claim ID still leaves its chunk and visible version
+  as reorderable joins. Bind the chunk inside the historical view and reuse
+  that view for the carried path's origin-absence check. A missing origin
+  then skips the version and representation lookups.
+  [Hosted SQL](evidence_driven_fact_eligibility_hosted_capture_20261127.md#paired-sql) ·
+  [PostgreSQL 18.6 planner](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/optimizer/plan/subselect.c#L243-L280) ·
+  [Historical view](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L257) ·
+  [Carried view](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174)
+- `CREATE OR REPLACE VIEW` takes an exclusive lock on its target. A reader
+  can lock the fact view and then wait for its survivor dependency, while a
+  transaction replacing both waits for that reader. Each intermediate
+  definition supports the existing caller, so commit each in its own
+  revision and let the native runner retry ordinary lock timeouts from the
+  last committed revision.
+  [PostgreSQL 18.6 view replacement](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/commands/view.c#L89-L107) ·
+  [Native runner](../../src/rememberstack/spine/migrations/env.py#L68)
+
+The deployed survivor adapter checks the seed and terminal deployments.
+The same-deployment foreign key rules out a round trip through another
+deployment in normal writes. The new walk fails closed when legacy corruption
+breaks that invariant, so the oracle needs a specific exception for that chain.
+[Adapter](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L64) ·
+[Redirect foreign key](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L32)
+
 ## Prior qualification and alternatives
 
 - D142's 300k-chunk gate measured BM25 chunk retrieval at 263/267 ms unfiltered

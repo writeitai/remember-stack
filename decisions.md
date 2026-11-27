@@ -8749,10 +8749,11 @@ generations, retrieval and rendering use their existing code and identities.
 **Status:** Proposed. **Date:** 2026-11-27. **Amends:** D153's physical fact path.
 
 **Decision.** Bind the fact's raw evidence before claim source qualification
-and before the D140 occurrence and readable-version probes. Use the same
-gate in nomination and confirmation before eligibility cuts. Key the
-single forward merge walk by deployment and entity at the stored endpoint
-and at every redirect. Keep D153's shared survivor visibility checks.
+and before the D140 occurrence and readable-version probes. Key the origin
+chunk from its claim and the raw-support absence check from its fact. Use
+the same gate in nomination and confirmation before eligibility cuts. Key
+the single forward merge walk by deployment and entity at the stored
+endpoint and at every redirect. Keep D153's shared survivor visibility checks.
 
 **Why.** On the hosted WriteIt brain, the planner made about 1.99 million
 evidence probes after starting from chunks. A paired evidence-first probe
@@ -8765,9 +8766,10 @@ known key. The candidate's own evidence supplies those keys.
 D140 scope, D142 ranking and budgets, #542 count pruning and embedding reuse,
 D153 sharing, D159 archive behavior and D56 ingestion identities. Qualify
 against the deployed `p9_55_0076` authority at fixed snapshots and measure
-work and latency at scale. Protected LoCoMo and BEAM runs require their
-pinned engine and a verified live schema from their unmigrated store. D163
-benchmark evaluation uses a separate run identity.
+work and latency at scale. Commit compatible view replacements separately.
+LoCoMo and BEAM check the pinned engine, live schema and store at every
+start and resume. D163 benchmark evaluation requires explicit opt-in under
+a fresh run identity.
 
 [D153 §4.3](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
 [Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·

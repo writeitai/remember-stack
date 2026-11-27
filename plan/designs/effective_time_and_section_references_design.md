@@ -912,7 +912,8 @@ excludes that edition. The gate closes this without touching fact windows:
   confirmation, before the relevance cut (for P1 channels, D142's confirmation step).
   The current-belief check asks whether a path exists from the fact's evidence through
   `chunk_claims` and the chunk to `document_version_scope`. The proposed D163 amendment
-  binds the native probes in that order. For a supplied past `believed_at` (open-query callers
+  binds the native probes in that order and keeps the raw-support absence check scoped
+  to the candidate fact's evidence. For a supplied past `believed_at` (open-query callers
   and belief-pinned graph helpers) the projection cannot answer; the probe instead collects the
   candidate fact's bounded set of supporting lineages and evaluates them with
   `versions_in_scope(…, believed_at, doc_ids)`, i.e. the ledgers. Context candidate
