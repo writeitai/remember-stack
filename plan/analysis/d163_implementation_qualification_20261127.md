@@ -84,23 +84,25 @@ with ordered co-members and both member counts.
 
 Compare requires the expected runtime manifest at each schema head and matching
 effective sandbox JIT settings. It checks ordered raw batches, ordered final
-facts with their contradiction blocks, and the BEAM statements' ordered rows
-and typed outcomes. It runs `EXCEPT ALL` in both directions over the SQL cuts,
-including native final confirmation, contradiction membership and all five
-broad sandbox views. The comparison counts repeated rows and ignores incidental
-order in those broad reads.
+facts with their contradiction blocks, the fixed-instant ordered BEAM rows,
+and the typed outcomes of the shipped BEAM statements. It runs `EXCEPT ALL`
+in both directions over the SQL cuts, including native final confirmation,
+contradiction membership and all five broad sandbox views. The comparison
+counts repeated rows and ignores incidental order in those broad reads.
 
 The broad export runs as the query login and uses the recorded diagnostic
 `--timeout` to read every row before the response caps. It reads the installed
 `facts_current` definition from the catalog and replaces its statement clock
 with the case instant in the diagnostic SQL. This fixes both membership and
-the returned `evaluated_at` value. Capture also
-runs the original unfiltered requests under the interactive limits and records
+the returned `evaluated_at` value. The ordered BEAM diagnostic uses the same
+pinned definition. It orders equal counts by predicate before the aggregate's
+limit and uses `fact_label AS label` for the fact sample. Capture also runs
+the shipped SQL under the interactive limits and records
 typed outcomes and executed plans, including planning time and buffer use.
 A canceled plan reports its typed error. Compare checks completion and
 truncation on both sides and requires a plan for each completed read.
 Matching statement timeouts still require equal complete exports.
-Regenerate both captures to include the broad view cuts.
+Regenerate both captures to include the fixed-instant BEAM rows.
 
 [Oracle and latency harness](../../benchmarks/d163_qualification.py) ·
 [Staged restore](../../benchmarks/d163_staged_restore.py)
@@ -115,8 +117,9 @@ in the case deployment and checks monthly and default leaves on both `chunks`
 and `chunk_claims`. It verifies that both batches contain the required number
 of distinct facts with nonzero embeddings for the specified model and current
 fact input policy. With supplied keys, it takes the first declared number of
-IDs per kind. Each batch must return an eligible fact with supporting evidence.
-The report records the observed scale and the two control IDs.
+IDs per kind. Each batch must return an eligible fact with supporting evidence,
+and a native scoped read must return at least one eligible fact before timing.
+The report records the observed scale and all three control IDs.
 Run with sparse statistics and again after `ANALYZE`, retaining the JSON,
 which includes the executed custom and generic plans, their buffer counts
 and planning times.
@@ -129,10 +132,20 @@ PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification latency \
 
 The hosted stratum uses 812 chunks and ten leaves including the default.
 Use `--stratum 300k` or `3m` for exactly 300,000 or 3,000,000 chunks with ten
-leaves. Use `120-leaves` for 120 monthly leaves plus the default, with the
-same chunk count and batches as the matching ten-leaf run. The harness times
-SQL without EXPLAIN and includes the native operation at k=50, candidate
-depth 200.
+leaves. Use `120-leaves` for 120 monthly leaves plus the default. Keep the
+case JSON and corpus fixed, add the leaves on a copy of the ten-leaf store,
+and pass the ten-leaf latency report to the new run.
+
+```bash
+PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification latency \
+  --database "$PARTITION_URL" --case case.json --stratum 120-leaves \
+  --ten-leaf-reference latency.json --plans --samples 40 --output latency-121.json
+```
+
+The gate checks both runs' chunk counts and ordered batch IDs. The reports
+include a hash per batch of its raw evidence links and linked claim occurrence
+coordinates. The harness times SQL without EXPLAIN and includes the native
+operation at k=50, candidate depth 200.
 Each standalone batch sample uses a fresh P1 ranked-read transaction on
 `--database`, the P1 connection URL. The timer starts after connection setup
 and includes SQL planning and execution. The report's `p1_settings` records
@@ -148,7 +161,10 @@ flag and cost thresholds.
 Both releases capture the shipped BEAM queries with their SQL limits and
 40-row request cap. The original `label` query returns a typed
 `execution_error`. The sandbox report times `fact_label AS label` separately
-for diagnosis.
+for diagnosis. Warm-ups and samples share the same interactive statement-second
+quotas as the shipped BEAM calls. The harness waits for quota before starting a
+sample timer. It records quota and concurrency refusals in `admission_failures`
+and computes percentiles from admitted requests.
 
 On a disposable fixture seeded by `seed_corpus`, the following adds unrelated
 chunks and copies fixed fact and evidence cases. The 1,200-relation population
@@ -163,10 +179,24 @@ REMEMBERSTACK_DATABASE_URL="$TARGET_URL" PYTHONPATH=src:. uv run python \
   --relations 1200 --analyze
 ```
 
-Use a separate fixture with `--relations 535 --observations 49465` for the
-50,000-row case and run `d163_qualification scope` with its matching anchors.
-Add one observation and repeat with `--expect-scope-boundary` to require the
-typed refusal.
+Grow a fresh `seed_corpus` fixture for the scoped boundary. This mode adds
+relations from the seed hub to distinct objects, each made visible by a live
+document bridge. It copies the prototype's evidence to each relation.
+
+```bash
+REMEMBERSTACK_DATABASE_URL="$SCOPE_URL" PYTHONPATH=src:. uv run python \
+  -m tests.spine.d163_scale_fixture --case scope-case.json --chunks 812 \
+  --scope-rows 50000 --analyze
+PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification scope \
+  --database "$SCOPE_URL" --case scope-case.json --output scope-50000.json
+```
+
+The gate counts exactly 50,000 raw rows in the requested scope and requires
+at least 25,000 distinct visible endpoints. The timed native read must return
+50 facts and complete within its operation deadline. Repeat the fixture
+command with `--scope-rows 50001`, then run `scope` with
+`--expect-scope-boundary --output scope-50001.json`. This run verifies 50,001
+raw rows and requires the `entity_scope_too_broad` response.
 
 ## Migration and review notes
 
@@ -263,9 +293,9 @@ Evidence lineage used 58,765 versus 13,136. Facts current used 44,719 versus
 48,903. The public output and the sandbox deadline behavior were checked
 separately.
 
-The native scoped boundary returned 50 facts at exactly 50,000 raw rows in
-20.456 s on the separate test VM. At 50,001 raw rows it returned the existing
-`entity_scope_too_broad` boundary in 0.077 s.
+The earlier scope fixture reused the prototype endpoints for every clone. Its
+native read returned 50 facts at 50,000 raw rows in 20.456 s on the separate
+test VM. At 50,001 raw rows it returned `entity_scope_too_broad` in 0.077 s.
 
 ### Round-one oracle rerun
 
@@ -329,6 +359,37 @@ rows at 0.089 s p95. The 535-input relation batch returned 530 rows at
 0.067 s p95. Native broad and scoped p95 were 2.83 s and 1.49 s. Both modes
 completed all samples and returned 50 facts in their final samples. Both
 custom and generic batch plans completed.
+
+### PR #684 round-one verification
+
+On a synthetic PostgreSQL 18.6 store, the previous release and D163 matched
+240 rows per side across 28 SQL cuts. The fixed BEAM instant was one microsecond
+before the facts' exclusive validity end. Both releases counted 24 facts at
+that instant, and both counted zero at the shipped statement clock. The
+original `label` query returned `execution_error`. Both fact diagnostics
+returned zero rows at the exclusive end in the regression.
+
+On the local 2-vCPU PostgreSQL 18.6 fixture, the 50,000 raw scope rows
+produced 49,978 distinct visible endpoints. The native read completed in
+6.87 s and returned 50 facts. Adding one relation gave exactly 50,001 raw
+rows and returned `entity_scope_too_broad` in 0.043 s.
+
+The matched 812-chunk runs used 10 and 121 leaves with the same 804 observation
+and 535 relation inputs. Both ran 40 warm samples per workload on the local
+2-vCPU, 2.8-GiB VM with JIT disabled. The 121-leaf observation and relation
+batches finished at 0.289 s and 0.208 s p95. Native broad and scoped p95 were
+1.523 s and 1.553 s, with 50 facts returned in both modes. The latency
+regressions reject a wrong chunk count, different batch IDs, a changed
+raw evidence stance and a known-empty scoped read before timing.
+
+All seven interactive sandbox workloads completed 40 samples on the small
+synthetic target fixture with JIT disabled and zero admission failures. The
+quota regression uses the executor's admission accounting and checks that
+wait time and a rejected sample stay outside the percentiles.
+
+Ruff formatting and lint, Pyright, the import contracts and the test inventory
+passed. The selected suites passed 196 unit tests and 183 PostgreSQL tests,
+with the expected D122 reuse failure.
 
 ### Synthetic latency
 

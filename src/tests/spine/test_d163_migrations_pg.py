@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from datetime import timedelta
 from datetime import UTC
 import json
 import logging
@@ -24,6 +25,7 @@ from fastapi.testclient import TestClient
 import psycopg
 from psycopg import sql
 import pytest
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.profiles.selfhost import _provision_query_role_password
@@ -242,6 +244,7 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
 
         def snapshot(head: str) -> dict[str, Any]:
             record = qualification.capture(engine, case, timeout=20)
+            sampler = qualification._SandboxSampler(sandbox)
             record["cuts"].update(
                 qualification._broad_view_rows(
                     sandbox, evaluated_at=case.evaluated_at, timeout_ms=20_000
@@ -253,8 +256,11 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
                 "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[head],
                 "case": case.model_dump(mode="json"),
                 "sandbox_settings": {"jit": "off"},
-                "sandbox": qualification._sandbox_queries(sandbox, samples=0),
-                "beam": qualification._beam_queries(sandbox),
+                "sandbox": qualification._sandbox_queries(sampler, samples=0),
+                "beam": qualification._beam_queries(sampler),
+                "beam_ordered": qualification._beam_ordered_rows(
+                    sandbox, evaluated_at=case.evaluated_at, timeout_ms=20_000
+                ),
             }
 
         baseline = snapshot(BASELINE_HEAD)
@@ -303,6 +309,54 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
                 "missing": 0,
                 "extra": 1,
             }
+
+
+def test_beam_oracle_uses_the_case_clock_at_exclusive_validity_end() -> None:
+    with scratch_database(BASELINE_HEAD) as engine:
+        corpus = seed_corpus(engine)
+        valid_until = datetime(2025, 1, 2, tzinfo=UTC)
+        before_end = valid_until - timedelta(microseconds=1)
+        with engine.begin() as connection:
+            for table in ("relations", "observations"):
+                connection.execute(
+                    text(f"""
+                        UPDATE {table} SET valid_until=:until, valid_precision='day'
+                        WHERE valid_precision='open'
+                    """),
+                    {"until": valid_until},
+                )
+        with _connect(engine) as connection:
+            _provision_query_role_password(connection=connection, engine=engine)
+
+        ordered = []
+        for head in (BASELINE_HEAD, TARGET_HEAD):
+            if head == TARGET_HEAD:
+                command.upgrade(config=migration_config(engine), revision=TARGET_HEAD)
+            sandbox = _executor(engine, corpus, qualification.MANIFEST_BY_HEAD[head])
+            before = qualification._beam_ordered_rows(
+                sandbox, evaluated_at=before_end, timeout_ms=20_000
+            )
+            at = qualification._beam_ordered_rows(
+                sandbox, evaluated_at=valid_until, timeout_ms=20_000
+            )
+            broad = qualification._broad_view_rows(
+                sandbox, evaluated_at=before_end, timeout_ms=20_000
+            )["sandbox/facts_current"]
+            assert (
+                sum(count for _, count in before["facts_predicates"]) == len(broad) > 0
+            )
+            assert (
+                "relation",
+                str(corpus.facts["relation", "multi_source"]),
+                "works_for",
+                "multi_source",
+            ) in before["facts_sample"]
+            assert at["facts_predicates"] == at["facts_sample"] == []
+            live = qualification._beam_queries(qualification._SandboxSampler(sandbox))
+            assert live["facts_predicates"]["rows"] == []
+            assert live["facts_sample"]["error_code"] == "execution_error"
+            ordered.append(before)
+        assert ordered[0] == ordered[1]
 
 
 def test_d163_upgrade_and_downgrade_with_previous_readers(

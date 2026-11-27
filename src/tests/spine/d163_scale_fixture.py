@@ -14,6 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from rememberstack.adapters.p1_ranked import ENTITY_WORK_BUDGET
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.profiles.selfhost import _provision_query_role_password
 from rememberstack.spine.settings import load_database_settings
@@ -31,7 +32,9 @@ def _columns(connection: Connection, table: str) -> list[str]:
     )
 
 
-def _expand_facts(connection: Connection, *, kind: str, size: int) -> None:
+def _expand_facts(
+    connection: Connection, *, kind: str, size: int, distinct_endpoints: bool = False
+) -> None:
     table = f"{kind}s"
     identifier = f"{kind}_id"
     count = connection.exec_driver_sql(f"SELECT count(*) FROM {table}").scalar_one()
@@ -51,13 +54,32 @@ def _expand_facts(connection: Connection, *, kind: str, size: int) -> None:
         # cutoff without exhausting a graph full of identical vectors.
         "embedding": f"concat('[', n::float8 / (n + 10000), ',1', repeat(',0', {P1_VECTOR_DIMENSIONS - 2}), ']')::vector",
     }
-    projection = [replacements.get(field, f"seed.{field}") for field in columns]
     bindings = {
         "seed": seed,
         "prefix": f"d163-test-{kind}-",
         "first": count + 1,
         "last": size,
     }
+    if distinct_endpoints:
+        endpoint = "md5('d163-scope-endpoint-' || n)::uuid"
+        connection.execute(
+            text(f"""
+                WITH endpoints AS (
+                    INSERT INTO entities (entity_id, deployment_id, canonical_name, normalized_name)
+                    SELECT {endpoint}, seed.deployment_id, 'Scope target ' || n, 'scope target ' || n
+                    FROM relations AS seed CROSS JOIN
+                         generate_series(CAST(:first AS integer), CAST(:last AS integer)) AS series(n)
+                    WHERE seed.relation_id=:seed
+                    RETURNING entity_id, deployment_id, canonical_name
+                )
+                INSERT INTO documents (doc_id, deployment_id, source_kind, title, document_entity_id)
+                SELECT entity_id, deployment_id, 'upload', canonical_name, entity_id FROM endpoints
+            """),
+            bindings,
+        )
+        # The hub stays in scope, with one live document bridge per new object.
+        replacements["object_entity_id"] = endpoint
+    projection = [replacements.get(field, f"seed.{field}") for field in columns]
     connection.execute(
         text(
             f"INSERT INTO {table} ({', '.join(columns)}) SELECT {', '.join(projection)} "
@@ -79,6 +101,15 @@ def _expand_facts(connection: Connection, *, kind: str, size: int) -> None:
             f"CROSS JOIN generate_series(CAST(:first AS integer), CAST(:last AS integer)) AS series(n) WHERE seed.{identifier}=:seed"
         ),
         bindings,
+    )
+
+
+def _expand_scope(connection: Connection, *, rows: int) -> None:
+    observations = connection.exec_driver_sql(
+        "SELECT count(*) FROM observations"
+    ).scalar_one()
+    _expand_facts(
+        connection, kind="relation", size=rows - observations, distinct_endpoints=True
     )
 
 
@@ -148,6 +179,9 @@ def main() -> None:
     parser.add_argument("--leaves", type=int, default=10)
     parser.add_argument("--observations", type=int, default=2625)
     parser.add_argument("--relations", type=int, default=535)
+    parser.add_argument(
+        "--scope-rows", type=int, choices=(ENTITY_WORK_BUDGET, ENTITY_WORK_BUDGET + 1)
+    )
     parser.add_argument("--analyze", action="store_true")
     args = parser.parse_args()
     case = Case.model_validate_json(args.case.read_text())
@@ -167,8 +201,11 @@ def main() -> None:
             ).scalar_one()
             == "d163-oracle"
         )
-        for kind in KINDS:
-            _expand_facts(connection, kind=kind, size=getattr(args, f"{kind}s"))
+        if args.scope_rows is None:
+            for kind in KINDS:
+                _expand_facts(connection, kind=kind, size=getattr(args, f"{kind}s"))
+        else:
+            _expand_scope(connection, rows=args.scope_rows)
         _expand_leaves(connection, leaves=args.leaves)
         _expand_chunks(connection, size=args.chunks)
         if args.analyze:

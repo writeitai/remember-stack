@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from collections import defaultdict
+from collections import deque
 from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Mapping
@@ -24,6 +25,7 @@ from pathlib import Path
 import re
 from statistics import median
 from time import monotonic
+from time import sleep
 from typing import Any
 from typing import cast
 from typing import Literal
@@ -49,6 +51,9 @@ from benchmarks.rs_harness_beam.answer_agent import _OPEN_QUERY_SQL
 from remember.retrieval import DEFAULT_CONTEXT_K
 from remember.retrieval import DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
+from rememberstack.adapters.p1_ranked import ENTITY_WORK_BUDGET
+from rememberstack.adapters.postgres_p1 import _fact_candidates_sql
+from rememberstack.adapters.postgres_p1 import _SURVIVOR_SCOPE_CTE
 from rememberstack.adapters.postgres_p1 import FACT_INPUT_POLICY
 from rememberstack.adapters.postgres_p1 import PostgresP1Index
 from rememberstack.core.text_scope import fact_in_scope
@@ -58,6 +63,7 @@ from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.envelope import NegativeKind
 from rememberstack.spine.query_space import load_manifest
+from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
 from rememberstack.surfaces.query_engine import _CONFIRM_FACTS_CONTEXT_BY_KIND
 from rememberstack.surfaces.query_engine import QueryEngine
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -65,6 +71,7 @@ from rememberstack.surfaces.query_sandbox.executor import _database_failure_resu
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.limits import INTERACTIVE_LIMITS
+from rememberstack.surfaces.query_sandbox.result import QueryResult
 
 BASELINE_HEAD = "p9_55_0076"
 TARGET_HEAD = "p9_58_0079"
@@ -94,6 +101,9 @@ LATENCY_SCALES = {
     "120-leaves": (None, 121),  # vary the partition count independently
 }
 LATENCY_BATCH_SIZES = {"observation": 804, "relation": 535}
+_BEAM_SAMPLE_CORRECTED = dict(_OPEN_QUERY_SQL)["facts_sample"].replace(
+    "predicate, label", "predicate, fact_label AS label"
+)
 
 
 class Case(BaseModel):
@@ -532,6 +542,7 @@ def compare(
         raise AssertionError("the two releases must use identical sandbox JIT settings")
     if "contradiction/broad" not in baseline["cuts"]:
         raise AssertionError("recapture both releases with native contradiction cuts")
+    beam_names = {name for name, _ in _OPEN_QUERY_SQL}
     for record in (baseline, target):
         required = {
             f"native_{name}" for name in record["ordered"] if name.startswith("final/")
@@ -546,6 +557,8 @@ def compare(
             for view in BROAD_VIEWS
         ):
             raise AssertionError("recapture both releases with all broad sandbox cuts")
+        if beam_names != record.get("beam_ordered", {}).keys():
+            raise AssertionError("recapture both releases with fixed-instant BEAM rows")
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
     counts = {}
@@ -571,8 +584,9 @@ def compare(
             for view in BROAD_VIEWS
         },
         "beam_matches": {
-            name: baseline["beam"][name] == target["beam"][name]
+            name: baseline["beam_ordered"][name] == target["beam_ordered"][name]
             and _beam_completed(name, baseline["beam"][name])
+            and _beam_completed(name, target["beam"][name])
             for name, _ in _OPEN_QUERY_SQL
         },
         "ordered_raw": {
@@ -592,15 +606,46 @@ def _sandbox_settings(reader: psycopg.Connection) -> dict[str, str]:
     )
 
 
-def _beam_queries(sandbox: QuerySandboxExecutor) -> dict[str, Any]:
-    """Capture the ordered results and typed outcomes that the BEAM agent sees."""
+class _SandboxSampler:
+    """Pace a single principal using the same rolling window as admission."""
+
+    def __init__(self, sandbox: QuerySandboxExecutor) -> None:
+        self.sandbox = sandbox
+        self._spend: deque[tuple[float, float]] = deque()
+
+    def run(self, query: str, *, max_rows: int | None) -> tuple[QueryResult, float]:
+        quota = min(
+            INTERACTIVE_LIMITS.principal_statement_seconds_per_minute,
+            INTERACTIVE_LIMITS.deployment_statement_seconds_per_minute,
+        )
+        while self._spend:
+            age = monotonic() - self._spend[0][0]
+            if age > 60:
+                self._spend.popleft()
+            elif sum(seconds for _, seconds in self._spend) < quota:
+                break
+            else:
+                sleep(max(0.001, 60 - age))
+        start = monotonic()
+        result = self.sandbox.query_sql(sql=query, max_rows=max_rows)
+        end = monotonic()
+        elapsed = end - start
+        if result.termination_reason != "rejected":
+            # Enclosing wall time conservatively bounds the executor's charge.
+            self._spend.append((end, elapsed))
+        return result, elapsed
+
+
+def _beam_queries(sampler: _SandboxSampler) -> dict[str, Any]:
+    """Record interactive outcomes from the unchanged BEAM requests."""
     return {
-        name: sandbox.query_sql(sql=query, max_rows=_OPEN_QUERY_MAX_ROWS).model_dump(
+        name: sampler.run(query, max_rows=_OPEN_QUERY_MAX_ROWS)[0].model_dump(
             mode="json",
             include={
                 "columns",
                 "rows",
                 "empty_result",
+                "elapsed_ms",
                 "ordered_result",
                 "returned_row_count",
                 "termination_reason",
@@ -623,31 +668,60 @@ def _beam_completed(name: str, result: Mapping[str, Any]) -> bool:
     return result["termination_reason"] == "completed" and result["error_code"] is None
 
 
+def _pinned_facts_current(cursor: psycopg.Cursor, evaluated_at: datetime) -> sql.SQL:
+    if evaluated_at.utcoffset() is None:
+        raise AssertionError("the paired read instant requires a timezone")
+    cursor.execute("SELECT pg_get_viewdef('memory_v1.facts_current'::regclass)")
+    definition = cursor.fetchone()
+    assert definition is not None
+    # Pin only the installed view's clock, including in its membership test.
+    pinned, substitutions = re.subn(
+        r"\b(?:pg_catalog\.)?statement_timestamp\(\)",
+        sql.Literal(evaluated_at).as_string(cursor),
+        definition[0].rstrip().removesuffix(";"),
+    )
+    if substitutions != 1:
+        raise AssertionError("expected one statement clock in facts_current")
+    return sql.SQL(cast("LiteralString", pinned))
+
+
+def _beam_ordered_rows(
+    sandbox: QuerySandboxExecutor, *, evaluated_at: datetime, timeout_ms: int
+) -> dict[str, list[Any]]:
+    rows = {}
+    with sandbox._transaction(
+        limits_ms=INTERACTIVE_LIMITS, statement_timeout_ms=timeout_ms
+    ) as cursor:
+        pinned = _pinned_facts_current(cursor, evaluated_at)
+        for name, query in _OPEN_QUERY_SQL:
+            if name == "facts_sample":
+                query = _BEAM_SAMPLE_CORRECTED
+            if name == "facts_predicates":
+                # Make tied counts deterministic before the diagnostic limit.
+                query = query.replace("ORDER BY 2 DESC", "ORDER BY 2 DESC, 1")
+            statement = sql.SQL(cast("LiteralString", query))
+            if name in {"facts_predicates", "facts_sample"}:
+                statement = sql.SQL("WITH facts_current AS ({}) {}").format(
+                    pinned, statement
+                )
+            cursor.execute(statement)
+            rows[name] = cursor.fetchall()
+    return rows
+
+
 def _broad_view_rows(
     sandbox: QuerySandboxExecutor, *, evaluated_at: datetime, timeout_ms: int
 ) -> dict[str, list[str]]:
     """Export unfiltered rows before the response caps on the frozen fixture."""
-    if evaluated_at.utcoffset() is None:
-        raise AssertionError("the paired read instant requires a timezone")
     cuts = {}
     with sandbox._transaction(
         limits_ms=INTERACTIVE_LIMITS, statement_timeout_ms=timeout_ms
     ) as cursor:
         cursor.execute("SET LOCAL TIME ZONE 'UTC'")
-        cursor.execute("SELECT pg_get_viewdef('memory_v1.facts_current'::regclass)")
-        definition = cursor.fetchone()
-        assert definition is not None
-        # Pin only the installed view's clock, including in its membership test.
-        pinned, substitutions = re.subn(
-            r"\b(?:pg_catalog\.)?statement_timestamp\(\)",
-            sql.Literal(evaluated_at).as_string(cursor),
-            definition[0].rstrip().removesuffix(";"),
-        )
-        if substitutions != 1:
-            raise AssertionError("expected one statement clock in facts_current")
+        pinned = _pinned_facts_current(cursor, evaluated_at)
         for view in BROAD_VIEWS:
             source = (
-                sql.SQL(cast("LiteralString", f"({pinned})"))
+                sql.SQL("({})").format(pinned)
                 if view == "facts_current"
                 else sql.Identifier("memory_v1", view)
             )
@@ -681,20 +755,17 @@ def _sandbox_work(sandbox: QuerySandboxExecutor, query: str) -> dict[str, Any]:
         return {"plan": None, "error": code}
 
 
-def _sandbox_queries(sandbox: QuerySandboxExecutor, *, samples: int) -> dict[str, Any]:
+def _sandbox_queries(sampler: _SandboxSampler, *, samples: int) -> dict[str, Any]:
     """Time broad SQL and the corrected sample under interactive limits."""
-    beam = dict(_OPEN_QUERY_SQL)
     queries = {
         **{view: f"SELECT * FROM {view}" for view in BROAD_VIEWS},
-        "beam_predicates": beam["facts_predicates"],
-        "beam_sample_corrected": beam["facts_sample"].replace(
-            "predicate, label", "predicate, fact_label AS label"
-        ),
+        "beam_predicates": dict(_OPEN_QUERY_SQL)["facts_predicates"],
+        "beam_sample_corrected": _BEAM_SAMPLE_CORRECTED,
     }
     report: dict[str, Any] = {}
     for name, query in queries.items():
         max_rows = _OPEN_QUERY_MAX_ROWS if name.startswith("beam_") else None
-        result = sandbox.query_sql(sql=query, max_rows=max_rows)
+        result, _ = sampler.run(query, max_rows=max_rows)
         times = []
         for _ in range(samples):
             if (
@@ -702,18 +773,30 @@ def _sandbox_queries(sandbox: QuerySandboxExecutor, *, samples: int) -> dict[str
                 or result.termination_reason != "completed"
             ):
                 break
-            start = monotonic()
-            result = sandbox.query_sql(sql=query, max_rows=max_rows)
-            times.append(monotonic() - start)
+            result, elapsed = sampler.run(query, max_rows=max_rows)
+            if result.termination_reason != "rejected":
+                times.append(elapsed)
+        admission_failures = (
+            {result.error_code.value: 1}
+            if result.error_code is not None
+            and result.error_code
+            in {QueryErrorCode.QUOTA_EXCEEDED, QueryErrorCode.CONCURRENCY_EXCEEDED}
+            else {}
+        )
         report[name] = {
             "samples": len(times),
+            "admission_failures": admission_failures,
             "termination": result.termination_reason,
             "error": result.error_code,
             "last_rows": len(result.rows),
             "truncation": result.truncation_reason,
             "limits": result.limits.model_dump(mode="json"),
             "last_elapsed_ms": result.elapsed_ms,
-            **({"work": _sandbox_work(sandbox, query)} if name in BROAD_VIEWS else {}),
+            **(
+                {"work": _sandbox_work(sampler.sandbox, query)}
+                if name in BROAD_VIEWS
+                else {}
+            ),
             **(_percentiles(times) if times else {}),
         }
     return report
@@ -854,6 +937,64 @@ def _validate_batch(
     return len(eligible), control
 
 
+def _batch_evidence_sha256(
+    connection: Connection, case: Case, *, kind: FactKind, ids: list[str]
+) -> str:
+    """Fingerprint raw evidence and the claim occurrences it causes us to probe."""
+    return connection.execute(
+        text(f"""
+            WITH links AS MATERIALIZED (
+                SELECT {kind}_id AS fact_id, claim_id, doc_id, stance
+                FROM public.{kind}_evidence
+                WHERE deployment_id=:deployment AND {kind}_id=ANY(CAST(:ids AS uuid[]))
+            ), evidence AS (
+                SELECT jsonb_build_array(fact_id, claim_id, doc_id, stance) AS item
+                FROM links
+                UNION ALL
+                SELECT jsonb_build_array(linked.claim_id, occurrence.chunk_id,
+                                         occurrence.created_at AT TIME ZONE 'UTC')
+                FROM (SELECT DISTINCT claim_id FROM links) AS linked
+                CROSS JOIN LATERAL (
+                    SELECT chunk_id, created_at FROM public.chunk_claims
+                    WHERE deployment_id=:deployment AND claim_id=linked.claim_id OFFSET 0
+                ) AS occurrence
+            )
+            SELECT encode(sha256(convert_to(
+                coalesce(string_agg(item::text, E'\\n' ORDER BY item), ''), 'UTF8'
+            )), 'hex') FROM evidence
+        """),
+        {"deployment": case.deployment_id, "ids": ids},
+    ).scalar_one()
+
+
+def _match_ten_leaf_reference(
+    reference: Mapping[str, Any], *, case: Case, chunks: int, workload: dict[str, Any]
+) -> None:
+    _require_runtime(reference, head=TARGET_HEAD)
+    if LATENCY_SCALES.get(reference.get("stratum", "")) != (
+        chunks,
+        10,
+    ) or reference.get("scale") != {
+        "chunks": chunks,
+        "range_leaves": {"chunks": 10, "chunk_claims": 10},
+    }:
+        raise AssertionError(
+            "120-leaves requires a ten-leaf reference with the same chunk count"
+        )
+    if reference.get("case") != case.model_dump(mode="json"):
+        raise AssertionError(
+            "120-leaves requires the same case as the ten-leaf reference"
+        )
+    for kind, batch in workload.items():
+        matched = reference.get("batch_workload", {}).get(kind, {})
+        if matched.get("candidate_ids") != batch["candidate_ids"]:
+            raise AssertionError(
+                f"{kind} candidate IDs differ from the ten-leaf reference"
+            )
+        if matched.get("evidence_sha256") != batch["evidence_sha256"]:
+            raise AssertionError(f"{kind} evidence differs from the ten-leaf reference")
+
+
 def latency(
     engine: Engine,
     case: Case,
@@ -862,6 +1003,7 @@ def latency(
     samples: int,
     explain: bool,
     stratum: str | None = None,
+    ten_leaf_reference: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Use shipped budgets for native calls; time executable SQL with planning."""
     if stratum is not None:
@@ -873,6 +1015,8 @@ def latency(
             raise AssertionError(
                 f"{stratum} requires anchors for the scoped native read"
             )
+        if stratum == "120-leaves" and ten_leaf_reference is None:
+            raise AssertionError("120-leaves requires a ten-leaf latency report")
     index = _index(engine, case)
     trace, _ = _record_nomination(index, arguments=_arguments(case, timeout=timeout))
     statements: dict[FactKind, Statement] = {
@@ -883,6 +1027,7 @@ def latency(
     batch_timeout = min(timeout, DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS)
     report: dict[str, Any] = {}
     controls: dict[FactKind, tuple[int, str]] = {}
+    workload: dict[str, Any] = {}
     with index._ranked_connection(deadline=monotonic() + batch_timeout) as connection:
         if stratum is not None:
             report["scale"] = _latency_scale(connection, case=case, stratum=stratum)
@@ -896,6 +1041,14 @@ def latency(
                 controls[kind] = _validate_batch(
                     connection, case, kind=kind, statement=statement
                 )
+                if stratum is not None:
+                    ids = statement.parameters["batch_ids"]
+                    workload[kind] = {
+                        "candidate_ids": ids,
+                        "evidence_sha256": _batch_evidence_sha256(
+                            connection, case, kind=kind, ids=ids
+                        ),
+                    }
         report["p1_settings"] = dict(
             connection.execute(
                 text("""
@@ -908,6 +1061,27 @@ def latency(
             .tuples()
             .all()
         )
+    if stratum is not None:
+        report["batch_workload"] = workload
+    if stratum == "120-leaves":
+        assert ten_leaf_reference is not None
+        _match_ten_leaf_reference(
+            ten_leaf_reference,
+            case=case,
+            chunks=report["scale"]["chunks"],
+            workload=workload,
+        )
+
+    query = _query_engine(engine, index, case)
+    scoped_control = None
+    if stratum is not None:
+        response = _native_read(query, case, entities=case.entity_ids)
+        if _native_failure(response) or not response.facts:
+            raise AssertionError(
+                f"{stratum} requires an eligible fact in the scoped native read"
+            )
+        scoped_control = str(response.facts[0].fact_id)
+
     for kind, statement in statements.items():
         expected_rows, control = controls.get(kind, (None, None))
         measured = _measured(
@@ -926,8 +1100,6 @@ def latency(
             ) as connection:
                 measured["plans"] = _plans(connection, statement)
 
-    query = _query_engine(engine, index, case)
-
     def native(entities: tuple[str, ...]) -> dict[str, Any]:
         incomplete: Counter[str] = Counter()
 
@@ -945,7 +1117,59 @@ def latency(
     report["native/broad"] = native(())
     if case.entity_ids:
         report["native/scoped"] = native(case.entity_ids)
+        if scoped_control is not None:
+            report["native/scoped"]["positive_control_fact_id"] = scoped_control
     return report
+
+
+def _scope_gate(engine: Engine, case: Case, *, expect_boundary: bool) -> dict[str, Any]:
+    index = _index(engine, case)
+    expected = ENTITY_WORK_BUDGET + int(expect_boundary)
+    candidates = _fact_candidates_sql(
+        required=("relations", "observations"), entity_scoped=True, keyed=False
+    )
+    parameters = {
+        "deployment_id": case.deployment_id,
+        "entity_ids": list(case.entity_ids),
+    }
+    with index._ranked_connection(
+        deadline=monotonic() + DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
+    ) as connection:
+        raw_rows = connection.execute(
+            text(f"{_SURVIVOR_SCOPE_CTE} SELECT count(*) FROM ({candidates}) AS raw"),
+            parameters,
+        ).scalar_one()
+        if raw_rows != expected:
+            raise AssertionError(
+                f"scope requires {expected:,} raw fact rows. Found {raw_rows:,}."
+            )
+        visible_endpoints = None
+        if not expect_boundary:
+            eligibility = fact_eligibility_ctes(
+                candidates_sql=candidates, presentation="keys"
+            )
+            visible_endpoints = connection.execute(
+                text(
+                    f"{_SURVIVOR_SCOPE_CTE}, {eligibility} SELECT count(*) FROM fact_visible_endpoints"
+                ),
+                parameters,
+            ).scalar_one()
+            if visible_endpoints < ENTITY_WORK_BUDGET // 2:
+                raise AssertionError(
+                    f"scope requires at least {ENTITY_WORK_BUDGET // 2:,} distinct visible endpoints. "
+                    f"Found {visible_endpoints:,}."
+                )
+
+    query = _query_engine(engine, index, case)
+    start = monotonic()
+    response = _native_read(query, case, entities=case.entity_ids)
+    return {
+        "wall_s": monotonic() - start,
+        "raw_scope_rows": raw_rows,
+        "distinct_visible_endpoints": visible_endpoints,
+        "rows": len(response.facts),
+        "reason": _native_failure(response),
+    }
 
 
 def _query_engine(
@@ -1051,11 +1275,17 @@ def main() -> None:
     parser.add_argument("--samples", type=int, default=40)
     parser.add_argument("--plans", action="store_true")
     parser.add_argument("--stratum", choices=LATENCY_TARGETS)
+    parser.add_argument(
+        "--ten-leaf-reference", type=Path, help="matching ten-leaf latency report"
+    )
     parser.add_argument("--expect-scope-boundary", action="store_true")
     parser.add_argument(
         "--query-dsn", help="libpq DSN for the verified database's query login"
     )
     args = parser.parse_args()
+    partition_run = args.operation == "latency" and args.stratum == "120-leaves"
+    if partition_run != (args.ten_leaf_reference is not None):
+        parser.error("latency --stratum 120-leaves requires --ten-leaf-reference")
     engine = create_engine(args.database)
     failed = False
     result: dict[str, Any]
@@ -1118,18 +1348,17 @@ def main() -> None:
             elif args.operation == "scope":
                 if not case.entity_ids:
                     parser.error("scope requires entity_ids in the case")
-                query = _query_engine(engine, _index(engine, case), case)
-                start = monotonic()
-                response = _native_read(query, case, entities=case.entity_ids)
-                reason = response.truncation.reason if response.truncation else None
-                expected_rows = 0 if args.expect_scope_boundary else 50
-                result = {
-                    "wall_s": monotonic() - start,
-                    "rows": len(response.facts),
-                    "reason": reason,
-                }
-                failed = len(response.facts) != expected_rows or (
-                    (reason == "entity_scope_too_broad") != args.expect_scope_boundary
+                result = _scope_gate(
+                    engine, case, expect_boundary=args.expect_scope_boundary
+                )
+                expected_rows, expected_reason = (
+                    (0, "entity_scope_too_broad")
+                    if args.expect_scope_boundary
+                    else (DEFAULT_CONTEXT_K, None)
+                )
+                failed = (
+                    result["rows"] != expected_rows
+                    or result["reason"] != expected_reason
                 )
             elif args.operation == "sandbox":
                 if args.samples < 1:
@@ -1145,6 +1374,9 @@ def main() -> None:
                     samples=args.samples,
                     explain=args.plans,
                     stratum=args.stratum,
+                    ten_leaf_reference=json.loads(args.ten_leaf_reference.read_text())
+                    if args.ten_leaf_reference is not None
+                    else None,
                 )
                 failed = any(
                     value["incomplete"]
@@ -1166,8 +1398,9 @@ def main() -> None:
                     ]
                     failed |= bool(result["missed_targets"])
             if sandbox is not None:
+                sampler = _SandboxSampler(sandbox)
                 result["sandbox_settings"] = sandbox_settings
-                result["beam"] = _beam_queries(sandbox)
+                result["beam"] = _beam_queries(sampler)
                 failed |= any(
                     not _beam_completed(name, outcome)
                     for name, outcome in result["beam"].items()
@@ -1182,9 +1415,12 @@ def main() -> None:
                         )
                     )
                     result["sandbox_oracle_timeout_ms"] = timeout_ms
-                    result["sandbox"] = _sandbox_queries(sandbox, samples=0)
+                    result["beam_ordered"] = _beam_ordered_rows(
+                        sandbox, evaluated_at=case.evaluated_at, timeout_ms=timeout_ms
+                    )
+                    result["sandbox"] = _sandbox_queries(sampler, samples=0)
                 else:
-                    checks = _sandbox_queries(sandbox, samples=args.samples)
+                    checks = _sandbox_queries(sampler, samples=args.samples)
                     result["sandbox"] = checks
                     failed |= any(
                         not _sandbox_completed(state)

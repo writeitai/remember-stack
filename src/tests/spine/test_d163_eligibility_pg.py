@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
@@ -36,6 +37,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters import p1_ranked
 from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
 from rememberstack.adapters.postgres_p1 import FACT_INPUT_POLICY
 from rememberstack.adapters.postgres_p1 import PostgresP1Index
@@ -48,6 +50,8 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import query_engine
 from rememberstack.surfaces.query_engine import QueryEngine
 from tests.spine.d163_scale_fixture import _expand_chunks
+from tests.spine.d163_scale_fixture import _expand_leaves
+from tests.spine.d163_scale_fixture import _expand_scope
 from tests.spine.test_d153_eligibility_pg import _plan_nodes
 from tests.surfaces.test_d140_scoped_retrieval import _claim
 from tests.surfaces.test_d140_scoped_retrieval import _declare
@@ -516,7 +520,13 @@ def test_latency_rejects_wrong_chunk_and_partition_scale_before_timing(
     ):
         with pytest.raises(AssertionError, match=message):
             qualification.latency(
-                engine, case, timeout=20, samples=40, explain=False, stratum=stratum
+                engine,
+                case,
+                timeout=20,
+                samples=40,
+                explain=False,
+                stratum=stratum,
+                ten_leaf_reference={} if stratum == "120-leaves" else None,
             )
 
 
@@ -530,6 +540,7 @@ def test_latency_requires_both_attested_batches_with_eligible_support(
         unsupported = str(corpus.facts["relation", "absent"])
         wrong_model = str(corpus.facts["relation", "carried"])
         wrong_policy = str(corpus.facts["relation", "split_links"])
+        empty_anchor = uuid4()
         with engine.begin() as connection:
             _expand_chunks(connection, size=812)
             connection.execute(
@@ -545,11 +556,38 @@ def test_latency_requires_both_attested_batches_with_eligible_support(
                 ),
                 {"id": wrong_policy},
             )
+            connection.execute(
+                text("""
+                    INSERT INTO entities (entity_id, deployment_id, canonical_name, normalized_name)
+                    VALUES (:entity, :deployment, 'Empty scope', 'empty scope')
+                """),
+                {"entity": empty_anchor, "deployment": corpus.case.deployment_id},
+            )
+            connection.execute(
+                text("""
+                    UPDATE documents AS doc SET document_entity_id=:entity
+                    FROM claims AS claim WHERE claim.claim_id=:claim AND doc.doc_id=claim.doc_id
+                """),
+                {"entity": empty_anchor, "claim": corpus.source_only},
+            )
+        empty = qualification._native_read(
+            qualification._query_engine(
+                engine, _index(engine, corpus.case), corpus.case
+            ),
+            corpus.case,
+            entities=(str(empty_anchor),),
+        )
+        assert not empty.facts and qualification._native_failure(empty) is None
         # Use one input per kind so the validation can run on the small fact corpus.
         sizes = {"observation": 1, "relation": 1}
         monkeypatch.setattr(qualification, "LATENCY_BATCH_SIZES", sizes)
 
-        def run(relation_id: str, *, stratum: str | None = "hosted") -> dict[str, Any]:
+        def run(
+            relation_id: str,
+            *,
+            stratum: str | None = "hosted",
+            entity_id: str | None = None,
+        ) -> dict[str, Any]:
             case = corpus.case.model_copy(
                 update={
                     "batch_sizes": sizes,
@@ -557,6 +595,7 @@ def test_latency_requires_both_attested_batches_with_eligible_support(
                         ("observation", observation),
                         ("relation", relation_id),
                     ),
+                    "entity_ids": (entity_id,) if entity_id else corpus.case.entity_ids,
                 }
             )
             return qualification.latency(
@@ -582,6 +621,10 @@ def test_latency_requires_both_attested_batches_with_eligible_support(
                 match="relation batch requires an eligible supporting-evidence control",
             ):
                 run(unsupported)
+            with pytest.raises(
+                AssertionError, match="eligible fact in the scoped native read"
+            ):
+                run(relation, entity_id=str(empty_anchor))
 
         report = run(relation)
     assert report["scale"] == {
@@ -592,6 +635,118 @@ def test_latency_requires_both_attested_batches_with_eligible_support(
         batch = report[f"batch/{kind}"]
         assert batch["last_rows"] == batch["inputs"] == 1
         assert batch["positive_control_fact_id"] == control
+    assert report["native/scoped"]["positive_control_fact_id"]
+
+
+def test_partition_latency_matches_ten_leaf_workload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with scratch_database(TARGET_HEAD) as engine:
+        corpus = seed_corpus(engine)
+        sizes = {"observation": 1, "relation": 1}
+        monkeypatch.setattr(qualification, "LATENCY_BATCH_SIZES", sizes)
+        relation = corpus.facts["relation", "multi_source"]
+        case = corpus.case.model_copy(
+            update={
+                "batch_sizes": sizes,
+                "candidate_keys": (
+                    ("observation", str(corpus.facts["observation", "multi_source"])),
+                    ("relation", str(relation)),
+                ),
+            }
+        )
+        with engine.begin() as connection:
+            _expand_chunks(connection, size=812)
+        reference = {
+            **qualification.latency(
+                engine, case, timeout=20, samples=1, explain=False, stratum="hosted"
+            ),
+            "case": case.model_dump(mode="json"),
+            "stratum": "hosted",
+            "schema_head": TARGET_HEAD,
+            "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[TARGET_HEAD],
+        }
+        with engine.begin() as connection:
+            _expand_leaves(connection, leaves=121)
+
+        def run(ten_leaf_reference: dict[str, Any] | None = None) -> dict[str, Any]:
+            return qualification.latency(
+                engine,
+                case,
+                timeout=20,
+                samples=1,
+                explain=False,
+                stratum="120-leaves",
+                ten_leaf_reference=ten_leaf_reference,
+            )
+
+        report = run(reference)
+        assert report["scale"]["range_leaves"] == {"chunks": 121, "chunk_claims": 121}
+        assert report["batch_workload"] == reference["batch_workload"]
+        monkeypatch.setattr(
+            qualification,
+            "_measured",
+            lambda *args, **kw: pytest.fail("started timing"),
+        )
+        with pytest.raises(AssertionError, match="requires a ten-leaf latency report"):
+            run()
+        mismatched = deepcopy(reference)
+        mismatched["scale"]["chunks"] -= 1
+        with pytest.raises(AssertionError, match="same chunk count"):
+            run(mismatched)
+        mismatched = deepcopy(reference)
+        mismatched["batch_workload"]["relation"]["candidate_ids"] = [str(uuid4())]
+        with pytest.raises(AssertionError, match="relation candidate IDs differ"):
+            run(mismatched)
+        with engine.begin() as connection:
+            connection.execute(
+                text("""
+                    UPDATE relation_evidence SET stance='contradicts'
+                    WHERE relation_id=:fact AND claim_id=(
+                        SELECT min(claim_id::text)::uuid FROM relation_evidence WHERE relation_id=:fact
+                    )
+                """),
+                {"fact": relation},
+            )
+        with pytest.raises(AssertionError, match="relation evidence differs"):
+            run(reference)
+
+
+def test_scope_gate_checks_raw_rows_and_distinct_visible_endpoints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with scratch_database(TARGET_HEAD) as engine:
+        case = seed_corpus(engine).case
+        with pytest.raises(AssertionError, match="50,000 raw fact rows"):
+            qualification._scope_gate(engine, case, expect_boundary=False)
+        with pytest.raises(AssertionError, match="50,001 raw fact rows"):
+            qualification._scope_gate(engine, case, expect_boundary=True)
+
+        # Exercise both sides in CI without building the full benchmark fixture.
+        budget = 80
+        monkeypatch.setattr(p1_ranked, "ENTITY_WORK_BUDGET", budget)
+        monkeypatch.setattr(qualification, "ENTITY_WORK_BUDGET", budget)
+        with engine.begin() as connection:
+            _expand_scope(connection, rows=budget)
+            connection.exec_driver_sql(
+                "UPDATE documents SET deleted_at=now() WHERE doc_id=document_entity_id"
+            )
+        with pytest.raises(AssertionError, match="40 distinct visible endpoints"):
+            qualification._scope_gate(engine, case, expect_boundary=False)
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE documents SET deleted_at=NULL WHERE doc_id=document_entity_id"
+            )
+        allowed = qualification._scope_gate(engine, case, expect_boundary=False)
+        assert allowed["raw_scope_rows"] == budget
+        assert allowed["distinct_visible_endpoints"] > 50
+        assert allowed["rows"] == 50 and allowed["reason"] is None
+
+        with engine.begin() as connection:
+            _expand_scope(connection, rows=budget + 1)
+        refused = qualification._scope_gate(engine, case, expect_boundary=True)
+        assert refused["raw_scope_rows"] == budget + 1
+        assert refused["rows"] == 0 and refused["reason"] == "entity_scope_too_broad"
 
 
 def test_contradiction_capture_preserves_rows_before_and_after_the_member_cap(

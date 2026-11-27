@@ -500,7 +500,7 @@ Register the new helper in `AUTHORIZATION_HELPER_VIEWS`, revoke PUBLIC and all
 query-role grants, and assign `rememberstack_view_owner`. Its AST becomes a
 hashed dependency; it is absent from public discovery/reachability.
 
-A scope below the unchanged 50,000 raw-row budget may still have expensive
+A scope within the 50,000 raw-row budget may still have expensive
 source qualification or many distinct
 endpoints. It must finish within the configured operation deadline or return
 the existing explicit deadline boundary. This change neither recalibrates
@@ -864,13 +864,18 @@ completion. These are qualification targets for warm single-reader p95.
 
 Before timing, count the case deployment's chunks and check the actual leaves
 of both `chunks` and `chunk_claims`. The ten-leaf runs use nine monthly leaves
-and the default. Hold chunk count fixed between the 120-month run and its
-matching ten-leaf run.
+and the default. Verify that the 120-month run matches a ten-leaf reference
+in chunk count, candidate IDs and their evidence links and claim occurrences.
 Each batch must resolve to the declared number of distinct facts of its kind
 with nonzero embeddings for the case model and fact input policy. Require an
-eligible fact with supporting evidence in each batch.
+eligible fact with supporting evidence in each batch and an eligible fact in
+the native scoped read before timing.
 
-Require completion and exercise the 50,000-raw-row scoped boundary.
+Measure a scope with 50,000 raw fact rows and many distinct visible endpoints.
+Count those endpoints after source and endpoint qualification and require the
+native read to complete. Count the raw facts before qualification, including
+facts attached to entities absorbed by the requested survivors. Add one raw
+fact to that scope and require the `entity_scope_too_broad` response at 50,001.
 For the shared view dependency, check broad `claims_visible_history`,
 `claims_live`, `facts_current`, `fact_claim_evidence_live` and `evidence_lineage`
 reads without ID filters. Compare every column before result caps using
@@ -880,9 +885,11 @@ same boundary for membership and the reported time. Record executed plans and
 typed completion for the original statements under the existing interactive
 sandbox limits as corpus size, evidence fanout and partitions grow independently.
 A paired timeout records matching deadline behavior. Full row equivalence still
-requires the complete diagnostic export. Use the query login's effective JIT
-settings and record them in the report. Include both BEAM fact queries, keeping
-the typed error for `label` and timing `fact_label AS label`.
+requires the complete diagnostic export. Use that same fixed instant for the
+ordered BEAM fact rows. Record the typed outcome for the shipped `label` query
+and time the corrected `fact_label AS label` sample. Use the query login's
+effective JIT settings and pace interactive requests under the rolling quotas.
+Report admission failures and time only executed queries.
 [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)
 
 **Migration check.** On a populated store, run `alembic upgrade head` and

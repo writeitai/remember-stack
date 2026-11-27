@@ -3,6 +3,7 @@
 from copy import deepcopy
 from datetime import datetime
 from datetime import UTC
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -12,6 +13,13 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
+
+from rememberstack.surfaces.query_sandbox import audit
+from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
+from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from rememberstack.surfaces.query_sandbox.limits import INTERACTIVE_LIMITS
+from rememberstack.surfaces.query_sandbox.result import QueryResult
+from rememberstack.surfaces.query_sandbox.result import ResultLimits
 
 
 def _capture(*, head: str) -> dict[str, Any]:
@@ -38,6 +46,11 @@ def _capture(*, head: str) -> dict[str, Any]:
         "raw": {},
         "ordered": {
             "final/broad": [("observation", "fact", {"returned": 1, "total": 2})]
+        },
+        "beam_ordered": {
+            "facts_predicates": [["first", 2], ["second", 2]],
+            "facts_sample": [["relation", "fact", "first", "label"]],
+            "claims_live_sample": [],
         },
         "beam": {
             "facts_predicates": {
@@ -73,18 +86,29 @@ def test_compare_detects_beam_order_and_outcome_changes() -> None:
     target = _capture(head=qualification.TARGET_HEAD)
     connection = MagicMock(spec=Connection)
     connection.execute.return_value.one.return_value = (0, 0)
+    target["beam"]["facts_predicates"]["rows"] = []
     assert all(
         qualification.compare(connection, baseline, target)["beam_matches"].values()
     )
 
     target = deepcopy(target)
-    target["beam"]["facts_predicates"]["rows"].reverse()
+    target["beam_ordered"]["facts_predicates"].reverse()
     target["beam"]["facts_sample"]["error_code"] = "statement_timeout"
     assert qualification.compare(connection, baseline, target)["beam_matches"] == {
         "facts_predicates": False,
         "facts_sample": False,
         "claims_live_sample": True,
     }
+
+
+def test_compare_requires_fixed_instant_beam_rows() -> None:
+    baseline = _capture(head=qualification.BASELINE_HEAD)
+    target = _capture(head=qualification.TARGET_HEAD)
+    target.pop("beam_ordered")
+    connection = MagicMock(spec=Connection)
+    with pytest.raises(AssertionError, match="fixed-instant BEAM rows"):
+        qualification.compare(connection, baseline, target)
+    connection.execute.assert_not_called()
 
 
 def test_compare_detects_a_native_contradiction_total_change() -> None:
@@ -215,3 +239,99 @@ def test_latency_refuses_a_missing_fact_gate(
             engine, case, timeout=1, samples=40, explain=False, stratum="hosted"
         )
     engine.connect.assert_not_called()
+
+
+@pytest.fixture
+def sandbox_result(case: qualification.Case) -> QueryResult:
+    return QueryResult(
+        request_id=uuid4(),
+        deployment_id=case.deployment_id,
+        surface_manifest_hash="manifest",
+        query_hash="query",
+        execution_started_at=case.evaluated_at,
+        elapsed_ms=0,
+        limits=ResultLimits(
+            row_cap=40,
+            byte_cap=1_048_576,
+            statement_timeout_ms=5000,
+            analytical_tier=False,
+        ),
+    )
+
+
+def test_sandbox_samples_share_pacing_across_queries(
+    sandbox_result: QueryResult, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = 0.0
+
+    def now() -> float:
+        return clock
+
+    def advance(seconds: float) -> None:
+        nonlocal clock
+        clock += seconds
+
+    monkeypatch.setattr(qualification, "monotonic", now)
+    monkeypatch.setattr(qualification, "sleep", advance)
+    monkeypatch.setattr(audit, "time", SimpleNamespace(monotonic=now))
+    monkeypatch.setattr(qualification, "BROAD_VIEWS", ())
+    kills = audit.KillSwitches()
+    limits = INTERACTIVE_LIMITS
+    identity = {"deployment_id": sandbox_result.deployment_id, "principal": "agent"}
+
+    def run(*, sql: str, max_rows: int | None) -> QueryResult:
+        assert max_rows == 40
+        assert (
+            kills.admit(
+                **identity,
+                per_principal=limits.concurrent_per_principal,
+                per_deployment=limits.concurrent_per_deployment,
+                principal_seconds_per_minute=limits.principal_statement_seconds_per_minute,
+                deployment_seconds_per_minute=limits.deployment_statement_seconds_per_minute,
+            )
+            is None
+        ), sql
+        advance(4)
+        kills.record_spend(**identity, seconds=4)
+        kills.release(**identity)
+        return sandbox_result
+
+    sandbox = MagicMock(spec=QuerySandboxExecutor)
+    sandbox.query_sql.side_effect = run
+    sampler = qualification._SandboxSampler(sandbox)
+    qualification._beam_queries(sampler)
+    checks = qualification._sandbox_queries(sampler, samples=4)
+    assert sandbox.query_sql.call_count == 13
+    assert clock > 13 * 4  # Waiting happens outside the measured samples.
+    for state in checks.values():
+        assert state["samples"] == 4
+        assert state["p50_s"] == state["p95_s"] == 4
+        assert state["admission_failures"] == {}
+
+
+def test_sandbox_admission_failure_is_not_a_timed_sample(
+    sandbox_result: QueryResult, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(qualification, "BROAD_VIEWS", ())
+    sampler = MagicMock(spec=qualification._SandboxSampler)
+    rejection = sandbox_result.model_copy(
+        update={
+            "termination_reason": "rejected",
+            "error_code": QueryErrorCode.QUOTA_EXCEEDED,
+        }
+    )
+    sampler.run.side_effect = [
+        (sandbox_result, 1),  # warm-up
+        (sandbox_result, 2),
+        (rejection, 0.001),
+        (rejection, 0.001),  # the next query's warm-up
+    ]
+    checks = qualification._sandbox_queries(sampler, samples=3)
+    predicates = checks["beam_predicates"]
+    assert predicates["samples"] == 1
+    assert predicates["p50_s"] == predicates["p95_s"] == 2
+    assert predicates["admission_failures"] == {"quota_exceeded": 1}
+    assert predicates["termination"] == "rejected"
+    sample = checks["beam_sample_corrected"]
+    assert sample["samples"] == 0 and "p95_s" not in sample
+    assert sample["admission_failures"] == {"quota_exceeded": 1}
