@@ -1945,7 +1945,9 @@ identity rules per source kind are a named spike.
 > toolchain versions), else the new version's source time. It replaces both date header
 > facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
-> this decision's cost promise did not hold. Everything else here remains binding.
+> this decision's cost promise did not hold. Proposed
+> [D162](#d162-split-oversized-chunks-before-embedding) also admits a verified
+> slice match for the date and checks paid reuse separately.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -7241,7 +7243,10 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).** An exact, uniquely verified
 > fragment and context can inherit the earlier source span's D140 date.
-> Same-version recovery copies the verified parent's recorded date to its pieces.
+> The date cutoff applies. Verify paid reuse separately. Same-version
+> recovery copies the verified parent's recorded date to its pieces.
+> Scoped passage reads count a D162 representation as pending from E0-ready
+> enrollment through first E1 publication.
 
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
@@ -8756,17 +8761,20 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27.
 
-Check the full D80 input with a pinned tokenizer and qualified provider
-limits. Split oversized candidates losslessly at structural or scalar
-boundaries with exact provenance. Split grids add a packing and delivery
-generation. Fitting grids retain their packing and paid input identities.
+Check the full D80 input at each proposed cut with a pinned tokenizer and
+qualified provider limits. Split oversized candidates losslessly at
+structural or scalar boundaries with exact provenance. Split grids add a
+packing and delivery generation. Fitting grids retain their packing and paid
+input identities.
 Every CHUNK recovery has a distinct embed delivery.
 
-Apply this at CHUNK for new versions and explicit recovery of oversize
+Refine the grid at CHUNK for new versions and explicit recovery of oversize
 `embed_chunk` dead letters with verified privacy before first E1 completion.
-A pending grid can serve after first E1 publication. Grids that could
-already serve retain their cuts and handles. Confirmed per-input rejection
-is terminal, and capacity retries stay bounded. LoCoMo and BEAM require
+Enroll new representations as pending for passages at E0 readiness. The
+selected E1 delivery publishes passages and supplies the packing stamp for
+claim embedding and reconciliation. Grids that could already serve retain
+their cuts and handles. Confirmed per-input rejection is terminal, and
+capacity retries stay bounded. LoCoMo and BEAM require
 frozen-grid, ingest-delivery and public tool-response parity. The exact
 LoCoMo binding must qualify at 22,528 Qwen tokens or higher.
 

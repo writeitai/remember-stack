@@ -55,11 +55,14 @@ work on the affected binding until requalified.
    tier. Cut before each accepted anchor and reset spacing there. Stop at
    the next block edge, eligibility change, accepted internal anchor,
    target-th whitespace token or candidate end, whichever comes first.
-   Probe prefixes of 1, 2, 4, … scalars from the first nonblank scalar up to
-   that goal. Stop at the first overflow or the goal. Within the proved fit,
-   take a reached required or block edge, the furthest seam in the strongest
-   tier, or the proved scalar cut, in that order. Attach separator whitespace
-   left up to the next required edge or block.
+   Probe legal cuts after 1, 2, 4, … scalars from the first nonblank scalar up
+   to that goal. Stop at the first overflow or the goal and keep the last
+   passing cut. Within that span, try a reached required or block edge first,
+   then seams by tier, furthest first in each tier. For every probe and seam,
+   attach separator whitespace left up to the next required edge or block and
+   run the full fit check on the resulting piece. D80 can render a larger
+   header for a shorter body. If no preferred cut fits, use the last passing
+   scalar cut.
 5. Use multi-chunk D80 rules for split pieces. If a failing singleton fits
    whole under those rules, reserve a nonblank scalar for a second piece.
    Re-render with the final count and prove fit before committing. Dry-run,
@@ -84,7 +87,8 @@ for an origin citation.
 
 Only an actual split gives the CHUNK output a new packing stamp (base
 parameters, split rules and envelope). A restart without new cuts retains its
-stamp. Subsequent work names that stamp and the delivery (§3).
+stamp. Grid-scoped work names that stamp and the selected delivery, including
+claim embedding and both [D143 reconcile modes](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes).
 Split-grid IDs are UUIDv5 of representation, stamp and span. Complete
 block runs with optional edge whitespace keep the ordered block-hash key.
 Partial blocks and gaps hash exact bytes with a separate tag. E0, D80,
@@ -121,7 +125,9 @@ eligibility, text-origin, E2, reference and normalization policies keep their pi
   origins, eligibility, undated facts and generations. Match even when the
   parent was edited or offsets shifted. Use the earliest eligible date from
   non-deleted earlier versions at or before the target's source date. Use D140's
-  own-date or unknown fallback for unmatched text. On same-version recovery,
+  own-date or unknown fallback for unmatched text. A date donor can have
+  different paid inputs or no extraction result. Apply the separate reuse
+  checks above for vectors, Selection and Claimify. On same-version recovery,
   retain the verified parent spans and copy each parent's recorded
   `text_origin_at` to its pieces, including a recorded unknown. This holds
   when the E2 slots change or the earlier donor was deleted. Preserve
@@ -173,17 +179,23 @@ D159 hide. Discard late output after the hide. The
 deletes staged content by document, including obsolete and dead-lettered
 deliveries whose chunk rows are already gone.
 
-**First publication.** Activate the gate with compatible readers and after
-draining and fencing incompatible workers. A D162 grid is pending from its
-first chunk write. Withhold its handles and bodies from current and all-version
-SQL views and body fetches, passage search, adjacency and section links. Scoped
-passage reads use the same gate for [D140 pending disclosure](effective_time_and_section_references_design.md#37-results-carry-their-period-and-pending-lineages).
+**First publication.** Activate the gate with compatible readers after
+draining and fencing incompatible workers. Enroll each new D162 representation
+as pending for passages in the same lineage transaction that first makes it
+E0-ready, before CHUNK is enqueued. Enrollment is idempotent. It exists even
+before a delivery or packing stamp is recorded. CHUNK commits the selected
+delivery and stamp with the grid, including an empty grid.
+Waiting, failure and delivery replacement preserve pending status.
+
+Withhold pending passages from current and all-version SQL views, body
+fetches, passage search, adjacency and section links. Scoped passage reads use
+the same enrollment for [D140 pending disclosure](effective_time_and_section_references_design.md#37-results-carry-their-period-and-pending-lineages).
 E0 readiness governs document and section metadata. For a proven-private
 legacy grid, adopt the gate and withdraw partial P1 rows before ending
-isolation. At first E1 completion, install the final P1 projection, publish
-the selected grid and delete its staged content in the same transaction as
-the successful ledger transition, including the empty-grid path. D143
-continues from that delivery.
+isolation. Only the selected delivery's successful E1 completion clears
+pending. In that transaction install the final P1 projection, publish the
+grid, delete staged content and succeed the ledger row, including on the
+empty-grid path. D143 continues from that delivery.
 
 ## 4. Provider rejection and retry
 
@@ -207,6 +219,11 @@ the E1 passage call. [P1 validator](../../src/rememberstack/ports/p1_index.py#L2
 
 LoCoMo and BEAM use their pinned E1, reader, schema and embedding bindings
 for ingest, replay and reads until the exact candidate passes on copies.
+For parity with LoCoMo's published 94.09% run, replay its saved tool traces
+using its recorded reader and copies of its attested retained v45 stores.
+Current Full-v47 execution uses its own profile.
+[LoCoMo baselines](locomo_benchmark_design.md#2-fixed-protocol).
+
 Dry-run frozen inputs including LoCoMo OCR and BEAM's retained rendering.
 Compare ordered spans, bodies, eligibility and D80 hashes. Check retained
 grid digests and IDs.
@@ -243,12 +260,13 @@ a separate run identity and preserves the published 94.09% and attestation.
 
 | Focus | Implementation release check |
 | --- | --- |
-| Packing | Byte-identical fitting output. Cover header-only overflow, YAML, OCR tables, long turns, CRLF, scalar fallback and a skipped labelled HTML gap. Check exact spans, clipped origins, eligibility and nonblank pieces. With equal-tier cuts at 400 and 600 tokens and an anchor at 520, cut at 400 first, then respect the anchor. |
+| Packing | Byte-identical fitting output. Cover header-only overflow, YAML, OCR tables, long turns, CRLF and a skipped labelled HTML gap. Check exact spans, clipped origins, eligibility and nonblank pieces. With equal-tier cuts at 400 and 600 tokens and an anchor at 520, cut at 400 first, then respect the anchor. Reject a preferred line seam whose D80-rendered request exceeds the byte limit even though a longer scalar probe fits. Take the proved scalar cut when every preferred seam fails. |
 | Gap-only evidence | Split an eligible HTML gap beside a neighbour with a clipped block. Require a published D122 card citing the exact gap-only target span with its clipped converter provenance. |
 | Provider | Cover stock and drifted routing, inconclusive bounds, full delivery and framed minimum input, and individually fitting items that exceed a batch limit together. Exercise real 429s and typed rejections, shuffled, missing and duplicate positions, and a good vector beside a zero-norm one. Malformed batches attest nothing. Test malformed singletons in both layouts and a valid sibling checkpoint. |
 | Publication | Dead-letter legacy E1 after a successful batch. Observe its handles through SQL and search, refuse CHUNK recovery, and verify ordinary embed replay preserves them. Check SQL, search and body fetches, adjacency and section links before and after D162 publication. Split a section's first block and check that references and history each return its first piece only. |
-| Scoped passages | Search by document ID with an E0-ready in-force D162 version and a published predecessor. Pending and dead-lettered deliveries yield `boundary` and name the document in `scope_pending`. On a published empty grid with an exhausted search, require `known_empty`. Publish between nomination and the pending check and verify both use the original read snapshot. |
+| Scoped passages | Search by document ID with an E0-ready in-force D162 version and a published predecessor. Check before CHUNK enqueue, after CHUNK dead-letters without writing rows and after an EMBED_CHUNK dead letter. Each yields `boundary` and names the document in `scope_pending`. On a published empty grid with an exhausted search, require `known_empty`. Publish between nomination and the pending check and verify both use the original read snapshot. |
+| Claims tails | Ingest a fresh document that splits, with facts disabled and with the full pipeline. After each tail finishes, find a new claim through semantic claim search and verify it remains current testimony with no `reextracted` transition. |
 | Recovery | Audit the two hosted dead letters and canary any with verified privacy. Exercise ambiguous evidence, an old sidecar, changed envelopes on first ingest and replay, an interrupted P1 stamp, stale attempts and a published grid above the ceiling. Widen the envelope for a private legacy grid so it fits without cuts. Replay twice and check that one distinct embed delivery succeeds, IDs stay stable, and readiness and D143 advance on that delivery. |
 | Forget | Checkpoint a partial batch and dead-letter the delivery. Forget, then release an obsolete attempt's reply after the hide. Verify immediate invisibility, rejection of the late write, and zero staged content or P1 rows after repeated sweeps. |
-| D56 and D140 | Test dated legacy → split and split → fitting with unchanged parent runs across a child and an oversized section elsewhere. Compare paid calls by stage, dates, spans and claim IDs. Keep the D122 window case. Check an unchanged fragment beyond an anchor after an edit in both recovery orders. Delete the January 1 version after B inherits its date and before B's oversize replay. Verify that B's pieces keep January 1 and E2 resolves “tomorrow” to January 2. Append the 17,000-digit block to the fitting paragraph with a qualifying internal anchor. Require zero embedding calls for that intact paragraph given the same D80 input and full-delivery proof. Reject matching-hash vectors without that proof. |
+| D56 and D140 | Test dated legacy → split and split → fitting within one lineage with stable names and untouched sections on both sides of an edited multi-chunk section. Check paid calls by stage, identities, dates, spans and claim IDs under Rule 4, including the D122 window case. Require a verified fragment to inherit the date of a donor with different inputs or no extraction, then apply normal paid reuse checks. Check an unchanged fragment beyond an anchor after an edit in both recovery orders. Delete the January 1 version after B inherits its date and before B's oversize replay. Verify that B's pieces keep January 1 and E2 resolves “tomorrow” to January 2. Append the 17,000-digit block to the fitting paragraph with a qualifying internal anchor. Require zero embedding calls for that intact paragraph given the same D80 input and full-delivery proof. Reject matching-hash vectors without that proof. |
 | Cross-layout citations | Hold the local slots and preceding eight Selection inputs and results fixed while a split child shifts ordinals. Exercise a secondary citation to the next same-owner chunk across the child and an admitted card support outside the old ordinal window. In both layout directions require the same claim IDs, exact remapped spans and zero Claimify calls for matching targets. |

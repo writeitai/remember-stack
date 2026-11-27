@@ -211,11 +211,12 @@ no-op before any bytes move; unchanged bytes are a `content_hash` no-op as today
 One new, deliberately narrow notion: a claim is **current testimony** iff it belongs to its
 lineage's current extraction basis *under the lineage's mode*:
 
-- **re-derivation**: when extraction-basis generation v2 completes for a (version, chunk),
-  that chunk's v1 claims flip non-current (`reextracted` — the reason covers any
-  basis-coordinate change: an extractor bump, a **converter bump** (a new representation — a
-  better ASR/VLM re-reading unchanged media bytes, the common media event, D65), a blockizer
-  bump, or a structurer bump) — wholesale, by coordinates; no content matching;
+- **re-derivation** retires claims minted on the version whose representation,
+  packing stamp or extractor generation differs from the completing basis
+  (`reextracted`). A same-extractor occurrence in the completing basis keeps
+  a reused claim current for this check. With proposed D162, both reconcile
+  modes take the packing stamp from the selected published E1 delivery.
+  [Tail basis](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes).
 - **`living` version supersession**: claims whose chunks are absent from the new current
   version flip non-current (`version_superseded`);
 - **`snapshot`**: version succession flips nothing.

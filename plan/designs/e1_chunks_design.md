@@ -315,13 +315,12 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   rendered inputs or consumed extraction context before reusing work.
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
-- **A3 — Derived context is carried forward under replay discipline, not regenerated when
-  inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
-  when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
-  under `structurer_version`. [Proposed D162](split_oversized_chunks_design.md#2-coordinates-and-reuse)
-  keys split layouts on actual consumed content and verifies the same slots
-  across legacy boundaries, for both extraction and text origin. LLM output
-  stays out of identity keys (D7).
+- **A3 — Carry forward derived context when inputs match.** Selection reuses
+  results that match `extraction_input_hash`. Claimify also checks its D122
+  reference window. Unchanged regions keep the prior version's structure under
+  `structurer_version`. Proposed D162 keys split layouts on consumed content
+  and verifies equivalent inputs before reusing paid results across layouts.
+  LLM output stays out of identity keys (D7). [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own and neighbour content identities + stable header
   facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
@@ -329,27 +328,18 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
   the old one), source kind, the chunk's **text origin time**, language (from
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
-  LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
-  `published_at` header facts. It is recorded once when the chunk is created: the
-  smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
-  versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
-  and **not later than this version's own date** (so a back-filled older edition never inherits
-  a later date) — own and neighbour content identities, non-date header facts,
-  and consumed converter-origin hashes,
-  blockizer/structurer/extractor versions, indexed per
-  lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
-  and replayed, never recomputed; deleting the origin version later does not change it. The
-  E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
-  in unchanged text stay resolved against the time the text was written, and a dated new
-  version reuses its unchanged chunks (with the version's own date in the key, nearly every
-  new version would miss every key) — **no LLM *output* participates in the
-  key** (refines D56's original sketch, which had let the section path and prefix in — a key
-  no re-run would ever match, the ~0 %-reuse hazard named in the stress test). Including
-  `structurer_version` — a stable config string, not LLM output — closes the context-drift
-  gap (Codex review F10): within a lineage, carried-forward structure *is* the binding context
-  of reused claims, so section roles cannot drift under them silently; and a **deliberate
-  structurer bump** (which may reclassify sections — a `body` → `references` role change
-  alters what Selection keeps) is a re-extraction boundary by key construction.
+  LLM-derived). The recorded text origin time replaces `source_modified_at`
+  and `published_at` in the E2 header and reuse key, and supplies `asserted_at`
+  for fresh claims. D140 takes the earliest eligible date from a hash match
+  or, under D162, a verified slice match for the target and its consumed
+  context. It falls back to the version's own date or unknown. Each paid
+  result must independently pass its reuse checks.
+  [D140 date rule](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
+
+  Including `structurer_version` ties reuse to the structure whose section roles
+  guide Selection. A deliberate structurer bump can reclassify a `body` section
+  as `references` and change what Selection keeps. The version in the key makes
+  that bump a re-extraction boundary (Codex review F10).
 - **Passage embedding reuse (D80 refinement).** Passage identity is the composite
   `(embedding_input_policy_version, embedding_text_hash, embedder_generation)`. Provider
   re-embed is required when the hash or embedder generation changes; a policy-only bump that

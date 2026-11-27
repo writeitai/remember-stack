@@ -1,6 +1,7 @@
 # Oversized E1 chunks in v0.22.4
 
-This audit uses `c1f15b783` and supports [proposed D162](../designs/split_oversized_chunks_design.md).
+The incident audit uses `c1f15b783`. The round-three source checks use
+`8bd115b7a`. [Proposed D162](../designs/split_oversized_chunks_design.md).
 
 ## Incident and failure path
 
@@ -45,14 +46,15 @@ coordinates and fitting output. Count the rendered D80 input with the actual
 tokenizer and qualify request-wide caps.
 [Pinned Qwen tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
 
-The incident versions never completed E1. E0 marks the version and
-representation ready, and public SQL can then expose their chunk IDs as soon
-as CHUNK commits. Legacy E1 also writes each successful batch to P1 before
-the job ends. A failed job or an empty P1 projection therefore cannot prove
-the grid stayed private. A gate applied from the first chunk write supplies
-that proof for new grids. Legacy recovery needs a recorded isolation boundary
-covering the entire exposure window.
+The incident versions never completed E1. E0 commits the version and
+representation as ready before it queues CHUNK. Public SQL can expose their
+IDs as soon as CHUNK commits, and legacy E1 writes each successful batch to P1
+before the job ends. Proving a legacy grid stayed private requires recorded
+isolation over that entire window. For new D162 versions, record pending
+passages with E0 readiness so a scoped search can disclose the delay even if
+CHUNK has never written a row.
 [E0 Ready update](../../src/rememberstack/spine/document_catalog.py#L827-L852),
+[CHUNK follow-up](../../src/rememberstack/workers/e0.py#L2185-L2203),
 [public SQL](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719),
 [batch write](../../src/rememberstack/workers/e1.py#L535-L572).
 
@@ -63,6 +65,16 @@ grid fits a wider envelope.
 [Embed enqueue](../../src/rememberstack/workers/e1.py#L794-L811),
 [ledger uniqueness](../../src/rememberstack/spine/work_ledger.py#L1996-L2009).
 
+Claim embedding and reconciliation currently read a configured packing
+generation. A split grid has a different stamp, so the first tail can find
+no chunks to embed and treat its new claims as stale. Both tails must use the
+published delivery's stamp for their lookups. The stamp identifies which
+claims to consider. The claim embedding and extraction inputs still govern
+paid reuse.
+[Claim embedding](../../src/rememberstack/workers/p1.py#L99-L113),
+[reconcile call](../../src/rememberstack/workers/reconcile.py#L153-L158),
+[stale testimony query](../../src/rememberstack/spine/lifecycle.py#L1449-L1471).
+
 A 209-token paragraph and an appended 17,000-digit block pack together under
 D58. The paragraph fits alone and keeps its D80 hash, but its second sentence
 qualifies as an internal anchor. Trying the whole-block seam first preserves
@@ -71,16 +83,33 @@ block alone exceeds 16,384 model tokens.
 [Packer](../../src/rememberstack/core/chunker.py#L221-L240),
 [pinned tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
 
+D80 can choose a different header for a shorter prefix. With a 39-emoji
+channel name, one-letter document and section titles, and a line break after
+48 ASCII letters, a mock OpenRouter transport measured 343 serialized bytes
+at the line seam and 293 at the 128-scalar cut. At a 332-byte cap, the scalar
+probes through 128 fit while that seam overflows. Checking each proposed cut
+and retaining the last passing probe allows the split to proceed.
+[D80 renderer](../../src/rememberstack/core/embedding_input_policy.py#L204-L223),
+[request serializer](../../src/rememberstack/adapters/openrouter.py#L1034-L1045).
+
 D140 records the inherited date before embedding. A fresh lookup after the
 original donor is deleted can move relative dates from the inherited date to
 the version date. Refining verified same-version spans preserves those dates
 even when the new pieces consume different neighbors. Keeping committed cuts
 also avoids assigning one date to a merged piece spanning different origins.
+An earlier whole chunk can supply a fragment's date even if its paid inputs
+differ or its extraction never ran.
 [Origin record](../../src/rememberstack/workers/e1.py#L167-L216),
 [donor lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345),
 [E2 date](../../src/rememberstack/workers/e2.py#L1794-L1801).
 
 ## Benchmark fixture audit
+
+Full-v47 is the only executable LoCoMo profile. Historical parity for the
+published 94.09% uses the recorded serving and reader-prompt revisions, retained
+v45 stores, frozen images and saved tool traces.
+[Protocol registry](../../benchmarks/locomo/protocol.py#L513-L553),
+[published results](../../benchmarks/locomo/README.md#published-results).
 
 Reviewers reproduced public LoCoMo text and BEAM sizing. The hosted probe and
 archived LoCoMo OCR audit remained author-reported. The latter covered 272 v45
