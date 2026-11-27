@@ -103,6 +103,16 @@ differ or its extraction never ran.
 [donor lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345),
 [E2 date](../../src/rememberstack/workers/e2.py#L1794-L1801).
 
+The lookup reads chunk rows. A narrower recovery can remove the only January
+parent that covers an unchanged February piece, even when the published
+January pieces carry the same date. Their new boundaries can also change
+the consumed neighbours. Retaining the original date evidence once keeps
+both hash and slice matches stable through publication. The immutable E0
+representation supplies the text and provenance, so the retained evidence
+needs only coordinates and matching metadata.
+[Donor lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345),
+[consumed slots](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
+
 ## Benchmark fixture audit
 
 Full-v47 is the only executable LoCoMo profile. Historical parity for the
@@ -131,6 +141,18 @@ the end token. **14,958 is a conservative Qwen token bound before extra
 route framing.** Whole-source JSON yields a 529,540-byte normalized body.
 Qualification uses the exact retained rendering.
 [Pinned BEAM chat](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json).
+
+An offline embedding probe changed the gateway URL and then enabled zero
+data retention while holding the model and provider fixed. Both changed the
+wire request while the LoCoMo ingest binding guard still passed. BEAM begins
+retrieval against the supplied API URL. Checking the runtime identity that
+passed parity at each protected entry point keeps these changes from silently
+switching a benchmark to an unqualified path.
+[Gateway client](../../src/rememberstack/adapters/openrouter.py#L412-L428),
+[provider payload](../../src/rememberstack/adapters/openrouter.py#L1001-L1046),
+[binding report](../../src/rememberstack/profiles/selfhost.py#L2373-L2399),
+[LoCoMo guard](../../benchmarks/locomo/runner.py#L1714-L1729),
+[BEAM reader](../../benchmarks/rs_harness_beam/answer_agent.py#L692-L705).
 
 Matching chunk hashes and queries on retained vectors do not exercise ingest
 delivery. The current OpenRouter decoder sorts indices and checks count and

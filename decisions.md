@@ -7244,7 +7244,8 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).** An exact, uniquely verified
 > fragment and context can inherit the earlier source span's D140 date.
 > The date cutoff applies. Verify paid reuse separately. Same-version
-> recovery copies the verified parent's recorded date to its pieces.
+> recovery copies the verified parent's recorded date to its pieces and
+> preserves the original date evidence through publication.
 > Scoped passage reads count a D162 representation as pending from E0-ready
 > enrollment through first E1 publication.
 
@@ -8774,8 +8775,10 @@ Enroll new representations as pending for passages at E0 readiness. The
 selected E1 delivery publishes passages and supplies the packing stamp for
 claim embedding and reconciliation. Grids that could already serve retain
 their cuts and handles. Confirmed per-input rejection is terminal, and
-capacity retries stay bounded. LoCoMo and BEAM require
-frozen-grid, ingest-delivery and public tool-response parity. The exact
+capacity retries stay bounded. LoCoMo and BEAM require frozen-grid,
+ingest-delivery and public tool-response parity. Protected ingest, replay
+and reads stay on the pinned path unless the runtime worker, reader,
+schema and embedding bindings match the qualified candidate. The exact
 LoCoMo binding must qualify at 22,528 Qwen tokens or higher.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·

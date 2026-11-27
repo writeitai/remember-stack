@@ -183,8 +183,9 @@ success, so a sweep can be interrupted and run again at any point.
      review payloads, sections, representations, D134 metadata rows, D156 tag assignments,
      D118 §7 mutable-fact payloads, versions and the document row. Children are deleted before
      parents; the foreign-key cascades that already exist inside the subtree do part of it.
-   - Delete all D162 staged vectors and prepared data by `(deployment_id, doc_id)`,
-     including dead-lettered and superseded deliveries after their chunk rows are gone.
+   - Delete D162 staged vectors, prepared data and retained text-origin records
+     by `(deployment_id, doc_id)`. Include published representations and dead-lettered
+     or superseded deliveries whose chunk rows are gone.
    - Facts and entities: a relation or observation whose only evidence (current or archived)
      came from this document is deleted with its adjudication rows, and a source-generated
      `other:` predicate that no remaining relation uses is deleted from the registry (E3 records

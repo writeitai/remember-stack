@@ -556,8 +556,10 @@ reuse_identity_hash)`.
    A date donor must be in a non-deleted version of `L` and have a known
    `text_origin_at` no later than `d`. Match on `reuse_identity_hash`. Under
    proposed D162, look in earlier versions and also accept a uniquely verified
-   slice match for the target and its consumed context. An unknown `d` has no
-   eligible donor. [D162 slice verification](split_oversized_chunks_design.md#2-coordinates-and-reuse).
+   slice match for the target and its consumed context. For a recut version,
+   both matches use the first grid's retained origin evidence, even after
+   publication. An unknown `d` has no eligible donor.
+   [D162 slice verification](split_oversized_chunks_design.md#2-coordinates-and-reuse).
 3. Record the smallest eligible `text_origin_at` (ties by `version_no`, then
    `ordinal`), or `d` if none qualifies. This records `NULL` when the date is
    unknown.

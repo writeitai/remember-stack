@@ -54,23 +54,25 @@ primary metric           judge accuracy
 secondary metric         official LoCoMo F1
 ```
 
-Full-v47 is the only executable protocol. It attests per-version P3 publication
-markers and a frozen ready-folder file inventory. Historical runs remain
-available for inspection and summary under their recorded identities.
-[Protocol registry](../../benchmarks/locomo/protocol.py#L513-L553).
+Full-v47 is the only executable protocol. Its runner attests per-version P3
+publication markers and a frozen ready-folder file inventory. Historical
+runs remain available for inspection and summary under their recorded
+identities. [Protocol registry](../../benchmarks/locomo/protocol.py#L513-L553) ·
+[Runner P3 attestation](../../benchmarks/locomo/runner.py#L709-L740).
 
 The query-surface hash, prompt/schema hashes, repository revision, manifests,
 rendered documents, complete tool-catalog hash and expected component generations
 are stored. The execution profile also stores its non-secret ingestion bindings,
-worker environment and approved provider order. CI compares every required component
-and effective model binding with the composed current engine; a worker generation
-change cannot leave a stale executable benchmark pin unnoticed.
+worker environment and approved provider order. CI compares the required
+component generations and reported model bindings with the composed engine.
 
 The proposed D162 gate requires 22,528 Qwen tokens or higher on the exact
 ingestion binding. A candidate E1 path needs transport-replay parity for
-delivery and stored passage vectors before replacing the pinned ingest or
-replay path. Candidate readers, schemas and query embedding paths require
-public tool parity. [D162 release checks](split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
+delivery and stored passage vectors. Candidate readers, schemas and query
+embedding paths require public tool parity. At runtime, protected ingest,
+replay and reads require the exact candidate fingerprint that passed those
+checks. Use the pinned path if the candidate identity is missing or differs.
+[D162 release checks](split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
 
 The published 94.09% run used retained Full-v45 ingestion and frozen image
 inputs. For historical parity, use that run's recorded serving and answer-prompt

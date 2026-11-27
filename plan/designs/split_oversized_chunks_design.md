@@ -131,8 +131,18 @@ eligibility, text-origin, E2, reference and normalization policies keep their pi
   retain the verified parent spans and copy each parent's recorded
   `text_origin_at` to its pieces, including a recorded unknown. This holds
   when the E2 slots change or the earlier donor was deleted. Preserve
-  committed cuts so a piece always has one parent. Keep the verified spans
-  and dates with failed work so recovery order does not change inheritance.
+  committed cuts so a piece always has one parent.
+
+  If recovery recuts a grid, retain the first committed grid's date evidence
+  once. Keep each original parent's ordinal, date, date-free identity and
+  its target and same-owner neighbour spans (including empty slots),
+  eligibility, undated facts and generations. Read bytes and clipped
+  provenance from the immutable E0 representation. Switch both hash and
+  slice lookups to this evidence in the same lineage transaction that removes
+  the original rows. Use the same donor set through repeated recovery and
+  after publication. The recovered pieces carry their dates into E2 and
+  D140 uses the retained rows for matching later versions. A restart that
+  keeps the original grid can use its chunk rows.
 
 ## 3. Recover the unpublished version at CHUNK
 
@@ -165,19 +175,20 @@ if CHUNK has yet to commit a grid. Record the selected delivery and its packing
 stamp for the representation. Readiness and D143 source completion, claims
 admission and backfill resolve that exact delivery and grid on the original
 version, including when no chunks exist. Keep qualifying checkpoints and
-verified parent dates before clearing superseded private rows.
+the origin evidence from §2 before clearing superseded private rows.
 [Ledger key](../../src/rememberstack/spine/work_ledger.py#L1996-L2023),
 [D143 lookup](../../src/rememberstack/spine/processing_layers.py#L1268-L1275).
 
-**Checkpoints and forget.** Store durable vectors, prepared source and D80
-input data, and verified parent spans and dates in off-index PostgreSQL rows
-indexed by their owner `(deployment_id, doc_id)` across deliveries. In every
-write or barrier transaction, check lineage and version liveness, selected
-delivery, packing stamp and lease attempt under the same lineage lock as
-D159 hide. Discard late output after the hide. The
-[D159 sweep](archive_and_forget_design.md#33-the-sweep)
-deletes staged content by document, including obsolete and dead-lettered
-deliveries whose chunk rows are already gone.
+**Checkpoints and forget.** Store staged vectors and prepared source and
+D80 input data off-index in PostgreSQL. Store retained origin records with
+the representation, independently of any delivery. Index both by owner
+`(deployment_id, doc_id)`. In every write or barrier transaction, check
+lineage and version liveness, selected delivery, packing stamp and lease
+attempt under the same lineage lock as D159 hide. Discard late output
+after the hide and exclude hidden donors immediately from date lookups.
+The [D159 sweep](archive_and_forget_design.md#33-the-sweep) deletes both
+sets by document, including published representations and deliveries
+whose chunk rows are already gone.
 
 **First publication.** Activate the gate with compatible readers after
 draining and fencing incompatible workers. Enroll each new D162 representation
@@ -194,8 +205,9 @@ E0 readiness governs document and section metadata. For a proven-private
 legacy grid, adopt the gate and withdraw partial P1 rows before ending
 isolation. Only the selected delivery's successful E1 completion clears
 pending. In that transaction install the final P1 projection, publish the
-grid, delete staged content and succeed the ledger row, including on the
-empty-grid path. D143 continues from that delivery.
+grid, delete delivery checkpoints and succeed the ledger row, including on
+the empty-grid path. Keep the representation's origin records for D140.
+D143 continues from that delivery.
 
 ## 4. Provider rejection and retry
 
@@ -217,8 +229,24 @@ the E1 passage call. [P1 validator](../../src/rememberstack/ports/p1_index.py#L2
 
 ## 5. Benchmark admission and release checks
 
-LoCoMo and BEAM use their pinned E1, reader, schema and embedding bindings
-for ingest, replay and reads until the exact candidate passes on copies.
+LoCoMo and BEAM use their pinned paths until a candidate passes on copies.
+Record a non-secret fingerprint with the protected run for the worker and
+reader builds and component generations, applied schema, and effective
+passage and query embedding bindings that passed. The embedding bindings
+include the actual gateway URL without credentials, model and dimensions,
+qualified endpoints, routing and fallback, zero-data-retention and
+data-collection settings, tokenizer, framing, and all qualified limits.
+Pin any request, decoder and retry settings used in parity.
+
+Verify the complete identity of the running deployment before protected
+ingest, replay or reads, including at BEAM's supplied API URL. Carry the
+expected identity into queued work and check it again at CHUNK and
+EMBED_CHUNK execution. Each read checks the serving reader, schema and
+query adapter at execution. Use the checked settings and schema for the
+operation. Use the pinned deployment when a candidate identity is
+missing or differs. Suspend a candidate-bound run on drift until its
+recorded identity is restored.
+
 For parity with LoCoMo's published 94.09% run, replay its saved tool traces
 using its recorded reader and copies of its attested retained v45 stores.
 Current Full-v47 execution uses its own profile.
@@ -252,21 +280,28 @@ query-path equivalence. A difference blocks admission. Scorer smoke is separate.
 LoCoMo requires **at least 22,528 Qwen tokens** on its exact protocol binding
 (`nebius`, provider order unset) plus frozen input and grid parity. The
 reported v45 singleton has 21,567 tokens before its header and splits at
-16,384. The runner checks binding identity. An owner-approved comparison has
-a separate run identity and preserves the published 94.09% and attestation.
+16,384. An owner-approved comparison has a separate run identity and
+preserves the published 94.09% and attestation.
 [Fixture audit](../analysis/split_oversized_chunks_analysis.md#benchmark-fixture-audit),
-[protocol binding](../../benchmarks/locomo/protocol.py#L127-L134),
-[runner guard](../../benchmarks/locomo/runner.py#L1714-L1729).
+[protocol binding](../../benchmarks/locomo/protocol.py#L127-L134).
+
+As part of implementation, update the
+[E1 acceptance check](../implementation_evals/eval_checks/e1_chunks_whole_blocks_no_overlap.yaml)
+to verify D58 packing and D162 splits. Require section-bounded,
+non-overlapping pieces that concatenate to the exact candidate bytes, and
+byte-identical grids when the original packing fits.
 
 | Focus | Implementation release check |
 | --- | --- |
 | Packing | Byte-identical fitting output. Cover header-only overflow, YAML, OCR tables, long turns, CRLF and a skipped labelled HTML gap. Check exact spans, clipped origins, eligibility and nonblank pieces. With equal-tier cuts at 400 and 600 tokens and an anchor at 520, cut at 400 first, then respect the anchor. Reject a preferred line seam whose D80-rendered request exceeds the byte limit even though a longer scalar probe fits. Take the proved scalar cut when every preferred seam fails. |
 | Gap-only evidence | Split an eligible HTML gap beside a neighbour with a clipped block. Require a published D122 card citing the exact gap-only target span with its clipped converter provenance. |
+| Benchmark binding | Hold model and provider fixed and change only the gateway URL. Repeat with only the retention policy changed. Keep protected ingest, replay and reads on the pinned path, and refuse a mismatched BEAM API URL before retrieval. Exercise missing identity and worker, reader and schema drift. If drift follows candidate enqueue, stop before candidate execution. |
 | Provider | Cover stock and drifted routing, inconclusive bounds, full delivery and framed minimum input, and individually fitting items that exceed a batch limit together. Exercise real 429s and typed rejections, shuffled, missing and duplicate positions, and a good vector beside a zero-norm one. Malformed batches attest nothing. Test malformed singletons in both layouts and a valid sibling checkpoint. |
 | Publication | Dead-letter legacy E1 after a successful batch. Observe its handles through SQL and search, refuse CHUNK recovery, and verify ordinary embed replay preserves them. Check SQL, search and body fetches, adjacency and section links before and after D162 publication. Split a section's first block and check that references and history each return its first piece only. |
 | Scoped passages | Search by document ID with an E0-ready in-force D162 version and a published predecessor. Check before CHUNK enqueue, after CHUNK dead-letters without writing rows and after an EMBED_CHUNK dead letter. Each yields `boundary` and names the document in `scope_pending`. On a published empty grid with an exhausted search, require `known_empty`. Publish between nomination and the pending check and verify both use the original read snapshot. |
 | Claims tails | Ingest a fresh document that splits, with facts disabled and with the full pipeline. After each tail finishes, find a new claim through semantic claim search and verify it remains current testimony with no `reextracted` transition. |
 | Recovery | Audit the two hosted dead letters and canary any with verified privacy. Exercise ambiguous evidence, an old sidecar, changed envelopes on first ingest and replay, an interrupted P1 stamp, stale attempts and a published grid above the ceiling. Widen the envelope for a private legacy grid so it fits without cuts. Replay twice and check that one distinct embed delivery succeeds, IDs stay stable, and readiness and D143 advance on that delivery. |
-| Forget | Checkpoint a partial batch and dead-letter the delivery. Forget, then release an obsolete attempt's reply after the hide. Verify immediate invisibility, rejection of the late write, and zero staged content or P1 rows after repeated sweeps. |
+| Date lookup across publication | Narrow a private January 1 grid in recovery. Give the February 1 version an edit in another section and a wider ceiling so its unchanged piece and context match the original parent, with the piece spanning multiple recovered pieces. Pack February before January recovery and after January publication on independent copies. Require January 1 as `text_origin_at` in both orders. |
+| Forget | Checkpoint a partial batch and dead-letter the delivery. Forget, then release an obsolete attempt's reply after the hide. Also forget a document with a published recut grid. Verify immediate invisibility to readers and date lookup, rejection of the late write, and zero staged content, retained origin records or P1 rows after repeated sweeps. |
 | D56 and D140 | Test dated legacy → split and split → fitting within one lineage with stable names and untouched sections on both sides of an edited multi-chunk section. Check paid calls by stage, identities, dates, spans and claim IDs under Rule 4, including the D122 window case. Require a verified fragment to inherit the date of a donor with different inputs or no extraction, then apply normal paid reuse checks. Check an unchanged fragment beyond an anchor after an edit in both recovery orders. Delete the January 1 version after B inherits its date and before B's oversize replay. Verify that B's pieces keep January 1 and E2 resolves “tomorrow” to January 2. Append the 17,000-digit block to the fitting paragraph with a qualifying internal anchor. Require zero embedding calls for that intact paragraph given the same D80 input and full-delivery proof. Reject matching-hash vectors without that proof. |
 | Cross-layout citations | Hold the local slots and preceding eight Selection inputs and results fixed while a split child shifts ordinals. Exercise a secondary citation to the next same-owner chunk across the child and an admitted card support outside the old ordinal window. In both layout directions require the same claim IDs, exact remapped spans and zero Claimify calls for matching targets. |

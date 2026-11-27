@@ -1637,8 +1637,10 @@ holds normalized body text and vectors. Authority rows hold offsets, section
 links and D80 location facts. [Proposed D162](split_oversized_chunks_design.md)
 allows pieces from the same block to have distinct character spans. A
 same-version recovery piece inherits its verified parent's recorded
-`text_origin_at`. New D162 representations record pending passage enrollment
-at E0 readiness, before chunk rows exist. The selected embed delivery controls
+`text_origin_at`. Recut representations retain the first grid's date-matching
+metadata outside P1, indexed by document for erasure. New D162
+representations record pending passage enrollment at E0 readiness, before
+chunk rows exist. The selected embed delivery controls
 [first publication](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk).
 
 ```sql
