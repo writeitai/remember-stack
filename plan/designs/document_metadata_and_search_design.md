@@ -162,8 +162,6 @@ search_documents(query?, filters?, k) → documents
     and old names, and a partial or misspelled name still finds it;
   - **content** — the existing `chunk_search` (D94), grouped by document:
     each document scores by its best-ranked chunk in the judged version.
-    Under [proposed D162](split_oversized_chunks_design.md#publication), both
-    ranking and matching-edition checks use its published packing basis.
     A data file's profile, a card, and a document's top-level text are all
     ordinary chunks, so no second search index is needed.
 - With filters only, results are ordered newest first by the ingest time of
@@ -232,10 +230,6 @@ periodised lineages the returned claim evidence is the claim's **occurrence
 in the selected version** (its chunk, version and per-occurrence spans), not
 its origin — this refines the origin rule above for that case only
 ([effective time design §3.4](effective_time_and_section_references_design.md#34-claims-under-a-time-scope)).
-With a [proposed D162 claims publication](split_oversized_chunks_design.md#publication),
-scope checks and live evidence use selected or verdict-authorized claim
-occurrences in the same snapshot. The immutable origin remains accessible
-through history.
 
 **Worked example.** "Everything about Project X from emails from Alice":
 

@@ -80,9 +80,9 @@ undo a caller's archive; a changed version does (§2.3).
 
 ### 2.3 Undo and coming back
 
-- **`POST /documents/{doc_id}/unarchive` undoes the archive.** In one
-  transaction under the lineage row lock it clears `archived_at`, restores still-carried
-  testimony that archive ended (found through the archive reconciliation id), and
+- **`POST /documents/{doc_id}/unarchive` is the exact undo of the archive.** In one
+  transaction under the lineage row lock it clears `archived_at`, makes current again every
+  claim whose testimony that archive ended (found through the archive reconciliation id), and
   reopens every fact whose current closure came from an archive (any archive) when the
   returning testimony gives it support again, or when it was held open by a
   `support_withdrawn` review that still applies. Reopening is a new recorded event (`reopened_unarchive`, with its
@@ -103,17 +103,6 @@ undo a caller's archive; a changed version does (§2.3).
 - **A source archive is undone by the source.** When `archived_by = source` and the connector
   sees the file again, identical bytes act as unarchive and changed bytes as a changed version.
   Within one sync cycle a delete-and-recreate never archives at all (D135's cycle barrier).
-
-Under [proposed D162](split_oversized_chunks_design.md#publication), automatic
-restoration uses eligible occurrences in selected completed claims bases.
-If a living lineage loses its standing version during archive, removal
-selects the latest surviving settled version independently of the source
-head. Unarchive restores eligible testimony from that standing basis and
-the archive episode and resumes any unfinished facts obligation. A changed
-version restores its reused testimony when it publishes as eligible.
-Archive suspends the D54 `restore_support` authorization. Unarchive restores
-that exact occurrence and its contribution to reads, support and D140 periods
-if it remains eligible.
 
 ### 2.4 Surfaces
 
@@ -246,9 +235,6 @@ profile jobs, K compilation) revalidate the inputs they rendered from at publica
 hidden document. Whatever slips through is found by the next sweep. A sweep "finds something"
 only when it removes forgotten residue; an ordinary rebuild of a clean page or label is not
 residue.
-Under [proposed D162](split_oversized_chunks_design.md#search-projection-publication),
-forget invalidates affected passage and claim projection builds and checks
-every copy and private staging store for residue.
 
 The job never waits on another job and holds no lock while it waits: it reschedules itself with
 the work ledger's `not_before`. Its work item has no attempt cap: a failed sweep, or a crashed

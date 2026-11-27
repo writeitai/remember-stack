@@ -193,25 +193,17 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
    configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
    (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
-   generation. Under [proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry),
-   pack in grid order within the qualified item, token and byte limits.
+   generation. Qualified D162 batches also fit request token and byte caps.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
-4. **Poison split.** On a batch provider failure that is not a total outage, split the batch
-   (halve until size 1) and retry; a single-chunk poison is typed fail/skip for that chunk,
-   not a document dead-letter of already-finished siblings.
-   Under [proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry),
-   only an empty D80 body can skip. A nonempty singleton failure blocks
-   completion on fitting and split grids. Validate every mapped vector
-   before checkpointing a batch. Keep independently validated sibling
-   attestations.
-5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
-   transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
-   vector/hash/current attestation and stamps the chunk authority row. For a
-   pending D162 basis the write goes to private staging until cutover. There is
-   no cross-store gap. A crash after provider response but before commit may
-   repeat a billable call; the design does not claim exactly-once provider spend.
+4. **Batch errors.** The legacy path bisects non-outage failures to isolate a singleton for a typed skip.
+   [Proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry)
+   bisects deterministic rejections and requires a valid vector for each nonempty input.
+5. **Atomic PostgreSQL write.** The legacy path upserts `chunk_search` by
+   `(deployment_id, chunk_id)` and stamps the chunk authority in a batch transaction.
+   D162 checkpoints batches off-index and writes final projection rows with first E1
+   readiness. A crash after the provider response and before a checkpoint may repeat a billable call.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
    stamp matching the **configured** `(policy_generation, embedder_generation)`
    and input hash (or a closed typed skip: at minimum `empty_body`). Mixed or
@@ -260,11 +252,9 @@ infrastructure). The operational surface over it is thin and deterministic:
   no-ops. Bulk replay is the same operation scoped by version or error class; an explicit operator
   transition may reroute it through the backfill lane when large. `payload` remains handler input
   for inspection, never the source of route, schedule, or retry state.
-  [Proposed D162](split_oversized_chunks_design.md#3-selective-migration-and-replay)
-  gives legacy size failures a repair replay that starts at CHUNK and links
-  the replacement work to the preserved failed row. Split work claims require
-  the compatible worker generation. Writes and barriers verify the lease,
-  live lineage and named basis under the activation and lineage fences.
+  [Proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
+  links a CHUNK restart to a confirmed oversize embed dead letter for
+  a version before first E1 readiness.
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.

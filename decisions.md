@@ -1778,18 +1778,10 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
-> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
-> A repaired packing grid publishes its completed claim occurrences and currency
-> together. Eligible published carriage governs additions, withdrawals and automatic
-> restoration. A living lineage admits one successor to standing and settles
-> it in order. Removing standing selects the latest surviving settled version
-> independently of the source head. A restore verdict authorizes its exact
-> occurrence for reads and effective time. Counting still uses distinct lineages.
-
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
 > claims-mode component version that applies the same currency and counting logic but opens no
-> fact follow-ups. In the legacy configured path a reconcile computes `living` supersession only once
+> fact follow-ups. In a configured deployment a reconcile computes `living` supersession only once
 > the lineage's current version has complete claim occurrences, and a version's claims tail waits
 > for earlier fact work of its lineage. The currency and counting contract is unchanged.
 
@@ -1858,10 +1850,6 @@ coordinate is persisted on occurrence records and currency transitions.
 `evidence_lifecycle_design.md` §1/§3; `plan/designs/media_design.md` §6.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
-
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> The source head and standing testimony of a living lineage advance independently.
-> Version creation records whether first claims are owed in version order.
 
 > **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Lineages remain stable source
 > identities and P3 serves the completed current version. A P3 folder path may
@@ -2046,13 +2034,11 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
-> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
-> The engine's anchored packer is the fixed choice in place of the semchunk
-> requirement below. On adoption, the whole-block and oversize edge rules
-> give way to lossless cuts at the hard embedding-input ceiling. The
-> `chunk_content_hash = hash(ordered block hashes)` clause applies to whole
-> candidates. Fragments use a distinct hash of exact source bytes. Section
-> ownership, anchors, non-overlap and multi-grain retrieval continue to apply.
+> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).** The anchored engine packer
+> replaces semchunk. The hard E1 size ceiling supersedes the whole-block
+> and oversized-unit rules below. The ordered block-hash identity applies
+> to complete runs. Partial pieces hash exact source bytes. Section
+> ownership, anchor restarts and non-overlap continue to apply.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2198,6 +2184,9 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
 
+> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).** The anchored packer replaces
+> semchunk in the fixed engine choices below.
+
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
 > this entry, including prerelease upgrade policy and the RC-only compiler
@@ -2221,10 +2210,6 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
 > (since the D98 RC 1 amendment, a relational one-hop join instead of SQL/PGQ).
-
-> **Chunking clarification in [D162](#d162-split-oversized-chunks-before-embedding).**
-> The anchored, section-bounded engine packer is the fixed choice listed in
-> the requirements. It is part of the engine identity.
 
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
@@ -4119,10 +4104,6 @@ for an unused benchmark harness.
 
 ## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
 
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Repair scopes fan-out, staging and entity-unit completion to the packing basis.
-> Grounding opens `embed_claim` before the D143 facts boundary.
-
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The empty path opens `adjudicate_supersession` and `embed_claim` only when the facts layer is
 > entered; otherwise it opens the claims tail (`embed_claim`, claims-only `reconcile`).
@@ -4307,11 +4288,6 @@ readiness.
 projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
-
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Claim text and vectors also enter a private search projection so claim
-> cutovers can publish both indexes with the completed basis and currency.
-> Passage and claim projections keep a private copy for online cutover.
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -6252,12 +6228,6 @@ absence-based closures indefinitely.
 
 ## D118. Immutable claims, mutable facts, one world-time window
 
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Repair qualifies admission, completion and membership retirement by packing
-> basis. Loss of the last eligible membership fences an unapplied application's
-> sequence and attempt in the lineage transaction. The entity worker releases
-> the sequence. Completed applications keep their receipts.
-
 > Processing amendments D120–D123 clarify assertion identity, project concise
 > model inputs and add source-backed context nomination. D118's one world window,
 > ordered application and validation/forget authority remain in force.
@@ -6668,11 +6638,6 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 [analysis](plan/analysis/clean_temporal_facts_and_retrieval_flow_analysis.md).
 
 ## D130. Adjacent chunks retrieval primitive (`adjacent_chunks`)
-
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> A retired handle used by a published claim pages through its covering
-> pieces in the same reading, with the window on the two outer edges.
-> Each call keeps the original size bound and discloses continuation.
 
 **Status:** accepted (superseded in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-21.
 
@@ -7274,12 +7239,8 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 ## D140. Declared effective periods, section keys, and version-aware references
 
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> A new fragment can inherit the date of a verified unchanged span in an
-> earlier original grid. Same-version repair copies the parent occurrence's
-> date. Fact periods use selected and verdict-authorized occurrences. A
-> cutover or verdict that changes an edition's carriage queues the existing
-> fact-window review.
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).** An exact, uniquely verified
+> fragment and context can inherit the earlier source span's D140 date.
 
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
@@ -7416,10 +7377,6 @@ only through D118 adjudication.
 
 
 ## D142. Ranked search nominates from the index and confirms in one snapshot
-
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Cutovers publish private passage and claim projections with verified clean
-> ranking populations. Each operation pins its selected indexes through hydration.
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -7646,13 +7603,6 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 
 
 ## D143. Processing layers can be switched off per deployment and per request
-
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Version creation records ordered claims obligations when claims are
-> enabled. Living backfill after claims-off ingest remains head-only.
-> Gaps and completion follow the packing basis. Search-ready claims publish
-> in settlement order, opening facts on the oldest eligible basis first.
-> Re-enable also admits historical claims repairs.
 
 > **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
 > sources-only document tree with no entities, fact metadata or K links, identical
@@ -8698,11 +8648,6 @@ every failure; a central code registry.
 
 ## D159. Archive and forget replace delete; forget hides at once and sweeps until clean
 
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Archive recovery uses eligible carriage on selected completed claims bases.
-> If standing was removed, recover the surviving settled basis independently
-> of the source head.
-
 **Decision (2026-11-24, owner).** A caller has exactly two ways to remove a document's
 contribution, on the API, SDK, CLI and MCP; the public delete is removed outright (pre-launch,
 no deprecation).
@@ -8810,29 +8755,17 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27.
 
-**Decision.** E1 keeps the anchored whole-block pack for fitting inputs.
-When the full prepared input exceeds a qualified endpoint ceiling, the
-chunker prefers fitting whole-block runs and otherwise cuts at deterministic
-structural or scalar boundaries. Labelled eligibility changes require cuts.
-Each piece keeps exact source coordinates. Every nonempty input needs a
-verified vector. Paid D162 ingestion requires a qualified effective binding.
-Batches fit the qualified request limits and return a verified input mapping.
+Check the full D80 input with a pinned tokenizer and qualified provider
+limits. Split oversized candidates losslessly at structural or scalar
+boundaries with exact provenance. Split grids add a packing and delivery
+generation. Fitting grids retain legacy identities. Reuse verified inputs.
 
-**Reuse boundary.** Only representations with an offending chunk receive
-the split packing and delivery generation. Fitting grids retain IDs,
-hashes and qualifying paid products. A fragment covering complete blocks
-can reuse an attested whole-block vector for the same D80 input in either
-direction. Repair replaces a failed pending basis when the qualified
-envelope changes and reuses equivalent committed products.
-
-**Publication.** Use clean private index builds and insert-only catch-up.
-First publication can append to a qualified warm copy. Register ordered
-claims obligations at ingest, stage later claims privately, and publish
-both claim channels in settlement order. Removing standing falls back to
-the latest surviving settled version. A restore verdict authorizes its
-exact reviewed evidence for reads and fact periods. LoCoMo and BEAM keep
-their pinned readers, schema and query binding until the candidate passes
-frozen input, grid and tool-response parity.
+Apply this at CHUNK for new versions and explicit recovery of oversize
+`embed_chunk` dead letters before first E1 readiness. READY grids retain
+their cuts and handles. Confirmed per-input rejection is terminal, and
+capacity retries stay bounded. LoCoMo and BEAM require frozen grid and
+public tool-response parity. The exact LoCoMo binding must qualify at
+22,528 Qwen tokens or higher.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

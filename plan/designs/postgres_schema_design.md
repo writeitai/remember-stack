@@ -1632,28 +1632,14 @@ CREATE INDEX ix_crossrefs_pending  ON document_crossrefs (deployment_id, to_sour
 
 ## 7. E1 — chunks
 
-Retrieval-sized units that preserve context and trace back to position.
-`chunk_search` serves normalized body text and embeddings. Chunk authority
-rows store source offsets, section links and D80 location facts.
-
-Under [proposed D162](split_oversized_chunks_design.md#3-selective-migration-and-replay),
-a representation can stage a replacement grid and select one published generation.
-Within-block slices can share E0 block ordinals and have distinct character
-spans. A cutover commits its private passage or claim search selector with
-the matching basis pointer. Pending and reusable superseded vectors live
-in private storage. Running readers may finish on their pinned projection.
-Claim occurrences follow the selected completed claims basis, including
-across a sources-only swap. A D54 verdict can authorize its exact reviewed
-occurrence. Living lineages record standing independently of the source
-head and publish current carriage in settlement order. D143 first-claims
-gaps record whether claims were enabled at version creation. Gaps and
-D90/D118 staging and unit memberships record their basis once assigned.
-An unapplied application records the eligibility generation of its stream
-position and attempts.
+Section-bounded passages trace back to exact source offsets. `chunk_search`
+holds normalized body text and vectors. Authority rows hold offsets, section
+links and D80 location facts. [Proposed D162](split_oversized_chunks_design.md)
+allows pieces from the same block to have distinct character spans.
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
--- chunks — section-bounded passages (D58). Body = markdown_uri sliced
+-- chunks — section-bounded passages. Body = markdown_uri sliced
 -- by [char_start,char_end) (D37). P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
@@ -1667,13 +1653,13 @@ CREATE TABLE chunks (
   ordinal         integer NOT NULL,            -- position within the document
   block_start     integer NOT NULL,            -- first source block ordinal (D57/D58)
   block_end       integer NOT NULL,            -- last block ordinal (inclusive)
-  chunk_content_hash text NOT NULL,            -- hash of ordered block hashes or exact fragment bytes (proposed D162)
-  extraction_input_hash text NOT NULL,         -- own and neighbour content hashes, stable header facts, relative converter origins and extractor/structurer generations (D56)
+  chunk_content_hash text NOT NULL,            -- ordered block hashes (D58) or tagged exact piece bytes (proposed D162)
+  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own and neighbor content identities + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, the chunk's text_origin_at (D140 — not the version's own date), language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
-  token_count     integer,                     -- whitespace-token packing size (D58)
-  text_origin_at  timestamptz,                 -- D140: frozen text origin, used in the E2 header, reuse key and new claims' asserted_at
-  reuse_identity_hash text,                    -- D140: date-free identity for the text-origin lookup
+  token_count     integer,                     -- token length (sizing/budget)
+  text_origin_at  timestamptz,                 -- D140: recorded once at creation: the text origin time of the earliest eligible D140 match in a non-deleted version of the lineage, else this version's source_modified_at or published_at; the E2 header date, the reuse-key date, and fresh claims' asserted_at
+  reuse_identity_hash text,                    -- D140: date-free identity of content, relative origins, undated facts and generations for the text-origin lookup
   extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
@@ -1684,14 +1670,14 @@ CREATE TABLE chunks (
   embedding_input_policy_version text,         -- LOGICAL FK → pipeline_component_versions (embedding_input_policy)
   context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
   prefixer_version text,                       -- LEGACY context_prefixer component version
-  chunker_version text,                        -- anchored packing generation and parameter stamp
+  chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (packing rules and parameters)
   embedding_version text,                      -- configured embedder/model attestation for the current chunk vector
   policy_generation text,                      -- configured embedding_input_policy_version
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'Section-bounded E1 passage occurrences. Normalized search text and the serving vector live in private chunk_search (D94). Passage vector reuse matches content hash, full prepared-input hash, policy and embedder generation (D80). Monthly-partitioned, logical FKs (D23).';
+  'Section-bounded E1 passages, one row per representation and ordinal in the ready grid. Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup
@@ -3040,7 +3026,7 @@ Labs."*
 | D119 coherent multi-span claims | `chunk_claims.evidence_spans` — complete occurrence body ranges; `claims.char_start`/`char_end` remain origin only |
 | D57 block substrate + blockizer; sections on the grid | `document_representations.blocks_uri` + `blockizer_version`; `document_sections.block_start/end`; `pipeline_component = 'blockizer'`; blocks live in `blocks.json` (sidecar), never as rows |
 | D65 media: immutable representations + occurrence provenance | `document_representations` (immutable conversion outputs; route + component graph + output hashes; representation-addressed artifact paths) + `document_versions.current_representation_id` (swap-on-completion); `representation_id` on `document_sections`/`chunks` (the basis coordinate); `chunk_claims.derivation_kind`/`evidence_mode`/`source_locators` (occurrence-grain disclosure + locators, media_design §4–§6) |
-| D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` and `chunk_content_hash` identify whole candidates by ordered block hashes. Proposed D162 fragments hash exact slice bytes. The role filter joins section authority. Workers enforce non-overlap. |
+| D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` and `chunk_content_hash` (ordered block hashes or exact fragment bytes under proposed D162). The role filter joins section authority. Workers enforce non-overlap. |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D145 claim leases and the reaper | `processing_state.lease_until` + running-requires-lease CHECK; `ix_procstate_running_lease`; attempt-conditional renew/complete/fail |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |

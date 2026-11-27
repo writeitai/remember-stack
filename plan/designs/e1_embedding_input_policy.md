@@ -259,16 +259,14 @@ A prior vector may be reused without a provider call only when its
 `embedding_text_hash`, embedder model/dimension, and all policy-relevant
 attestation match exactly. The worker may then restamp the same row inside an
 explicit unready maintenance operation; it must never claim that a vector was
-produced from different text.
-[Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
-also requires evidence the original binding processed the complete input.
-A split piece covering a complete block run can match its whole-block
-counterpart by verified block hashes and the same rendered input hash.
+produced from different text. [Proposed D162](split_oversized_chunks_design.md#2-coordinates-and-reuse)
+also requires verified full delivery for the original call and matches
+complete block runs exposed by a split on their original content key.
 
 | Change | Action |
 |---|---|
 | Body bytes change | Re-render; new hash ⇒ provider embed under the configured current state |
-| Proposed D162 sizing envelope changes | Audit selected grids. Repack only over-ceiling inputs. Replay supersedes a pending basis pinned to a different envelope. Qualifying vectors remain reusable under the existing D80 generation. |
+| D162 envelope changes | Qualify the new binding for new CHUNK work and unpublished recovery. READY grids keep their cuts. |
 | Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
 | Policy version changes | Mark semantic channel unready; re-render all in-scope chunks; reuse an exactly attested vector or re-embed; verify and publish |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
@@ -330,8 +328,8 @@ justify a narrow index; it does not pre-authorize denormalized search columns.
 ### 6.1 Stages (logical)
 
 ```text
-pack chunks
-  → prepare location facts + render embedding text   # pure, durable stamps on chunk
+pack chunks + render D80 input for the D162 size check
+  → prepare final input from the same location facts
   → embed in bounded batches                         # provider boundary, durable
   → document/representation readiness barrier
   → E2 extract …
@@ -344,16 +342,11 @@ pack chunks
   optional bounded header, `embedding_text_hash`, policy version, location
   elements for E2). Does **not** require one `processing_state` row per pure function.
 - **Embed:** durable unit is **chunk embed work** coalesced into **provider batches**
-  (size from embedder capabilities; starting hypothesis 64–128 texts). Under
-  proposed D162, batches must also fit the binding's qualified request-wide
-  limits. Normative
+  (size from embedder capabilities; starting hypothesis 64–128 texts). Normative
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
 - **Document readiness:** all in-scope chunks have prepare stamps and successful
-  embed matching the configured current state (or a permitted skip).
-  Under [proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry),
-  fitting and split grids require a valid vector for every nonempty D80 input.
-  Only a D80 empty body is eligible for a skip.
+  embed matching the configured current state (or typed skips).
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.

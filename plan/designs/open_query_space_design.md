@@ -480,7 +480,7 @@ labeled orientation text, never evidence.
 | `document_effective_periods_live` | one currently known declared effective period (D140); `(deployment_id, period_id)` | The current-belief projection's periodised rows: lineage, version, `effective_from`, derived `effective_until` (declared end, else the next declared start in the lineage), `until_declared`; live lineages and non-deleted versions of any processing status |
 | `claims_live` | one current-testimony claim; `(deployment_id, claim_id)` | Claim/source text and anchors, attribution, asserted clock, immutable D41 claim-validity fields, audit state, source handle |
 | `claims_visible_history` | one historically visible claim with surviving lineage; `(deployment_id, claim_id)` | Same claim fields plus `is_current_testimony`; name and comment forbid current-fact interpretation |
-| `claim_occurrences_live` | one current claim occurrence; `(deployment_id, claim_id, chunk_id, derivation_kind)` | Explicit claim-to-chunk/version/representation/section association and source locators. Under [proposed D162](split_oversized_chunks_design.md#publication), membership comes from the selected claims basis and exact occurrences authorized by D54 verdicts. |
+| `claim_occurrences_live` | one current claim occurrence; `(deployment_id, claim_id, chunk_id, derivation_kind)` | Explicit claim-to-chunk/version/representation/section association and source locators |
 | `testimony_currency_events_visible` | one visible D54 transition; `(deployment_id, event_id)` | Claim/lineage/basis/reconciliation coordinates, transition direction/reason and occurrence time; forgotten lineages absent |
 | `entities_current` | one externally visible survivor entity; `(deployment_id, entity_id)` | Type/name/profile orientation and live mention summary; degree is computed on demand from live relation adjacency and is not a column; derived entities without surviving provenance absent |
 | `entity_aliases_current` | one current alias-to-survivor mapping; `(deployment_id, alias_id)` | Source and survivor IDs, normalized alias, provenance/confidence and clocks |
@@ -808,12 +808,12 @@ reports the same current search-configuration attestation and freshness.
 `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` share one body
 path. It obtains bytes only after PG confirms the current ready
 document/version/representation/section coordinate, then verifies the
-reproducible embedding-text hash and generated-prefix separation. Under
-[proposed D162](split_oversized_chunks_design.md#publication), confirmation
-and hydration resolve the published packing basis in the ranked-read snapshot.
-The stored content hash identifies ordered block hashes or exact fragment
-bytes. Body verification uses the rendered-input hash.
-The path returns source body and D80 deterministic location header in separate columns;
+reproducible embedding-text hash and generated-prefix separation. The stored
+source-content hash remains a returned coordinate but is not claimed as
+body-byte verification in v1: it is composed from ordered block hashes whose
+inputs are not present in the P1 body row. A future store contract may add
+those reproducible inputs and then strengthen verification without weakening
+this rule. The path returns source body and D80 deterministic location header in separate columns;
 the header is never asserted evidence. `fetch_chunk_bodies` is this exact path
 minus nomination: `input_ordinal` records first input position, duplicate IDs
 collapse to that first position, and more than 50 IDs fails

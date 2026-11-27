@@ -35,13 +35,13 @@ P1 SHALL be implemented in PostgreSQL 18 using:
 - reciprocal-rank fusion (RRF) over independently ranked semantic and lexical
   candidates.
 
-P1 remains a logical, rebuildable retrieval plane.
+P1 remains a logical, rebuildable retrieval plane. It is not a family of
+duplicated search tables:
 
-- chunks use a private `chunk_search` projection because exact chunk bodies remain
+- chunks use one private `chunk_search` table because exact chunk bodies remain
   slices of object-store `document.md`, outside PostgreSQL authority rows;
 - claims, relations, observations, and entities keep their natural text in
-  their existing PostgreSQL rows and store one current derived embedding there.
-  Proposed D162 projects claim text and embeddings for isolated cutover (§7);
+  their existing PostgreSQL rows and store one current derived embedding there;
 - a future media representation is searchable only on its accepted natural
   segment/representation row; this decision does not create `p1_media`;
 - eligibility, entity membership, temporal state, and lineage are not copied
@@ -85,7 +85,7 @@ embedding/reuse, graph correctness or readiness semantics.
 | Target | Canonical searchable text | Derived semantic state | Lexical state |
 | --- | --- | --- | --- |
 | Chunk | `chunk_search.search_text` (derived from object-store source slice) | `chunk_search.embedding` | BM25 on `chunk_search.search_text` |
-| Claim | existing `claims.claim_text` | embedding columns on `claims`, projected for D162 ranking | BM25 on claim text in the serving relation |
+| Claim | existing `claims.claim_text` | embedding columns on `claims` | BM25 on `claims.claim_text` |
 | Relation | existing `relations.fact_label` | embedding columns on `relations` | not admitted; semantic only |
 | Observation | existing `observations.statement` | embedding columns on `observations` | not admitted; semantic only |
 | Entity | existing canonical profile/description row | embedding columns on that row | not admitted; semantic only |
@@ -107,11 +107,9 @@ authority.
 `claims` SHALL be non-partitioned. Its current-testimony semantic and BM25
 channels span ingestion months, while pg_textsearch partitioned indexes use
 partition-local BM25 statistics. One claims table permits global partial HNSW
-and BM25 indexes over `is_current_testimony = true` in the legacy path. Under
-[proposed D162](split_oversized_chunks_design.md#search-projection-publication),
-the active claim projection holds the single ranking population. It copies
-only P1's text, vector and attestation by claim ID. Claim authority remains
-on its natural row.
+and BM25 indexes over `is_current_testimony = true` and avoids inventing a
+duplicated `claim_search` sidecar. This narrowly amends D23; other partitioned
+ledgers and evidence joins are unchanged.
 
 Chunk and claim BM25 use `text_config='simple'` as the single multilingual,
 language-neutral baseline. Language-specific index families are not added by
@@ -119,7 +117,8 @@ this design.
 
 ## 5. `chunk_search` contract
 
-`chunk_search` has the following logical shape:
+`chunk_search` is the only new P1 sidecar required by this design. Its logical
+shape is:
 
 ```sql
 CREATE TABLE chunk_search (
@@ -213,17 +212,6 @@ For chunks, `search_text` may be written before the external vector returns so
 the lexical channel can become ready independently. The row is semantic-ready
 only when its non-null vector attestation matches the deployment's active
 embedding configuration.
-
-Under [proposed D162](split_oversized_chunks_design.md#search-projection-publication),
-stage passage bodies and claim vectors away from serving indexes. Claim
-embedding follows grounding and finishes before claims publication. Build
-replacements online and catch up committed writes. Verify a clean
-physical population from the committed rows and an insert-only tail
-before switching. Rebuild outside the switch fence after an indexed-row
-conflict. First publication appends to a qualified warm copy. Switch each
-ready projection with its basis and authority changes in one transaction.
-Readers pin the selected relations and bases through ranking, confirmation
-and hydration, including SQL ranking.
 
 Projection lag may reduce recall; it must never expose an ineligible record.
 Archive, invalidation, supersession, and forget are enforced by the
@@ -410,9 +398,7 @@ the index is used and eligibility stays exact. For each target and channel:
    (`DECLARE … NO SCROLL CURSOR`) over a statement that reads only the search
    table, the deployment predicate, the attestation predicates
    (model/policy/non-null vector), any predicate naming a partial index
-   (`is_current_testimony` for legacy claims), and the channel's ordering
-   expression. D162 resolves the pinned passage or claim relation before
-   planning:
+   (`is_current_testimony` for claims), and the channel's ordering expression:
 
    ```sql
    SELECT id, <score> FROM <search table>
@@ -702,9 +688,9 @@ conjunction is pinned against the migrated independent reference.
 
 ## 9. Index and planner contract
 
-HNSW and BM25 indexes use ordinary PostgreSQL DML, autovacuum and standard
-PostgreSQL telemetry. Under proposed D162, cutover and spare-copy maintenance
-follow §7. Plan attestation uses the selected relation's expected indexes.
+HNSW and BM25 indexes are maintained by ordinary PostgreSQL DML. Autovacuum and
+standard PostgreSQL telemetry own routine cleanup; there is no P1 compaction
+ticker, fragment ledger, or application-managed index tail.
 
 Each indexed vector column has one fixed dimension and compatible distance
 operator. Authority predicates in confirmation need conventional indexes on

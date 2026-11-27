@@ -46,9 +46,8 @@ truth, and rebuild semantics. L-numbers from earlier drafts survive as shorthand
   edited document must cost **proportional to the edit, not the document**.
 - **E1 — Chunks** *(formerly L1)*: retrieval-sized units that preserve their surrounding
   context and trace back to the exact source document and position. Under
-  [proposed D162](../designs/split_oversized_chunks_design.md), the full prepared
-  passage must fit the embedding binding's qualified limit. Oversized passages
-  are split losslessly at deterministic boundaries.
+  [proposed D162](../designs/split_oversized_chunks_design.md), CHUNK fits the full
+  prepared input to the qualified limit using lossless, deterministic splits.
 - **E2 — Claims** *(formerly L2)*: atomic, **verifiable** natural-language assertions,
   temporally classified; immutable and append-only; provenance always attached; entity
   mentions resolved to canonical entities. Non-verifiable material (unattributed opinion,

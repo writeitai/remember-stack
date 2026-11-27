@@ -342,12 +342,7 @@ and every handle it carries opens that version:
   non-deleted ready version whose representation is that version's current representation (the
   D65 rule), and never mix versions. `memory_v1.chunks_live` keeps its meaning (served-version
   chunks); the new `memory_v1.chunks_all_versions_live` exposes the current-representation
-  chunks of every non-deleted ready version for scoped reads. Under
-  [proposed D162](split_oversized_chunks_design.md#publication), resolve the
-  published packing basis of that representation through hydration. Reference
-  links use that same basis. A retired chunk ID from a readable claim
-  can [page its covering pieces](adjacent_chunks_retrieval_design.md) in
-  that same version and representation.
+  chunks of every non-deleted ready version for scoped reads.
 - **Source handles** use `source_open(version_id, representation_id)` (D115 already takes a
   version). Under D155 a **P3 path** is the movable, applied corpus folder for
   that selected version/representation. Return it only if the selection is served
@@ -377,11 +372,6 @@ occurrences, each with its own `evidence_spans` and locators). Under a scope:
 
 This refines D134 §4's "the returned evidence is the claim's origin" for scoped reads of
 periodised lineages; unscoped reads and undeclared lineages keep the origin rule.
-
-With a [proposed D162 claims publication](split_oversized_chunks_design.md#publication),
-scope checks and hydration use selected or verdict-authorized claim
-occurrences in one snapshot. The immutable origin remains available through
-history.
 
 ### 3.5 `search_documents`
 
@@ -541,12 +531,14 @@ header facts), the E2 header, and the `asserted_at` of claims freshly extracted 
 The version's own date remains on the version for everything else.
 
 **Reuse identity.** Each chunk also stores `reuse_identity_hash` — the date-free identity:
-own and neighbour content hashes, the header facts other than dates (title, file name,
+own block hashes, neighbour block hashes, the header facts other than dates (title, file name,
 source kind, language, the extraction-eligibility policy marker), `blockizer_version`,
 `structurer_version`, `extractor_version`, and canonical converter-origin hashes
 of the target and consumed same-section neighbors. Coordinates are relative to
 each window; absolute document offsets are excluded. Indexed on `(deployment_id, doc_id,
-reuse_identity_hash)`.
+reuse_identity_hash)`. [Proposed D162](split_oversized_chunks_design.md#2-coordinates-and-reuse)
+also accepts exact matches to uniquely verified fragment and context
+slices in an earlier version. The date cutoff and recorded origin still apply.
 
 **Rule, at chunk creation.** When E1 creates the chunks of a new version of lineage `L`:
 
@@ -560,12 +552,6 @@ reuse_identity_hash)`.
    `text_origin_at` (ties broken by `version_no`, then `ordinal`), and the chunk reuses that
    match's extraction; otherwise `text_origin_at = d` (possibly `NULL`, today's "date
    unknown") and the chunk is extracted or reused under today's key rules.
-
-[Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
-also admits equivalent consumed windows in either direction of a split/legacy
-transition. Match a new fragment and its context by exact bytes and relative
-origins inside the earlier original grid even when the parent was edited.
-Same-version repair copies the predecessor's committed date, including unknown.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the
@@ -982,12 +968,6 @@ text is in force) and when they are not (an event the text merely reports keeps 
 date); a later version stating a different value ends the earlier fact at that version's
 in-force start, never at publication time.
 
-Under [proposed D162](split_oversized_chunks_design.md#publication), use the
-selected and verdict-authorized claim occurrences for the interval union,
-fact period basis, watched digest and final validation. A restoration that
-changes an edition's carriage queues the same window review as a claims
-cutover.
-
 **The first fact is adjudicated too.** Ordinary adjudication skips the model when an entity
 has no candidate fact (the D118 novelty gate records a new, undated fact). That shortcut is
 kept only for attempts with no periodised claim: an attempt whose claims carry
@@ -1038,10 +1018,11 @@ application would ever reach the adjudicator again. A **window review** closes t
      fence below makes the writer's fan-out wait for the certifying transaction to commit, so
      the fan-out sees the stale basis and reviews the fact.
 
-  Period inputs can change during a decision. Declarations, clears and deletions update
-  the scope projection. Under D162, claims cutovers and verdicts can also
-  change the versions that carry a claim. Freezing periods
-  for the length of a decision would need one of two things:
+  Period writers take no lock. This is deliberate. In-force intervals change not only through
+  declarations, clears and deletions, which all pass through the scope projection's deferred
+  refresh, but also whenever extraction writes `chunk_claims` for a version, since a version's
+  representation becomes current before it is extracted. Freezing periods for the length of
+  a decision would need one of two things:
   - an exclusive per-deployment lock in every extraction write of a periodised deployment,
     which would serialise extraction deployment-wide; or
   - a shared lock per lineage for every lineage a decision's evidence touches, which is
@@ -1093,16 +1074,14 @@ application would ever reach the adjudicator again. A **window review** closes t
   processing completes (the reconcile stage), not at ingest: until then its reused claims have
   no occurrences in it, so the predecessor's facts would look closed and be reviewed twice. A
   version whose processing never completes (no route, dead letter) is reviewed when it is
-  reprocessed or deleted. Under D162, a cutover or verdict that changes an
-  edition's claim membership queues the review in the transaction, even
-  when currency and support counts stay the same. The
-  `review_fact_windows` request id identifies the change for idempotent replay.
-  While a deployment's facts layer is switched off (D143), these jobs are queued but
+  reprocessed or deleted. A request is a `review_fact_windows` job targeting a request id that
+  is fresh per change, or derived from the reconcile run or deletion episode so a retry does not
+  duplicate it. While a deployment's facts layer is switched off (D143), these jobs are queued but
   not claimed; they run when facts are switched back on
   ([processing layers design §4.4](processing_layers_design.md#44-switching-off-drains-it-never-holds)).
-- **Fan-out.** The lineage job walks live facts with evidence in any version of the lineage,
-  including evidence attached through a deleted version or a retired claims basis. Each page
-  is one bounded transaction (500 facts, a starting value to tune). A full page
+- **Fan-out.** The lineage job walks the live facts with evidence in any version of the
+  lineage (deleted versions included, since deleting one changes the intervals) in pages of a
+  bounded size (500, a starting value to tune), each page one bounded transaction; a full page
   queues a continuation job carrying its cursor. It queues one review job per fact whose
   current basis differs from the stored one, skipping a fact left with neither periodised nor
   live evidence (its only source was deleted; the lifecycle cascade settled it). It makes no

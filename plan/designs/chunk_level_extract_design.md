@@ -118,11 +118,6 @@ handle(work):
 
 ### 5.3 Barrier (atomic with work completion)
 
-Under [proposed D162](split_oversized_chunks_design.md#publication), this
-barrier completes grounding and opens claim embedding on the named pending
-basis. Search-ready publication takes the lineage fence, selects the basis
-and enters the D143 facts boundary.
-
 The barrier **must not** run only inside the handler before the work row is
 marked succeeded (two last chunks can each see the other still `running` and
 both skip normalize; or an output-only check can fire while a sibling later

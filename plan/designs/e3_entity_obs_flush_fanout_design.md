@@ -29,11 +29,6 @@ claim normalize grain
 expected-set insert — with a **durable version↔unit membership** because entity
 ids are not version-scoped
 
-Under [proposed D162](split_oversized_chunks_design.md#publication),
-the fact tail's version scope also includes its packing basis. Its fan-out
-record, staging, units and completion use that basis, including the empty path.
-Grounding opens `embed_claim` before the facts boundary.
-
 ## 1. Decision
 
 1. **Primary work unit** for stage `adjudicate_observations` under the entity

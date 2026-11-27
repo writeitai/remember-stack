@@ -67,10 +67,9 @@ worker environment and approved provider order. CI compares every required compo
 and effective model binding with the composed current engine; a worker generation
 change cannot leave a stale executable benchmark pin unnoticed.
 
-The [proposed D162 gate](split_oversized_chunks_design.md#benchmark-admission)
-keeps the retained store on its pinned reader, schema and effective query
-embedding binding until the exact candidate passes parity on copies.
-Changed query embedding paths replay provider replies through public tools.
+The [proposed D162 gate](split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks)
+requires 22,528 Qwen tokens or higher on the exact ingestion binding.
+Candidate readers, schemas and query embedding paths require public tool parity.
 
 ### 2.1 Model roles and independent judging
 

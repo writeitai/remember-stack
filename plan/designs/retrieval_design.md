@@ -443,8 +443,6 @@ Three rules that are contract, not garnish:
   500-row ceiling and end with a null cursor and a truncation reason if the
   ceiling prevents further traversal. A repeatable-read transaction protects
   each request; no retained snapshot or unbounded expansion is required.
-  [Proposed D162 adjacency](adjacent_chunks_retrieval_design.md) uses
-  `next_cursor` to page a retained claim handle's covering pieces.
 - **The K freshness block is the reader-facing flag surface** (resolves `k_layers_design.md`
   §11 spike 9): any answer that consumed a K page carries its `compiled_at`, staleness, and
   open-flag count, so a reader can check status before planning against a page
@@ -624,9 +622,7 @@ curriculum, explicitly:
   its supplied center. Continue from the first/last returned `chunk_id` only on the
   side where context is still required. Fewer than `window` neighbors prove that
   side's boundary only when the center is present and there are no drops or
-  truncation. Otherwise missing rows do not establish an edge. For a retired
-  handle under proposed D162, follow `next_cursor` with the original handle
-  and window for more of its covering pieces and flanks. Stop at a known edge,
+  truncation. Otherwise missing rows do not establish an edge. Stop at a known edge,
   once the question is supported, or at the existing budget. Do not repeat calls or
   call top-k results exhaustive. General consumers retain honest negatives; benchmark
   best-answer policy does not license inventing values. Skill revision `4.0.1`.

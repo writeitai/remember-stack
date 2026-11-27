@@ -161,11 +161,6 @@ document_representations(  -- IMMUTABLE conversion outputs (D65): one row per (v
   status, created_at)                                    -- never updated after ready; never overwritten
 ```
 
-Under [proposed D162](split_oversized_chunks_design.md#dispatch-and-writes),
-E0 records the first claims obligation when it creates the version under
-the layer and lineage fences. The source head can advance independently
-of standing testimony.
-
 PageIndex, summaries, and placement are **LLM-derived, non-deterministic** E0 state, so every
 producing step is **versioned** (`structurer_*`, `placement_version`) and its output persisted. Like
 every non-deterministic stage (D7), structure is **replayed from stored state** on rebuild and only
@@ -283,7 +278,7 @@ versions of one lineage — a route change is a deliberate version bump.
 reasoning-based retrieval system; **for us it is structure, not a retrieval engine** — we keep the
 chunk + embed + graph hybrid (D8/D9). We use its **tree + section roles + spans** to:
 
-- give E1 **section-aware chunk boundaries** so each passage has a single deepest section owner,
+- give E1 **section-aware chunk boundaries** (never split mid-section; one chunk = one topic),
 - give E2 the **section path/role signal** it consumes (D25/D31 — Selection drops
   references/boilerplate at proposition grain),
 - carry **per-section summaries** (kept — see below), and
