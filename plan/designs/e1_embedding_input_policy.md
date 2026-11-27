@@ -331,7 +331,7 @@ justify a narrow index; it does not pre-authorize denormalized search columns.
 pack chunks + check the full D80 input under D162
   → prepare location facts + render embedding text   # pure, durable stamps on chunk
   → embed in bounded batches                         # provider boundary, durable
-  → document/representation readiness barrier
+  → readiness barrier for that representation and packing generation
   → E2 extract …
 ```
 
@@ -348,10 +348,12 @@ pack chunks + check the full D80 input under D162
   (size from embedder capabilities; starting hypothesis 64–128 texts). Normative
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
-- **Document readiness:** all nonblank chunks have prepare stamps and successful
-  embed matching the configured current state. The existing `empty_body` case
-  requires no vector. [D162 provider errors](split_oversized_chunks_design.md#4-rejection-and-retry)
-  keep a rejected nonblank input terminally failed.
+- **Readiness** requires the exact grid's successful embed work. Each nonblank
+  chunk in that grid has prepare and embed stamps matching the configured policy
+  and model. An `empty_body` skip satisfies the per-chunk check. A confirmed rejection
+  of a nonblank input fails the stage.
+  [D162 delivery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished) ·
+  [D162 provider errors](split_oversized_chunks_design.md#4-rejection-and-retry).
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.

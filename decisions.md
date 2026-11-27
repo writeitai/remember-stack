@@ -7251,8 +7251,9 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 > **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
 > New split pieces use their version date or unknown. Private CHUNK recovery
-> retains each intact row's recorded date and passes the parent's date to each
-> replacement piece.
+> retains each intact row's effective date and passes the parent's date to each
+> replacement piece. For unstamped pre-D140 rows this is the version's source
+> modification date or publication date, when known.
 
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
@@ -8778,10 +8779,14 @@ piece gets a generation-specific ID, a fresh vector and a fresh E2 completion.
 Ineligible pieces have stable Selection keys for their Claimify consumers.
 Intact chunks keep their Selection key, date-free key and date when the
 consumed E2 inputs match across a split. Claimify still checks D122's producers.
+Each additional packing grid gets its own delivery key. Existing keys stay
+with their grids. Embed dispatch, the claims handoff and readiness use the
+same representation and full packing generation.
 E1-complete and exposed grids keep their cuts. CHUNK recovers confirmed size
 dead letters for the failed attempt's exact incomplete grid with proven reader
-isolation. Recovery carries recorded dates. Confirmed input rejection is terminal
-and capacity retries remain bounded.
+isolation. Recovery carries the effective date, using E2's version-date fallback
+for unstamped pre-D140 rows. Confirmed input rejection is terminal and capacity
+retries remain bounded.
 
 Require offline full-row equality on frozen LoCoMo v45 and BEAM inputs at
 their qualified benchmark ceiling of at least 22,528 tokens, including the

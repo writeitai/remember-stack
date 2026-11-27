@@ -152,9 +152,10 @@ the previous stage, under the layer fence and the lineage lock (§3.3):
   version is grounded) and the D90 empty path (today: the E3 normalisation fan-out, or the empty
   observation flush).
 
-**A deployment without a configuration row** enters every layer exactly as today. No gap is
-written and no check runs beyond reading that the row is absent, so the chain, its work rows
-and its component versions are unchanged.
+**A deployment without a configuration row** enters every layer directly at its boundary.
+Claims entry uses the completed embed work's grid in both configured and unconfigured
+deployments. Any deferred handoff carries that binding to admission.
+[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 **A configured deployment** decides by one procedure:
 
@@ -292,8 +293,9 @@ the work ledger, never from the mere absence of rows:
 - A version's **occurrences are complete** when its `embed_chunk` row succeeded for its current
   representation and chunker generation (so its chunk grid exists and is final) and either its
   extract barrier is ready — every chunk's Selection and Claimify results are committed, so every
-  claim occurrence of the version is attached — or that grid is empty. A version that has not run
-  `embed_chunk` is never "complete with zero chunks".
+  claim occurrence for that grid is attached — or the completed grid is empty. Source and
+  claims readiness and receipts match the exact grid to its required ledger work and barriers.
+  [D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 - A version reaches a layer's **frontier** when its products are reusable by later versions:
   - **claims** — its occurrences are complete and its `embed_claim` succeeded, so every claim it
     carries, including claims later versions will reuse by id, has its vector;

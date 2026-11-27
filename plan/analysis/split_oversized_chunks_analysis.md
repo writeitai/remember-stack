@@ -31,20 +31,27 @@ piece. Render and check the actual pieces, and qualify a ceiling that
 admits a single nonblank scalar with maximum header and framing.
 [D80 mode selection](../../src/rememberstack/core/embedding_input_policy.py#L204-L223).
 
-The ledger records grid completion when `embed_chunk` succeeds. E0 sets
-`ready` before CHUNK, so SQL can expose chunk IDs as soon as they are written.
-E1 can also write P1 batches before a later batch fails. A recovery that
-changes cuts therefore needs separate evidence that readers never had access.
-The ledger deduplicates by stage and component version, so restarting CHUNK
-must explicitly reopen the failed embed work after any private grid replacement.
-The base embed component version omits packing parameters, and the layer
-helper selects the latest grid independently. A newer grid can coexist with
-the failed one, so recovery needs evidence of the attempt's exact grid.
-[E1 completion check](../../src/rememberstack/spine/processing_layers.py#L624-L644) ·
-[Ledger and grid lookups](../../src/rememberstack/spine/processing_layers.py#L1308-L1332) ·
+E0 sets `ready` before CHUNK, so SQL can expose chunk IDs as soon as they
+are written. E1 can also write P1 batches before a later batch fails. A
+recovery that changes cuts needs separate evidence of continuous reader
+isolation and must reopen the failed embed work after replacing private rows.
 [Public chunk view](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719) ·
-[E1 batch write](../../src/rememberstack/workers/e1.py#L535-L572) ·
-[Work identity](../../src/rememberstack/spine/work_ledger.py#L1996-L2023).
+[E1 batch write](../../src/rememberstack/workers/e1.py#L535-L572).
+
+The ledger deduplicates by version, stage and component version. The base
+embed component omits packing parameters, so a parameter-only repack hits
+the older grid's ledger row even with a different payload. Changing every
+delivery key would also invalidate work that already has the right key.
+Keep the key for the grid it identifies and qualify keys only for additional
+grids. E2 uses its configured generation, the layer helper selects the
+latest grid independently, and readiness can take an empty-path timestamp
+from any successful embed row. Carry the same grid through work and
+completion so none of those lookups can switch grids.
+[Work identity](../../src/rememberstack/spine/work_ledger.py#L1996-L2023) ·
+[Embed enqueue](../../src/rememberstack/workers/e1.py#L794-L811) ·
+[E2 lookup](../../src/rememberstack/workers/e2.py#L524-L595) ·
+[Layer lookups](../../src/rememberstack/spine/processing_layers.py#L1308-L1332) ·
+[Readiness query](../../src/rememberstack/spine/readiness.py#L843-L880).
 
 Packing can produce a new grid over the same representation and spans.
 P1 upserts and E2 work deduplication use chunk IDs, so the full packing
@@ -82,9 +89,16 @@ different evidence boundaries. D122 can still change independently.
 [Passage catalog](../../src/rememberstack/core/source_passages.py#L109-L171).
 
 In same-version recovery, a genuine window change also misses the D140
-lookup and falls back to the version date. Carrying the committed date
-through the rehash preserves the date in the prompt and on fresh claims.
+lookup and falls back to the version date. Carry the committed date through
+the rehash to preserve the date in the prompt and on fresh claims. The D140
+migration leaves the origin date and date-free key unset on legacy rows.
+E2 still uses the version's source modification date, or its publication
+date if no modification date is available. Rehashing an unstamped row with
+a known fallback as unknown would give it the same date input as a genuinely
+undated occurrence, even though the prompt and claim dates differ. Resolve
+that fallback once when rebuilding the row.
 [Date lookup](../../src/rememberstack/workers/e1.py#L193-L217) ·
+[D140 migration](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L395-L403) ·
 [Claim date](../../src/rememberstack/workers/e2.py#L1345-L1349) ·
 [Prompt date](../../src/rememberstack/workers/e2.py#L1794-L1815).
 

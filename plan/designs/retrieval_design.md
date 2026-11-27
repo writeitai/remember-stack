@@ -401,8 +401,9 @@ encoding history and current as the same pair of null timestamps.
 
 An evidence-grain envelope may carry both `evidence[]` (atomic claims) and `chunks[]` (confirmed
 source-text fallback). They are distinct fields because they have different semantics and
-provenance shapes even though both are testimony. Each chunk record exposes its optional D80
-location header in `context_prefix` alongside its body and immutable source coordinates.
+provenance shapes even though both are testimony. Each chunk record exposes its optional
+`context_prefix` alongside its body and immutable source coordinates. The value is the D80
+location header when present and nonempty, with the stored legacy prefix as the fallback.
 
 Single-grain answers are the common case. A `composite` envelope is one operation's cohesive
 typed result, such as a fact hydrated with its explicitly associated evidence; it is not a

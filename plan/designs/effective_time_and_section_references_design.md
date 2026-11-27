@@ -524,20 +524,21 @@ Before D140, the extraction key included both version dates,
 `source_modified_at` and `published_at`. A new modification time could
 invalidate every chunk's key even if its text was unchanged.
 
-**One per-chunk date.** Each chunk gets `text_origin_at`, and it replaces the version date in
-all three places: the reuse key (replacing *both* `source_modified_at` and `published_at`
-header facts), the E2 header, and the `asserted_at` of claims freshly extracted from the chunk.
-The version's own date remains on the version for everything else.
+**One per-chunk date.** E1 records `text_origin_at` at chunk creation. The
+date-sensitive Selection key, the E2 header and the `asserted_at` of fresh
+claims use that date. For pre-D140 rows without a stamp, E2 uses the version's
+`source_modified_at`, then `published_at`, then unknown.
 
 **Reuse identity.** Intact chunks store `reuse_identity_hash`. It covers the
 target and keyed neighbor content and their window-relative converter origins,
 the undated header facts (title, file name, source kind, language and the
 eligibility policy marker), and the blockizer, structurer and extractor
 versions. The lookup index uses `(deployment_id, doc_id, reuse_identity_hash)`.
-D162 pieces leave the lookup key unset and take the version's date or unknown.
-A private CHUNK recovery carries the committed date for every intact row and
-gives each replacement piece its parent's date, including unknown.
-[D162 key and date rules](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
+New D162 pieces leave the lookup key unset and take the version's date or
+unknown. In private CHUNK recovery, rebuilt rows carry the effective date
+of the intact row or piece parent, including the legacy E2 fallback for
+unstamped pre-D140 rows.
+[D162 recovery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 **Rule at intact chunk creation.** When E1 creates an intact chunk for a new version of lineage `L`:
 
@@ -574,8 +575,8 @@ reuse identity. Declared effective periods stay outside the keys.
 [E1 reuse mechanics](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
 
 This refines D55's rule that claims' `asserted_at` comes from the version's source time: a
-freshly extracted claim's `asserted_at` is its chunk's `text_origin_at`, which is the version's
-own date for new text and never later than it.
+freshly extracted claim's `asserted_at` uses the effective chunk date above, which is
+the version's own date for new text and never later than it.
 
 ## 6. Cross-references
 

@@ -186,14 +186,15 @@ Tasks header cannot choose the attribution.
 E1 passage embed is **not** one document-level “all strings then one provider call.” Normative
 input policy: `e1_embedding_input_policy.md` §6. Operational rules for implementers:
 
-1. **Claiming row.** One `processing_state` row owns an embed attempt for a **document
-   version / representation** at stage `embed_chunk` (or an equivalent representation-scoped
-   stage). Pure prepare (location facts + render) may run in that job before provider calls;
-   it does not require separate ledger rows.
+1. **Claiming row** — One `processing_state` row per document version, representation
+   and full packing generation owns `embed_chunk` attempts. Existing ledger keys
+   stay with their grids. Additional grids include the pair in the component version.
+   The same job can prepare location facts and render the input before calling the provider.
+   [D162 delivery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
    configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
-   (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
-   generation.
+   (hypothesis 64–128). Each batch stays within one document, representation, packing
+   generation, lane and embedder generation.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
@@ -205,9 +206,10 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    vector/hash/current attestation and stamps the chunk authority row. There is
    no cross-store gap. A crash after provider response but before commit may
    repeat a billable call; the design does not claim exactly-once provider spend.
-6. **Readiness.** Representation is embed-ready when every nonblank chunk has a successful
-   stamp matching the **configured** `(policy_generation, embedder_generation)`
-   and input hash. The existing `empty_body` case requires no vector.
+6. **Readiness** — The grid is embed-ready when its embed row succeeds and every
+   nonblank chunk in that grid has a successful stamp matching the configured
+   `(policy_generation, embedder_generation)` and input hash. An `empty_body` skip
+   satisfies the per-chunk check. The claims handoff uses that same grid.
 
 K/P and other stages are unchanged by this subsection.
 
