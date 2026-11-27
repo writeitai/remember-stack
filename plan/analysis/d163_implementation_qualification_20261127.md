@@ -57,8 +57,9 @@ and `evaluated_at`. For scoped comparisons supply `entity_ids` and the subset
 The case can specify `time` (the public current, at, overlap or history
 arguments), `believed_at` for the ledger check, and distinct `candidate_keys`
 as `[kind, UUID]` pairs. Omit keys to compare every attested fact embedding
-in the deployment. `k` defaults to 50. Keep the captures private. Complete
-confirmation rows include labels and other store data.
+in the deployment. `batch_sizes` also compares fixed P1 batches of those sizes
+and their complete final confirmation rows. `k` defaults to 50. Keep the
+captures private because confirmation rows include labels and other store data.
 
 The capture records the actual broad candidate batches before client
 deduplication, actual batch-gate SQL rows, both scoped nomination paths and
@@ -90,19 +91,28 @@ Use `--stratum 300k`, `3m`, or `120-leaves` for the other gates. The latter
 uses 120 monthly leaves plus the default. The harness times SQL without
 EXPLAIN and includes the native operation at k=50, candidate depth 200.
 It checks the declared p95 limits and records the broad query-space reads.
-Pass the previous release on `PYTHONPATH` and the baseline login to measure
-the same broad SQL on the reference. The BEAM samples exercise both the
+The `sandbox` operation measures those reads separately. Pass the previous
+release on `PYTHONPATH` and its login to measure the same SQL on the reference.
+The BEAM samples exercise both the
 typed error for the original `label` and successful `fact_label AS label`.
 
 On a disposable fixture seeded by `seed_corpus`, the following adds unrelated
-chunks and leaves and copies fixed fact/evidence cases. Keep the case file
-and fixed vector from the seed. This is useful for work amplification checks
-with known counts.
+chunks and copies fixed fact and evidence cases. The 1,200-relation population
+allows the native cursor to reach its cutoff at depth 200. The fixed P1 batch
+still uses 535 relations and 804 observations. Timing cases use distinct
+fixed vectors within each fact kind so ties across the whole index do not
+force an ANN scan to its bound.
 
 ```bash
 REMEMBERSTACK_DATABASE_URL="$TARGET_URL" PYTHONPATH=src:. uv run python \
-  -m tests.spine.d163_scale_fixture --case case.json --chunks 300000 --analyze
+  -m tests.spine.d163_scale_fixture --case case.json --chunks 300000 \
+  --relations 1200 --analyze
 ```
+
+Use a separate fixture with `--relations 535 --observations 49465` for the
+50,000-row case and run `d163_qualification scope` with its matching anchors.
+Add one observation and repeat with `--expect-scope-boundary` to require the
+typed refusal.
 
 ## Migration and review notes
 
@@ -120,14 +130,168 @@ same saved-query version resumes after revalidation.
 The collector test installs the previous helper bodies, runs the first
 incoming revision and checks both collector admission errors. It then
 completes the migration, installs the current helpers and runs a real MinIO
-capture with the synthetic profile. The paired oracle covers stored endpoints
+capture with the synthetic profile. The upgrade guide documents when to
+pause and resume capture. The paired oracle covers stored endpoints
 that resolve to one requested ranking anchor inside a larger eligible set.
 It compares coverage, distance and ordered top-k in both scoped paths, and
 counts repeated nominations and multiple evidence links for both fact
 kinds. The split-link scenario gives source membership and in-scope
 support to separate links in both kinds. The separate corrupt-store test
 proves that a foreign redirect cannot round-trip back to a valid survivor.
+The binding P1 search design already points both §8.3 and §8.5 at the
+candidate-bound source checks and the shared visibility rule.
 
 [Migration qualification](../../src/tests/spine/test_d163_migrations_pg.py) ·
 [Semantic and plan checks](../../src/tests/spine/test_d163_eligibility_pg.py) ·
-[Collector handoff](../../src/tests/adapters/test_minio_storage_capture.py)
+[Collector handoff](../../src/tests/adapters/test_minio_storage_capture.py) ·
+[Upgrade guide](../../website/src/app/docs/self-hosting/upgrades/page.mdx) ·
+[P1 confirmation contract](../designs/postgres_p1_search_projection_design.md#83-nominate-confirm-continue-d142)
+
+## Local evidence
+
+On physically cloned PostgreSQL 18.6 clusters, the oracle compared
+`178d72daa` at `p9_55_0076` with D163 at `p9_58_0079`. Counts below are
+per side. A gate row may appear in several cuts, and repeated nomination
+ranks count separately.
+
+| Synthetic case | Uncapped keyed eligible IDs | Default scoped | Filtered scoped | Gate rows across all cuts | Ordered raw HNSW rows | Difference |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Current | 11 | 11 | 7 | 73 | 20 | 0 |
+| At the effective-period boundary | 12 | 12 | 8 | 82 | 20 | 0 |
+| Overlap | 13 | 13 | 9 | 87 | 20 | 0 |
+| History | 14 | 14 | 9 | 93 | 20 | 0 |
+| 812 chunks, 2,625 observations, 535 relations | 3,149 | 3,149 | 528 | 16,582 | 400 | 0 |
+| Total | 3,199 | 3,199 | 561 | 16,917 | 480 | 0 |
+
+The wide case's fixed batch cuts kept 802 of 804 observations and 528 of 535
+relations on each side. The four nomination paths returned identical ordered
+top-k on all five cases, including the merged-anchor winner at k=1. Small-case
+captures include the earlier belief pin, cleared mode, retraction, unready
+edition, deleted origin, replaced reading, source/time split and corrupt
+claim coordinates. Corrupt foreign redirect rejection was checked separately.
+The D159 pending and deferred review regressions matched the public and native
+support-state expressions before archive, after archive, and after unarchive.
+
+The staged PostgreSQL 18.6 transfer matched hashes for 99 tables, including
+`public.part_config`, and passed pointer and database ACL checks. Baseline
+preflight found all seven partition registrations and read 18 fact-history
+rows through the real login. Stock `SelfHostProfile.setup` published the old,
+new, and restored old hashes on a disposable deployment with synthetic stores
+and zero provider calls. Section backfill reported missing object bodies in
+that setup smoke. The migration regression exercises atomic visibility and
+saved-query revalidation for the same active version in each direction.
+
+On the wide synthetic pair, both BEAM queries with valid columns completed.
+Five warm sandbox samples gave old/new p95 of 0.234/0.565 s for the aggregate
+and 0.264/0.508 s for the sample. The original `label` returned
+`execution_error` on both. The unfiltered `fact_claim_evidence_live` read hit
+the five-second statement limit on both releases (5.046/5.049 s). The other
+four unfiltered reads completed with the same returned row counts.
+
+The same completion and row-count pattern held for the 812- and
+300,000-chunk timing fixtures as chunk count grew with the fact cohort held
+fixed. Both releases returned `statement_timeout` for the unfiltered fact
+evidence read in both fixtures.
+
+On the 812-chunk fixture, growing observation evidence from 5,244 to 62,840
+links and relation evidence from 2,403 to 28,517 preserved the same outcomes
+and returned row counts on both releases. Growing to 121 leaves with that
+fanout caused both unfiltered `facts_current` reads to hit the same sandbox
+deadline. The combined sequence also reached the BEAM sample quota on both
+releases. In isolation, the corrected sample returned 40 rows on each
+release, with old/new p95 of 0.731/0.798 s over three warm samples.
+
+The full unfiltered exports matched 15,757 rows per side with zero
+`EXCEPT ALL` differences across the five views. At the diagnostic 201-row cap,
+executed plans for fact evidence used 58,397 versus 12,768 shared buffer hits.
+Evidence lineage used 58,765 versus 13,136. Facts current used 44,719 versus
+48,903. The public output and the sandbox deadline behavior were checked
+separately.
+
+The native scoped boundary returned 50 facts at exactly 50,000 raw rows in
+20.456 s on the separate test VM. At 50,001 raw rows it returned the existing
+`entity_scope_too_broad` boundary in 0.077 s.
+
+### Synthetic latency
+
+PostgreSQL 18.6 on local ARM64 VMs with two vCPUs and 4 GB. Each cell reports
+p50 / p95 seconds over 40 warm samples. The timing fixture used 804
+observation and 535 relation inputs, with 802 and 532 eligible, respectively.
+The 812-chunk read used sparse statistics after growth. The larger strata
+used refreshed statistics. Every native read completed with 50 facts, and
+all four strata met their latency targets.
+
+| Chunks and range leaves | Observation batch | Relation batch | Native broad | Native scoped |
+| --- | ---: | ---: | ---: | ---: |
+| 812, 10 | 0.081 / 0.116 | 0.045 / 0.055 | 2.127 / 2.587 | 0.392 / 0.497 |
+| 300,000, 10 | 0.087 / 0.119 | 0.050 / 0.070 | 2.152 / 2.307 | 0.387 / 0.430 |
+| 3,000,000, 10 | 0.074 / 0.076 | 0.041 / 0.046 | 2.016 / 2.085 | 0.367 / 0.389 |
+| 3,000,000, 121 | 0.186 / 0.281 | 0.119 / 0.198 | 7.705 / 9.110 | 1.448 / 1.514 |
+
+In the custom and generic batch plans, increasing from 300,000 to 3,000,000
+chunks left chunk and occurrence leaf loops at 16,070 / 4,020 for observations
+and 10,750 / 2,695 for relations. Planning at 300,000 chunks took 17–108 ms,
+with 23,044 / 15,032 shared hits. The 3-million-chunk plans took 13–15 ms
+and 22,241 / 15,032 shared hits. Both strata had zero shared reads.
+With 121 leaves, chunk and occurrence leaf loops rose to 194,447 / 93,274
+for observations and 130,075 / 62,312 for relations. Planning took 79–126 ms.
+The plans used 21,439 / 14,497 shared hits and zero shared reads. Both native
+reads completed within the existing 120-second operation deadline.
+
+The executed negative probes touched one evidence leaf in both plan modes
+with one or seventeen raw links. Both stored relation endpoints seeded
+their own walk and the merged endpoint took its one keyed redirect.
+
+The same-document regression grew the historical-origin and carried-evidence
+documents to 20,000 total chunks. A preliminary run with ordinary
+equality let an index on deployment and document filter out about 30,000
+unrelated rows per carried relation. With the chunk-ID probes, both
+custom and generic plans kept chunk leaf loops and traversed rows bounded for
+both fact kinds, before and after `ANALYZE`.
+
+## Local quality commands
+
+The PostgreSQL integration reruns use a disposable PostgreSQL 18 server
+with `max_locks_per_transaction=256` and a local MinIO endpoint. The guard
+and view suites each use their own empty `capture_guard_*` database through
+`REMEMBERSTACK_STORAGE_GUARD_TEST_DATABASE_URL`.
+
+Ruff format and lint, Pyright, imports, test inventory and the capture
+fixture check passed. The unit inventory passed 3,956 tests with 11 skipped.
+The isolated PostgreSQL and MinIO run passed all 214 selected tests, including
+the migration chain, the saved-query cutover and the collector handoff. The
+separate native collector guard and original-view suites passed 9 and 5
+tests. The pending and deferred archive-review cases both passed.
+
+```bash
+uv run ruff format --check src/ benchmarks/
+uv run ruff check src/ benchmarks/
+uv run pyright src/ benchmarks/ --pythonversion 3.13
+uv run lint-imports
+uv run python .github/ci/check_test_inventory.py
+PYTHONPATH=src:. uv run python scripts/generate_storage_capture_fixture.py --check
+xargs uv run pytest -q --tb=short < .github/ci/unit-paths.txt
+PGOPTIONS='-c jit=off' uv run pytest -q --tb=short \
+  src/tests/spine/test_{migrations,per_database_migrations_pg,work_ledger,query_space_batch_a,d153_eligibility_pg,d163_eligibility_pg,d163_migrations_pg}.py \
+  src/tests/adapters/test_{p1_ranked_pg,minio_storage_capture}.py \
+  src/tests/surfaces/test_d140_scoped_retrieval.py
+```
+
+The guard and view checks used `uv run pytest -q --tb=short` on
+`src/tests/spine/test_storage_capture_guard_pg.py` and
+`src/tests/spine/test_storage_capture_view_pg.py` in separate databases.
+The archive-review check used `uv run pytest -q --tb=short
+src/tests/workers/test_lifecycle_reconciliation.py -k moot_review`.
+
+## Remaining qualification on retained stores
+
+No local restored database or backup archive was available for LoCoMo conv-26,
+conv-30, conv-47 or the hosted-shaped store. The staged copy was exercised
+between independent PostgreSQL 18.6 clusters. Transferring a PostgreSQL 19
+backup remains unverified. Restore and verify each retained backup on its
+recorded server version, stage any PostgreSQL 19 source, and run `preflight`,
+paired `capture` and `compare` as above. Run `latency --stratum hosted` with
+804 observation and 535 relation inputs, 40 warm samples and the query login
+on the 2-vCPU / 4-GB hosted-shaped restore. Use `sandbox` on each release to
+verify unfiltered completion, including `fact_claim_evidence_live`, under its
+interactive deadline.

@@ -38,8 +38,9 @@ The `setup` service runs before the API and workers every time you run
 
 The API and the workers start only after `setup` exits successfully. The
 migration session waits up to three seconds per lock by default, and retries
-with a short backoff after a lock timeout. If the retries run out or the migration fails for another reason,
-`setup` exits with an error and `docker compose logs setup` shows why.
+with a short backoff after a lock timeout. If the retries run out or the
+migration fails for another reason, `setup` exits with an error and
+`docker compose logs setup` shows why.
 
 Each migration revision commits separately. Online index phases can also
 commit inside a revision. If a later revision fails, completed revisions stay
@@ -52,9 +53,10 @@ Drain the previous readers before running the incoming release's `setup`.
 Setup publishes the new SQL surface and moves active saved queries to pending
 revalidation in the same transaction. Revalidate those versions to resume them.
 
-For rollback after publication, drain incoming readers, run `alembic downgrade
-p9_55_0076` with the incoming release, then run the previous release's `setup`
-before restarting its API. Revalidate saved queries under the restored surface.
+For rollback after publication, drain incoming readers. Run
+`alembic downgrade p9_55_0076` with the incoming release, then run the
+previous release's `setup` before restarting its API. Revalidate saved
+queries under the restored surface.
 Pause and drain managed storage captures before migrating in either direction.
 Install the target release's capture helpers before resuming captures.
 
