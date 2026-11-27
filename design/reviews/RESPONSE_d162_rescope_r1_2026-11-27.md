@@ -35,14 +35,14 @@ findings and the BEAM provenance note.
   accepts a singleton at index `1` and P1 validates its vector. Keep pinned
   ingests and replays until transport replay through both E1 paths matches
   delivery outcomes and stored passage vectors. [Decoder](../../src/rememberstack/adapters/openrouter.py#L1034-L1077) ·
-  [Design §5](../../plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
+  [Design §5 at this round](https://github.com/writeitai/remember-stack/blob/30bf6f82130fe17638a2afd6747a9941efba91f6/plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
 
 ## P2
 
 - **Repeatable read parity.** Freeze application and SQL evaluation clocks
   and normalize the named per-call SQL telemetry. Compare ordered results
   and require a same-reader comparison to pass. [SQL response](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061-L1085) ·
-  [Design §5](../../plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
+  [Design §5 at this round](https://github.com/writeitai/remember-stack/blob/30bf6f82130fe17638a2afd6747a9941efba91f6/plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
 - **Bounded section links.** Both lookups currently collect every covering
   chunk. On a split grid, return only the first published piece that
   intersects the section's first block. Test both reads with a split first

@@ -18,7 +18,7 @@ implementation follow-up and the citation nit. No P0 findings.
   [Binding report](../../src/rememberstack/profiles/selfhost.py#L2373-L2399) ·
   [Embedding adapter](../../src/rememberstack/adapters/openrouter.py#L1001-L1046) ·
   [BEAM reader](../../benchmarks/rs_harness_beam/answer_agent.py#L692-L705) ·
-  [D162 §5](../../plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
+  [D162 §5 at this round](https://github.com/writeitai/remember-stack/blob/a3f03f324571559fe039e42f9774280a81c78f6a/plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
 - **Text-origin matches after publication.** E1 records dates at CHUNK and
   the current donor lookup reads chunk rows. A later piece can span
   multiple narrower recovery pieces and still match the original parent.
@@ -40,7 +40,7 @@ implementation follow-up and the citation nit. No P0 findings.
   section-bounded splits and byte-identical fitting grids. The YAML edit
   belongs with implementation under this PR's Markdown-only scope.
   [Current check](../../plan/implementation_evals/eval_checks/e1_chunks_whole_blocks_no_overlap.yaml#L13-L22) ·
-  [D162 §5](../../plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
+  [D162 §5](../../plan/designs/split_oversized_chunks_design.md#5-offline-benchmark-and-release-checks).
 
 ## Citation
 

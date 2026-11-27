@@ -33,7 +33,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                 RS-LoCoMo-Full-v47 (full-v47)
+protocol                 RS-LoCoMo-Full-v46 (full-v46)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -54,35 +54,18 @@ primary metric           judge accuracy
 secondary metric         official LoCoMo F1
 ```
 
-Full-v47 is the only executable protocol. Its runner attests per-version P3
-publication markers and a frozen ready-folder file inventory. Historical
-runs remain available for inspection and summary under their recorded
-identities. [Protocol registry](../../benchmarks/locomo/protocol.py#L513-L553) ·
-[Runner P3 attestation](../../benchmarks/locomo/runner.py#L709-L740).
+Execution has one current protocol. Superseded keys and their provider/model
+branches are removed from preparation and execution; no runtime fallback to a
+historical implementation is supplied. Historical run files retain their exact
+models, generations, fingerprints and outcomes and may be inspected or
+summarized against their own recorded identity without becoming executable.
 
 The query-surface hash, prompt/schema hashes, repository revision, manifests,
 rendered documents, complete tool-catalog hash and expected component generations
 are stored. The execution profile also stores its non-secret ingestion bindings,
-worker environment and approved provider order. CI compares the required
-component generations and reported model bindings with the composed engine.
-
-The proposed D162 gate requires 22,528 Qwen tokens or higher on the exact
-ingestion binding. A candidate E1 path needs transport-replay parity for
-delivery and stored passage vectors, plus public tool parity on the stores
-those replays publish. Candidate readers, schemas and query embedding paths
-also require public tool parity. Admission binds the runtime fingerprint,
-including layer states and retrieval budgets, to the qualified frozen inputs
-and published store. At dispatch, candidate reads also need parity for the
-exact operation, resolved arguments and effective scope. Initial admission
-failures and uncovered calls use the pinned path. Runtime drift suspends an
-admitted candidate run.
-[D162 release checks](split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
-
-The published 94.09% run used retained Full-v45 ingestion and frozen image
-inputs. For historical parity, use that run's recorded serving and answer-prompt
-revisions, PostgreSQL 19 RC 1 image, copies of its attested retained stores with
-their original indexes, and its saved tool traces.
-[Published run and revisions](../../benchmarks/locomo/README.md#published-results).
+worker environment and approved provider order. CI compares every required component
+and effective model binding with the composed current engine; a worker generation
+change cannot leave a stale executable benchmark pin unnoticed.
 
 ### 2.1 Model roles and independent judging
 
@@ -259,10 +242,10 @@ own their work-ledger retry policy. The measured answer-reader failure above is
 handled only in the benchmark answer loop, where its two additional attempts
 are fingerprinted and charged to the existing agent-call budgets.
 
-Full-v47 uses the Full-v45 reader with the PR593 completeness update, and the
-`desc-prompt-v2` image readings introduced in Full-v46. Preparation requires
-matching visual products. Session rendering uses the reader-catalog-v45
-document-adapter format.
+Full-v46 inherits the Full-v45 reader, including the PR593 completeness update,
+and adds `desc-prompt-v2` image readings. It requires new visual products;
+ingested representations can differ. The document-adapter format stays at the
+reader-catalog-v45 generation because that wire/rendering format is unchanged.
 
 ## 3. Ingestion mapping
 
@@ -579,7 +562,7 @@ before any final answer. The first two remain prompt discipline. D99 makes
 only the content-before-`Unknown` rule a harness guard as specified above; the
 harness does not try to judge whether evidence was subjectively “useful.”
 
-Full-v47 requires the best-supported answer to each scored question, including
+Full-v46 requires the best-supported answer to each scored question, including
 an inference when the conclusion is not stated verbatim. Prefer direct statements,
 then clear conversational implications, then the most plausible interpretation
 of retrieved clues using ordinary general knowledge. For a relative-date question,
@@ -712,13 +695,14 @@ uv run --extra benchmark python -m benchmarks.locomo prepare-images \
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v47 \
+  --protocol full-v46 \
   --images /private/locomo-image-inputs \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`prepare` accepts `--protocol full-v47`. Subsequent stages read the immutable
-protocol choice from the saved run.
+`--protocol` exists only on `prepare`. Execution uses `full-v46`; later stages
+read the immutable current choice from the saved run. Historical protocols are
+read-only and cannot be selected as an execution fallback.
 
 Per isolated sample:
 
@@ -861,8 +845,9 @@ The reader consolidates list and final-answer reminders rather than growing its
 prompt. It retains supplied concrete names/dates, accounts for distinct supported
 items, and expands missing owner/reply context from returned edge chunk IDs within
 existing limits. A short adjacency side means a boundary only without missing
-center, drops or truncation. The reader-only PR593 checkpoint uses the v45
-ingestion, image, model, judge and budget settings for comparisons on retained
-v45 stores. Full-v46 introduced the visual-label prompt carried into Full-v47.
-Prompt hashes and immutable fingerprints identify each reader. For changed
-instructions, prepare a new retained-ingestion fork and preserve prior records.
+center, drops or truncation. The reader-only PR593 checkpoint changes no
+ingestion/image/model/judge profile or budget and retains v45 for independent
+retained-store comparisons. The visual-label profile is v46; prompt hashes and immutable
+fingerprints identify each reader. Old-prompt runs remain inspectable but cannot
+resume under changed instructions. Prepare a new retained-ingestion fork; do not
+edit prior records. This instruction change establishes no score improvement.

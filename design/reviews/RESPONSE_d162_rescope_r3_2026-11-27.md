@@ -53,7 +53,7 @@ findings.
   its saved tool traces.
   [Protocol registry](../../benchmarks/locomo/protocol.py#L513-L553) ·
   [Published run](../../benchmarks/locomo/README.md#published-results) ·
-  [LoCoMo §2](../../plan/designs/locomo_benchmark_design.md#2-fixed-protocol).
+  [LoCoMo §2 at this round](https://github.com/writeitai/remember-stack/blob/52466e912a53fc62630176861f2558c6a921be78/plan/designs/locomo_benchmark_design.md#2-fixed-protocol).
 
 ## Verification
 
@@ -61,4 +61,4 @@ The mock-transport probe used production D80 rendering and OpenRouter request
 serialization. Stubbed catalogs confirmed the configured-stamp lookup in
 claim embedding and both reconcile modes. Of the focused existing tests,
 85 passed and 33 PostgreSQL tests skipped because no test database URL was
-configured. [Implementation release checks](../../plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
+configured. [Implementation release checks](../../plan/designs/split_oversized_chunks_design.md#5-offline-benchmark-and-release-checks).

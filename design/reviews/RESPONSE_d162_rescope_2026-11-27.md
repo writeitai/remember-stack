@@ -17,9 +17,10 @@ handles. D162 remains proposed. Earlier replies remain in the
 - R1–R2, R4. Verify failed work and its artifacts, fence old attempts and
   workers, and keep incomplete work off serving indexes. Replan from E0 if
   the envelope changes, including on first ingest.
-- R1–R2, R5. Gate LoCoMo and BEAM on frozen input, grids and complete tool
-  responses, including query embedding and BEAM SQL. LoCoMo needs 22,528
-  tokens or higher on the pinned binding.
+- R1–R2, R5. Check the frozen LoCoMo v45 and BEAM grids offline at the
+  benchmark binding's qualified ceiling of at least 22,528 Qwen tokens.
+  Require byte-identical output, zero splits and zero model calls.
+  [D162 §5](../../plan/designs/split_oversized_chunks_design.md#5-offline-benchmark-and-release-checks).
 - R1, R3–R4, R6. Reconcile D58, requirements and the E1 overview, and keep the converter and replay corrections.
 
 ## Findings resolved by the scope change
@@ -38,4 +39,5 @@ handles. D162 remains proposed. Earlier replies remain in the
 - Audit D143/D54 source-head timing for first claims, facts admission, ordered withdrawals and reused application receipts.
 - Review fallback after version removal or unarchive when a newer head has only sources.
 - Investigate physical BM25 statistics during ordinary writes, deletions and rollback.
+- Measure how first-publication insertion order affects bounded HNSW results on freshly ingested stores.
 - Qualify the existing D130 document-edge example as a single target at `window=1`.

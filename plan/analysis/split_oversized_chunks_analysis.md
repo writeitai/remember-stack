@@ -142,13 +142,23 @@ reap and reclaim after validation, as well as holding the lineage lock
 to fence delivery replacement and forget.
 [Lease reaper](../../src/rememberstack/spine/work_ledger.py#L2290-L2322).
 
+The legacy OpenRouter decoder sorts indices and checks count and dimension.
+A singleton at index `1` with a valid vector passes P1 validation. A local
+two-input mock also returned two distinct valid vectors, both at index `0`.
+The decoder kept them in reply order and E1 stamped the expected input
+hashes, so a matching hash in P1 can accompany a vector for a different
+input. Validate indices for E1 on both layouts and verify the original
+mapping and full delivery before trusting a donor.
+[Decoder](../../src/rememberstack/adapters/openrouter.py#L1034-L1077),
+[E1 assignment and stamps](../../src/rememberstack/workers/e1.py#L502-L572),
+[P1 validation](../../src/rememberstack/ports/p1_index.py#L26-L49).
+
 ## Benchmark fixture audit
 
-Full-v47 is the only executable LoCoMo profile. Historical parity for the
-published 94.09% uses the recorded serving and reader-prompt revisions, retained
-v45 stores, frozen images and saved tool traces.
-[Protocol registry](../../benchmarks/locomo/protocol.py#L513-L553),
-[published results](../../benchmarks/locomo/README.md#published-results).
+The published 94.09% LoCoMo result uses retained Full-v45 ingestion with
+frozen OCR and visual readings. Those stored E0 inputs and chunk rows are
+the baseline for D162's offline check.
+[Published results](../../benchmarks/locomo/README.md#published-results).
 
 Reviewers reproduced public LoCoMo text and BEAM sizing. The hosted probe and
 archived LoCoMo OCR audit remained author-reported. The latter covered 272 v45
@@ -171,82 +181,41 @@ route framing.** Whole-source JSON yields a 529,540-byte normalized body.
 Qualification uses the exact retained rendering.
 [Pinned BEAM chat](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json).
 
-An offline embedding probe changed the gateway URL and then enabled zero
-data retention while holding the model and provider fixed. Both changed the
-wire request while the LoCoMo ingest binding guard still passed. BEAM begins
-retrieval against the supplied API URL. Checking the runtime identity that
-passed parity at each protected entry point keeps these changes from silently
-switching a benchmark to an unqualified path.
-[Gateway client](../../src/rememberstack/adapters/openrouter.py#L412-L428),
-[provider payload](../../src/rememberstack/adapters/openrouter.py#L1001-L1046),
-[binding report](../../src/rememberstack/profiles/selfhost.py#L2373-L2399),
-[LoCoMo guard](../../benchmarks/locomo/runner.py#L1714-L1729),
-[BEAM reader](../../benchmarks/rs_harness_beam/answer_agent.py#L692-L705).
+Both fixtures can be checked from committed Markdown, packing inputs and
+D80 facts. Rebuilding OCR or section structure would change the inputs being
+tested. Legacy CHUNK assigns random UUIDv4s on first write and reuses
+committed IDs on replay. Supply the original allocation sequence to compare
+IDs deterministically alongside the spans, hashes and full rendered input.
+[CHUNK replay](../../src/rememberstack/workers/e1.py#L132-L165),
+[legacy allocator](../../src/rememberstack/workers/e1.py#L683-L731).
 
-An in-process HTTP probe held the API and BEAM reader fixed and disabled only
-facts in a stub layer catalog. `facts_context` disappeared from discovery and
-from BEAM's event-ordering calls. The live catalog also supplies backfill
-state for read disclosure. Deployment deadlines and SQL caps can change read
-results under the same builds. Admission needs the resolved settings for
-each protected read.
-[Discovery](../../src/rememberstack/surfaces/http_api.py#L2403-L2415),
-[D143 admission](../../src/rememberstack/spine/processing_layers.py#L519-L614),
-[BEAM event ordering](../../benchmarks/rs_harness_beam/answer_agent.py#L449-L509),
-[retrieval deadline](../../src/rememberstack/profiles/selfhost.py#L1432-L1439),
-[SQL limits](../../src/rememberstack/surfaces/query_sandbox/executor.py#L586-L600).
+## Read behavior for fitting grids
 
-Matching chunk hashes and queries on retained vectors do not exercise ingest
-delivery. The current OpenRouter decoder sorts indices and checks count and
-dimension, so a singleton at index `1` with a valid vector passes P1. The
-strict D162 decoder rejects it. Replay from raw transport replies can detect
-that difference before a protected ingest changes worker.
+Legacy SQL exposes chunk rows on E0 readiness once CHUNK writes them.
+Section references and history also read the chunk rows for
+`first_chunk_ids`. Legacy E1 adds P1 rows batch by batch. D162 makes
+passages, including fitting grids, visible together at first E1 publication.
+Document and section metadata still follow E0 readiness. Until publication,
+a scoped ranked read with a passage channel can disclose a touched,
+in-force version in `Freshness.scope_pending` and return `boundary` when
+empty. One fitting-grid fixture with a published control covers this change.
+[Chunk view](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719),
+[references](../../src/rememberstack/spine/document_references.py#L1366-L1382),
+[section history](../../src/rememberstack/spine/section_history.py#L737-L752),
+[publication](../designs/split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk).
 
-A local two-input mock returned two distinct vectors, both at index `0`.
-The decoder accepted both in reply order and both passed P1 validation.
-E1 assigns by request position and writes the expected input hashes, so
-even a matching hash in P1 can accompany a vector for a different input.
-Verify the original mapping and full delivery before trusting a donor.
-[Decoder](../../src/rememberstack/adapters/openrouter.py#L1034-L1077),
-[E1 assignment and stamps](../../src/rememberstack/workers/e1.py#L502-L572),
-[P1 validation](../../src/rememberstack/ports/p1_index.py#L26-L49).
+Published grids keep their passage rows and indexes. The new SQL visibility
+predicate changes the view definitions, so SQL returns a new
+`surface_manifest_hash` even when its rows agree. The existing manifest
+checks and saved-query revalidation cover that change.
+[Manifest view member](../../src/rememberstack/spine/query_space/manifest.py#L1079-L1106),
+[SQL result](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061-L1070),
+[revalidation](../designs/open_query_space_design.md#5-saved-query-registry).
 
-Equal stored vectors can yield different search results. Legacy E1 inserts
-each successful batch into P1. D162 inserts the grid at publication, changing
-when its rows enter the approximate nearest-neighbour index (HNSW).
-An insertion schedule can change which rows this bounded search visits.
-Replay reads on the stores both ingests actually publish, with the indexes
-they built. Reads on retained stores still test historical serving parity.
-[Legacy write](../../src/rememberstack/workers/e1.py#L535-L572),
-[P1 upsert](../../src/rememberstack/adapters/postgres_p1.py#L255-L285),
-[HNSW nomination](../../src/rememberstack/adapters/postgres_p1.py#L891-L913),
-[nomination bound](../../src/rememberstack/adapters/p1_ranked.py#L319-L322).
-
-Matching IDs and quotes can coexist with different SQL values or fact windows.
-Conversely, identical SQL runs generate fresh request IDs and timings.
-Freeze evaluation instants and normalize the per-call telemetry to measure
-result parity. Fixed vectors bypass query embedding, so qualify that path
-before using them to isolate reader changes.
-[SQL response](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061-L1085),
-[BEAM SQL path](../../benchmarks/rs_harness_beam/answer_agent.py#L511-L525),
-[LoCoMo tool dispatch](../../benchmarks/locomo/retrieval.py#L165-L202).
-
-LoCoMo parses each model-generated call and applies its retrieval budget
-before dispatch. In a local runner probe, two stub readers returned the
-same saved-query ranking and opposite rankings for a new generated query.
-The runner recorded both new responses. A saved trace proves parity only
-for its calls and scopes. Keep other calls on the pinned reader until
-paired replay covers them.
-[Live call dispatch](../../benchmarks/locomo/runner.py#L2392-L2420).
-
-The published LoCoMo serving revision pins PostgreSQL 19 RC 1. The physical
-backup contains the stopped PostgreSQL volume. A logical copy into PostgreSQL
-18 rebuilds indexes, which can change the order of retrieved candidates.
-The reader's declared PostgreSQL major also contributes to the SQL surface
-hash it returns. Use the recorded image for exact historical parity and
-label the 18 copy as a diagnostic. Preserve the database name because
-migrations and the running reader derive the query and graph roles from it.
-[Published server image](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/Dockerfile.postgres#L1),
-[volume backup](../../benchmarks/locomo/sharding/store_backup.py#L1248-L1263),
-[manifest member](../../src/rememberstack/spine/query_space/manifest.py#L1061-L1076),
-[returned hash](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061-L1065),
-[retained-store restore evidence](evidence_driven_fact_eligibility_20261127.md#retained-store-oracle).
+On fresh ingestion, the publication transaction changes when vectors
+enter the approximate nearest-neighbour index (HNSW). Its bounded search
+can visit different candidates when insertion order changes. The frozen
+grid check compares packing and rendering output for the retained
+benchmark inputs.
+[Legacy batch write](../../src/rememberstack/workers/e1.py#L535-L572),
+[HNSW nomination](../../src/rememberstack/adapters/postgres_p1.py#L891-L913).

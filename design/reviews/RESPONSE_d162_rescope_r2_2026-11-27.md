@@ -61,5 +61,5 @@ finding.
 
 Provider-free probes reproduced the missing HTML gap label and the failed
 cross-child citation remap in both directions. All 56 focused existing tests
-passed. [D162 §5](../../plan/designs/split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks)
+passed. [D162 §5](../../plan/designs/split_oversized_chunks_design.md#5-offline-benchmark-and-release-checks)
 lists the implementation release checks.

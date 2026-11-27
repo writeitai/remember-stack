@@ -8783,13 +8783,10 @@ Enroll new representations as pending for passages at E0 readiness. The
 selected E1 delivery publishes passages and supplies the packing stamp for
 claim embedding and reconciliation. Grids that could already serve retain
 their cuts and handles. Confirmed per-input rejection is terminal, and
-capacity retries stay bounded. LoCoMo and BEAM require frozen-grid and
-ingest-delivery parity plus public tool-response parity on the published
-replay stores. Candidate admission binds the worker, reader, schema,
-embedding bindings and effective serving settings to the qualified inputs
-and published store. A candidate read needs parity for its exact operation,
-resolved arguments and effective scope. The exact LoCoMo binding must
-qualify at 22,528 Qwen tokens or higher.
+capacity retries stay bounded. Qualify the hosted route and require
+byte-identical frozen LoCoMo v45 and BEAM grids at the benchmark binding's
+qualified ceiling of at least 22,528 Qwen tokens. The offline grid check
+requires zero splits and zero model calls.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
