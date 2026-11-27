@@ -386,11 +386,12 @@ keeps set-based source joins. Share visibility and presentation predicates
 across the two forms, including the D54 and D159 expressions. Keep migration
 definitions immutable and verify the runtime endpoint rule against the public wrapper.
 
-For a native statement, materialize source-qualified **candidate IDs and
-required endpoint/ranking/time fields only** through per-ID constrained
-lookups. Materialize distinct subject/object survivor IDs. Drive correlated
-`entities_current` point lookups from that endpoint set, with a lookup boundary,
-and materialize their membership results. A plain unbounded `IN` join that
+For a native statement, deduplicate `(fact_kind, fact_id)` for shared
+eligibility work. Materialize source-qualified **candidate IDs and required
+endpoint/ranking/time fields only** through per-ID constrained lookups.
+Materialize distinct subject/object survivor IDs. Drive correlated
+`entities_current` point lookups from that endpoint set, with a lookup
+boundary, and materialize their membership results. A plain unbounded `IN` join that
 reorders into a deployment-wide entity export is insufficient. Join the
 visible endpoint set to all candidate facts. A relation whose endpoints are
 equal has one lookup but retains distinct-entity coverage; either missing
@@ -399,12 +400,14 @@ eligible candidates. No `SELECT *` forces counts into nomination materialization
 
 #### Candidate-bound source membership and survivor resolution
 
-For each kind, select the fact's raw evidence with deployment and fact ID
-inside a correlated `LATERAL (... OFFSET 0)` lookup. Feed those rows into
-the historical and carried membership arms. Bind deployment, claim ID
-and document inside each arm. The lateral lookup receives keys from the
-previous row, and `OFFSET 0` keeps PostgreSQL from flattening it into a
-join that can start with unrelated evidence.
+For each kind, test source membership with `EXISTS`. Select the fact's
+raw evidence with deployment and fact ID inside a correlated
+`LATERAL (... OFFSET 0)` lookup. Check those rows against the historical and
+carried membership arms, binding deployment, claim ID and document inside
+each arm. Each fact yields at most one source row, regardless of how many
+evidence links qualify. The lateral lookup receives keys from the previous
+row, and `OFFSET 0` keeps PostgreSQL from flattening it into a join that can
+start with unrelated evidence.
 
 In the private `v_memory_claim_history_by_id` lookup, use the claim's
 deployment, document and origin chunk ID inside a fenced chunk lookup.
@@ -477,7 +480,7 @@ This removes the unrelated-chunk multiplier seen in the hosted plans.
 | `facts_visible_history` | Explicit eighteen-column projection of the full authority; same rows, types, counts and values |
 | `fact_claim_evidence_live`, `evidence_lineage`, `v_memory_page_citation_visible`, `changes_visible` | Keep complete membership through `v_memory_fact_visible`; audit whole-row projections, preserve all public values and do not add a second source/endpoint truth query |
 | `_FACT_AUTHORITY_JOIN`: scoped nomination, fact loop and scored fact search | Replace per-row endpoint checks with the shared bounded builder, preserving kind/time/evidence/model/filter/coverage predicates |
-| `_CONFIRM_FACTS_CONTEXT_BY_KIND` | Same bounded builder for full eligible hydration and original nomination ranks |
+| `_CONFIRM_FACTS_CONTEXT_BY_KIND` | Join eligible facts back to the input nominations. Emit one row per eligible nomination, including repeats, with its original `WITH ORDINALITY` rank |
 | `_FACTS_CONTEXT_CONTRADICTION_MEMBERS` | Enumerate matching group fact IDs with current time predicates, then shared endpoint qualification; exact existing group count/member semantics, same deadline, no invented group cap |
 | `graph_queries.py`, SQL sandbox `nomination.py` | Preserve complete public authority for graph traversal/sandbox SQL; use shared builder where they call bounded native fact nomination. No private helper becomes caller-reachable |
 
@@ -569,12 +572,14 @@ paid rebuild or relabeling existing ingestion metadata.
 Start from the deployed archive-aware `p9_55_0076` schema. Use separate
 Alembic revisions in the following upgrade order.
 
-1. Replace `v_memory_entity_survivor` with the walk directly over `entities`.
+1. Replace `v_memory_entity_survivor` with the walk directly over `entities`
+   and update its comment to describe the deployment-scoped walk.
 2. Replace `v_graph_survivor` with a projection of the memory survivor view.
 3. Create the private keyed claim history lookup.
 
-Downgrade in reverse order, restoring the deployed definitions. Under D160,
-both survivor views serve previous-release readers between commits.
+Downgrade in reverse order, restoring the deployed definitions and the
+original adapter comment with `v_memory_entity_survivor`. Under D160, both
+survivor views serve previous-release readers between commits.
 Replacing a dependency and its caller together can deadlock a reader
 holding the caller's lock and waiting on the dependency. Commit each
 replacement before acquiring the next exclusive view lock. Under D161 the
@@ -583,11 +588,20 @@ runner holds its migration session lock across commits and retries
 three-second default lock wait.
 [D160 and D161](packaging_distribution_design.md#61-migration-compatibility)
 
-Preserve owners, grants, column contracts and comments at each step.
+Preserve owners, grants, column contracts and other comments at each step.
 Register changed definitions as hashed dependencies with the existing
-private helper ACLs, refresh affected manifest and deletion metadata
-and run saved-query revalidation. Advance the catalog and D152 head pins.
+private helper ACLs. Refresh affected manifest and deletion metadata and
+advance the catalog and D152 head pins.
 Reuse stored documents, claims, facts and vectors under D56.
+
+Run the incoming release's `alembic upgrade head` while the previous release
+serves. The previous manifest hash remains authoritative through every DDL
+commit. Once the schema reaches head, drain the previous-release readers and
+run the incoming release's `setup`. It publishes the new hash and moves
+active saved-query versions to `pending_revalidation` in one transaction
+before the incoming API serves. Customer saved-query versions resume
+execution once revalidated and active under the existing registry rules.
+[Saved-query registry](open_query_space_design.md#5-saved-query-registry)
 
 ## 7. Failure, security and operational behavior
 
@@ -703,14 +717,17 @@ or concurrency qualification.
 **Equivalence oracle.** Restore LoCoMo conv-26, conv-30 and conv-47 and a
 hosted-shaped fixture at the deployed v0.22.4 schema, `p9_55_0076`. Run that
 gate and D163 on paired copies with identical data, vectors, filters and read
-instants. Require empty set differences in both directions on
-`(fact_kind, fact_id)` for the complete candidates at each eligible cut.
-Exercise scoped and keyed nomination, broad batch confirmation and final
-confirmation, including agreement between stages for the same inputs.
-Run the baseline to completion with a recorded diagnostic timeout if needed.
-Equal eligible sets prove that completed LoCoMo reads supply the same retrieval
-inputs to the existing ranking, tie breaks and hydration.
+instants. Capture the SQL gate rows before result limits or client-side
+deduplication. Require empty `EXCEPT ALL` results in both directions on
+`(fact_kind, fact_id)` at each eligible cut. Include `nomination_rank` in the
+final confirmation comparison. Exercise scoped and keyed nomination, broad
+batch confirmation and final confirmation, including agreement between stages
+for the same inputs. Run the baseline to completion with a recorded diagnostic
+timeout if needed.
 
+- Include observations and relations with multiple qualifying evidence links.
+  Retain the repeated-nomination regression with one row per eligible rank.
+  [Repeated nominations regression](../../src/tests/spine/test_d153_eligibility_pg.py#L718-L743)
 - Cover D140 `current`, `at`, `overlap` and `history` with disjoint periods,
   exact boundaries, retractions, a cleared declaration mode and an earlier
   belief pin. Include undeclared historical support, an unready in-force
@@ -763,11 +780,19 @@ partitions grow independently. Include both BEAM fact queries, keeping the
 typed error for `label` and timing `fact_label AS label`.
 [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)
 
-**Migration check.** Upgrade and downgrade a populated store. Admit a
-previous-release reader between replacements and hold it open through
+**Migration check.** Upgrade and downgrade a populated store while the previous
+manifest is authoritative. After every DDL commit, run an active customer
+saved query on `facts_visible_history` through the previous-release API and
+require its expected rows and the previous hash. Hold a reader open through
 the next contended replacement in each direction. Require reader completion,
 `55P03` recovery from the committed revision and zero `40P01` deadlocks.
-Check the resulting definitions, grants and eligible sets at each head.
+Check definitions, grants, comments and gate rows at each head.
+
+At the upgraded head, drain the previous-release readers and run stock
+`setup`. Verify that the new hash and the query's `pending_revalidation`
+state become visible together. Require the new API to return
+`saved_query_revalidation_pending` before revalidation. Revalidate and
+activate the same version, then require the expected rows under the new hash.
 
 #### Follow-ups (not part of D163)
 

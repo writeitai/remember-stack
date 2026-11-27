@@ -44,6 +44,16 @@ absence check used all 64 leaves at 30,000 unrelated rows. With `OFFSET 0`
 it used one leaf per candidate at 30,000 and 300,000 rows.
 [PostgreSQL subquery planner](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/optimizer/plan/subselect.c#L243-L280)
 
+The deployed source view uses `EXISTS` for each fact kind. A join that
+emits both qualifying links of one fact would repeat that fact, and broad
+confirmation's ID map would hide the extra SQL row. Final confirmation
+joins back to the input ranks. If the same fact is nominated at ranks 1
+and 2, the correct result is one row at each rank. A set of fact IDs misses
+both kinds of multiplicity error.
+[Source view](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L315-L363) ·
+[Broad confirmation](../../src/rememberstack/adapters/postgres_p1.py#L1675-L1691) ·
+[Final confirmation](../../src/rememberstack/surfaces/query_engine.py#L6231-L6249)
+
 A keyed claim alone leaves the origin chunk and visible-version joins
 reorderable. Keying the origin chunk first lets a missing origin skip
 readability probes, including in the carried branch's shared origin-absence
@@ -69,7 +79,7 @@ foreign key prevents an A → B → A chain in normal writes. The deployed
 adapter checks the deployment at the seed and terminal, so it can accept
 such a legacy-corrupt round trip. The keyed walk rejects its first foreign
 hop. [Deployed adapter](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L64) ·
-[Redirect foreign key](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L32)
+[Redirect foreign key](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L34)
 
 The probes used existing indexes. `claims` has an unpartitioned primary
 key. Retained range-leaf costs apply to `chunk_claims` and `chunks`. Sparse
@@ -90,7 +100,18 @@ A reduced PostgreSQL 18.7 fixture reproduced a `40P01` deadlock when one
 transaction replaced both a survivor view and a dependent fact source
 view while a reader held the fact view and waited for the survivor.
 Separate compatible revisions let the fixture upgrade and downgrade
-after `55P03`. Full-schema equivalence, migration and latency are
-implementation gates.
-[D161 runner](../../src/rememberstack/spine/migrations/env.py#L68) ·
+after `55P03`.
+[D161 runner](../../src/rememberstack/spine/migrations/env.py#L68)
+
+Stock `setup` applies migrations and then publishes the new manifest hash,
+suspending active saved queries in the same transaction. A previous-release
+API still expects its own hash and rejects the new one even after successful
+revalidation. Running Alembic directly keeps the old hash and active versions
+in place through the compatible DDL. After the old readers drain, the
+incoming release's `setup` can publish using the existing registry transaction.
+[Setup](../../src/rememberstack/profiles/selfhost.py#L1248-L1268) ·
+[Registry hash check](../../src/rememberstack/surfaces/query_sandbox/saved_queries.py#L1364-L1373) ·
+[Registry publication](../../src/rememberstack/surfaces/query_sandbox/saved_queries.py#L1846-L1897)
+
+Full-schema equivalence, migration and latency are implementation gates.
 [D163 qualification](../designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)

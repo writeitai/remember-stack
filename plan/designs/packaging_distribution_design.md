@@ -301,10 +301,14 @@ ports and published extension points, keeping it portable off GCP too.
   version string); every release publishes `remember` to PyPI, the GHCR image, and the compose
   file pinned to that tag. *(D76 naming as amended by D108: PyPI/CLI `remember`, container
   `remember-stack`, internal engine import `rememberstack`; canonical home `remember.dev`.)*
-- **Upgrades**: Alembic migrations run **before** the API and workers roll.
+- **Upgrades.** Alembic migrations run **before** the API and workers roll.
   Follow [the compatibility rule in §6.1](#61-migration-compatibility).
-  Deployments that share PostgreSQL upgrade independently. Run `setup`
-  (or `alembic upgrade head`) once per deployment database, in any order or in parallel.
+  Deployments that share PostgreSQL upgrade independently. For an online upgrade
+  that changes the query-space manifest, run the incoming release's
+  `alembic upgrade head` while the previous release serves. Drain its readers
+  before running the incoming release's `setup`. Start the incoming API after
+  setup completes. [Saved-query registry](open_query_space_design.md#5-saved-query-registry)
+
   Migrations may touch cluster-global objects only idempotently and race-free: the shared
   `rememberstack_view_owner` role is created tolerating a concurrent creator, every other role
   is named per database (`rememberstack_query_<database>`, `rememberstack_graph_<database>`),
