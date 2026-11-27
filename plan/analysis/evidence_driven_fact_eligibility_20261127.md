@@ -319,6 +319,72 @@ instrumented runs. Both fenced reads hit the five-second statement timeout.
 Confine the fence to the fact paths, where evidence supplies a claim ID.
 Full-schema measurements through the SQL sandbox remain a qualification gate.
 
+## Round-six source checks
+
+- A model-free BEAM probe returned successful operation discovery and then
+  raised a network error on every later API call. The retrieval loop rendered
+  those errors and reached the synthesis stub once. The synchronous failure
+  boundary must distinguish loss of the admitted route from a typed response
+  supplied by that engine. A supervisor stopping the process separately can
+  lose the race to the provider call.
+  [Transport](../../benchmarks/rs_harness_beam/answer_agent.py#L222-L240) ·
+  [Retrieval](../../benchmarks/rs_harness_beam/answer_agent.py#L449-L467) ·
+  [Dispatch](../../benchmarks/rs_harness_beam/answer_agent.py#L692-L705)
+- The pinned CLI constructs the native and full-profile answer and judge
+  providers from `OpenRouterSettings`. CLI and protocol routing overrides
+  leave environment-supplied completion limits, reasoning, endpoint and
+  timeout effective. `max_completion_tokens` becomes `max_tokens` in the
+  request and is absent from the saved ablation identity. Intercepting the
+  pinned client payload produced different `max_tokens` for both provider
+  constructions when only the launch setting changed.
+  [Pinned provider construction](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/cli.py#L154-L185) ·
+  [Settings resolution](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/cli.py#L271-L299) ·
+  [Request](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/adapters/openrouter.py#L330-L369) ·
+  [Ablation resume](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/ablation.py#L823-L853)
+- `facts_current` reads `facts_visible_history`. Both public evidence views
+  join the same fact authority. Fencing those view definitions can multiply
+  range-leaf probes by every fact's evidence even for SQL with a small result
+  limit. BEAM's aggregate exercises this path. Its sample as written requests
+  `label`, while the view and manifest expose `fact_label`. Use the exact
+  query to check error parity and `fact_label AS label` to qualify the intended
+  ordered read. The deployed set-based joins give broad SQL a usable plan
+  shape while native batches have the IDs needed to constrain the probes.
+  [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68) ·
+  [Current fact view](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L228-L272) ·
+  [Evidence views](../../src/rememberstack/spine/migrations/versions/p9_09_0030_fact_authority_performance.py#L140-L181)
+- The carried claim view matches `ch.doc_id = c.doc_id` inside the occurrence
+  join. `chunk_claims` has logical references and no document column. Keeping
+  the claim document in the chunk probe prevents a link to another lineage
+  from restoring source membership when the original chunk is gone.
+  [Carried view](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174-L197) ·
+  [Occurrence schema](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L583-L595)
+- Native LoCoMo answer and judge load and replace all of `state.json`.
+  Atomic replacement prevents a partial file but two writers on separate
+  stores can still overwrite each other's records. Ablation execution and
+  review similarly share their output's checkpoint. The store lock already
+  held by the shard runner can precede the checkpoint lock.
+  [Answer load](../../benchmarks/locomo/runner.py#L621) ·
+  [Answer write](../../benchmarks/locomo/runner.py#L823-L829) ·
+  [Judge write](../../benchmarks/locomo/runner.py#L946-L952) ·
+  [Ablation review](../../benchmarks/locomo/ablation.py#L643-L664) ·
+  [Shard lock](../../benchmarks/locomo/sharding/run_shard.sh#L85-L87)
+- BEAM writes the per-question file first and then truncates `state.json`.
+  Both resume and scoring read `state.json`, which already contains the full
+  answer payload. Committing it first by atomic replacement leaves enough
+  information to recover the per-question files after interruption.
+  [Write order](../../benchmarks/rs_harness_beam/answer_agent.py#L737-L767) ·
+  [Scoring input](../../benchmarks/rs_harness_beam/official_score.py#L419-L425)
+- The graph gate returns immediately for deployments with no declared
+  periods. Otherwise only a past belief pin with a later declaration,
+  retraction or mode event in the deployment calls the ledger-backed helper.
+  All other pins use the current projection.
+  [Graph gate](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L1230-L1258)
+
+A reduced PostgreSQL 17.11 fixture executed the shipped fact and carried
+view definitions. BEAM's original sample failed with `42703` and the
+`fact_label AS label` sample returned the row. The carried view excluded
+the other-document chunk and accepted the same-document control.
+
 ## Prior qualification and alternatives
 
 - D142's 300k-chunk gate measured BM25 chunk retrieval at 263/267 ms unfiltered

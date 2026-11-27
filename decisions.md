@@ -8752,8 +8752,8 @@ generations, retrieval and rendering use their existing code and identities.
 and before the D140 occurrence and readable-version probes. Reuse the keyed
 lookups for counts and representative evidence. Key the origin chunk from
 its claim within fact reads and the raw-support absence check from its fact.
-Keep public claim scans set-based with shared visibility predicates. Use
-the same gate in nomination and confirmation before eligibility cuts. Key
+Keep public claim, fact and evidence scans set-based with shared predicates.
+Use the same gate in nomination and confirmation before eligibility cuts. Key
 the single forward merge walk by deployment and entity at the stored endpoint
 and at every redirect. Keep D153's shared survivor visibility checks.
 
@@ -8773,10 +8773,12 @@ measure work and latency at scale. Commit compatible view replacements
 separately. On benchmark start and resume, verify the running API image and
 effective retrieval settings and bind every database connection to the
 frozen scoring data through the last checkpoint. Permit cost receipts on
-the private restore. LoCoMo pins the store per sample and resumes with its
-original storage stack, evaluator and reader inputs. BEAM pins the ordered
-questions, evaluator and settings and serializes checkpoint writes across
-arms. D163 evaluation requires explicit opt-in under a fresh run identity.
+the private restore. LoCoMo pins each sample's store, its original evaluator
+and the evaluator's resolved provider settings. All writers serialize by
+canonical checkpoint path. BEAM pins the ordered questions, evaluator and
+reader settings. It makes admitted route loss fatal before synthesis or
+publication and uses atomic run state to recover individual answer files.
+D163 evaluation requires explicit opt-in under a fresh run identity.
 
 [D153 §4.3](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
 [Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·

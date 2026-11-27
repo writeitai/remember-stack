@@ -504,9 +504,10 @@ a launcher verifies the running API image, resolved retrieval settings,
 live schema and database connections against the original run and the
 sample's frozen store on start and resume. It keeps the private service
 bound through the last checkpoint, with retrieval data read-only and cost
-receipts enabled on the restore. It dispatches the recorded evaluator with
-the restored mount and original inputs. Using D163 requires explicit opt-in
-under a fresh run identity.
+receipts enabled on the restore. It verifies the evaluator's resolved
+non-secret OpenRouter settings and dispatches the recorded evaluator with the
+restored mount and original inputs. Using D163 requires explicit opt-in under
+a fresh run identity.
 [Benchmark admission](shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime)
 
 ## 7. Answer loop
@@ -786,6 +787,9 @@ These comparison controls change no ingestion or D56 paid-reuse boundary.
 
 `run.json`, manifests, and rendered document hashes are immutable. `state.json` is atomically
 replaced after each ingestion, readiness checkpoint, answer, and judge.
+Under proposed D163, every writer holds the canonical checkpoint path lock
+from before state load or creation through its final write.
+[Checkpoint lock](shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime)
 
 ### No cross-revision ingest adoption
 

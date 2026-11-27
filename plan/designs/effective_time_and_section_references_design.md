@@ -913,13 +913,12 @@ excludes that edition. The gate closes this without touching fact windows:
   The current-belief check asks whether a path exists from the fact's evidence through
   `chunk_claims` and the chunk to `document_version_scope`. The proposed D163 amendment
   binds the native probes in that order and keeps the raw-support absence check scoped
-  to the candidate fact's evidence. For a supplied past `believed_at` (open-query callers
-  and belief-pinned graph helpers) the projection cannot answer; the probe instead collects the
-  candidate fact's bounded set of supporting lineages and evaluates them with
-  `versions_in_scope(…, believed_at, doc_ids)`, i.e. the ledgers. Context candidate
-  depth comes from `ContextRetrievalBudget.candidate_depth`. It uses the supplied
-  `candidate_k` or defaults to `max(4 × k, 60)`. A fact supported only by
-  out-of-force text takes no result slot. Evidence is hydrated after confirmation
+  to the candidate fact's evidence. For a past open-query `believed_at`,
+  `fact_in_scope_support` uses the fact's occurrence lineages to read the declaration
+  ledgers, using `versions_in_scope(…, believed_at, doc_ids)` for periodised evidence.
+  Context candidate depth comes from `ContextRetrievalBudget.candidate_depth`.
+  It uses the supplied `candidate_k` or defaults to `max(4 × k, 60)`. A fact supported
+  only by out-of-force text takes no result slot. Evidence is hydrated after confirmation
   and only from in-scope claims. [D153 fact-path design](shared_retrieval_eligibility_design.md#evidence-driven-d140-time-gate)
 - The gate never changes stored counts (D54), windows (D118) or currency; it is a visibility
   rule on evidence.
@@ -931,8 +930,12 @@ excludes that edition. The gate closes this without touching fact windows:
   statement applies it before its budget, all inside the traversal's own snapshot: an
   ineligible edge never spends a budget or a result slot, and the gate and the traversal can
   never see different data. The gate is evaluated lazily, only until a level's budget is
-  filled. A deployment that has never declared a period answers `true` immediately, keeping
-  the graph's surviving-provenance rule unchanged there.
+  filled. A deployment that has never declared a period returns `true` immediately
+  and traversal relies on the graph's surviving-provenance rule. For other deployments,
+  the graph helper reads `document_version_scope`, including when a past `believed_at`
+  has no later declaration, retraction or effective-time mode event in the deployment.
+  When `believed_at` precedes `evaluated_at` and any such event is later than
+  `believed_at`, it calls `memory_v1.fact_in_scope_support` to read the ledgers.
 
 - **Conflicting dates.** The gate and the fact window are independent conditions and both
   must hold. If a claim's own validity says "from 2025" but its only occurrences are in an
