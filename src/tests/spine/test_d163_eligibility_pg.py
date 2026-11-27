@@ -492,6 +492,108 @@ def test_latency_inherits_p1_settings_for_each_timed_batch(
     assert report["p1_settings"]["max_parallel_workers_per_gather"] == "3"
 
 
+def test_latency_rejects_wrong_chunk_and_partition_scale_before_timing(
+    d163_corpus: tuple[Engine, Corpus], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine, corpus = d163_corpus
+    sizes = qualification.LATENCY_BATCH_SIZES
+    case = corpus.case.model_copy(
+        update={
+            "batch_sizes": sizes,
+            "candidate_keys": [
+                (kind, str(uuid4()))
+                for kind, size in sizes.items()
+                for _ in range(size)
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        qualification, "_measured", lambda *args, **kw: pytest.fail("started timing")
+    )
+    for stratum, message in (
+        ("300k", "requires 300,000 chunks"),
+        ("120-leaves", "requires 120 monthly chunks leaves"),
+    ):
+        with pytest.raises(AssertionError, match=message):
+            qualification.latency(
+                engine, case, timeout=20, samples=40, explain=False, stratum=stratum
+            )
+
+
+def test_latency_requires_both_attested_batches_with_eligible_support(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with scratch_database(TARGET_HEAD) as engine:
+        corpus = seed_corpus(engine)
+        observation = str(corpus.facts["observation", "multi_source"])
+        relation = str(corpus.facts["relation", "multi_source"])
+        unsupported = str(corpus.facts["relation", "absent"])
+        wrong_model = str(corpus.facts["relation", "carried"])
+        wrong_policy = str(corpus.facts["relation", "split_links"])
+        with engine.begin() as connection:
+            _expand_chunks(connection, size=812)
+            connection.execute(
+                text(
+                    "UPDATE relations SET embedding_model='other' WHERE relation_id=:id"
+                ),
+                {"id": wrong_model},
+            )
+            connection.execute(
+                text(
+                    "UPDATE relations SET embedding_input_policy_version='other' "
+                    "WHERE relation_id=:id"
+                ),
+                {"id": wrong_policy},
+            )
+        # Use one input per kind so the validation can run on the small fact corpus.
+        sizes = {"observation": 1, "relation": 1}
+        monkeypatch.setattr(qualification, "LATENCY_BATCH_SIZES", sizes)
+
+        def run(relation_id: str, *, stratum: str | None = "hosted") -> dict[str, Any]:
+            case = corpus.case.model_copy(
+                update={
+                    "batch_sizes": sizes,
+                    "candidate_keys": (
+                        ("observation", observation),
+                        ("relation", relation_id),
+                    ),
+                }
+            )
+            return qualification.latency(
+                engine, case, timeout=20, samples=1, explain=False, stratum=stratum
+            )
+
+        with monkeypatch.context() as no_timing:
+            no_timing.setattr(
+                qualification,
+                "_measured",
+                lambda *args, **kw: pytest.fail("started timing"),
+            )
+            for invalid in (str(uuid4()), wrong_model, wrong_policy):
+                with pytest.raises(
+                    AssertionError,
+                    match="relation batch requires 1 distinct model-attested",
+                ):
+                    run(invalid)
+            with pytest.raises(AssertionError, match="distinct model-attested"):
+                run(str(uuid4()), stratum=None)
+            with pytest.raises(
+                AssertionError,
+                match="relation batch requires an eligible supporting-evidence control",
+            ):
+                run(unsupported)
+
+        report = run(relation)
+    assert report["scale"] == {
+        "chunks": 812,
+        "range_leaves": {"chunks": 10, "chunk_claims": 10},
+    }
+    for kind, control in (("observation", observation), ("relation", relation)):
+        batch = report[f"batch/{kind}"]
+        assert batch["last_rows"] == batch["inputs"] == 1
+        assert batch["positive_control_fact_id"] == control
+
+
 def test_contradiction_capture_preserves_rows_before_and_after_the_member_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

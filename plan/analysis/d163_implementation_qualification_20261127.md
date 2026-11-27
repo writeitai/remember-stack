@@ -59,16 +59,16 @@ PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification compare \
 ```
 
 Each case has `deployment_id`, `embedding_model`, a fixed numeric `vector`,
-and `evaluated_at`. For scoped comparisons supply `entity_ids` and the subset
-`ranking_entity_ids`. Supply a `predicate` to exercise filtered nomination
-and final confirmation.
+and `evaluated_at` with a timezone offset. For scoped comparisons supply
+`entity_ids` and the subset `ranking_entity_ids`. Supply a `predicate` to
+exercise filtered nomination and final confirmation.
 The case can specify `time` (the public current, at, overlap or history
 arguments), `believed_at` for the ledger check, and distinct `candidate_keys`
 as `[kind, UUID]` pairs. Omit keys to compare every attested fact embedding
 in the deployment. `batch_sizes` also compares fixed P1 batches of those sizes
 and their complete final confirmation rows. `k` defaults to 50 and the native
 read uses the corresponding default nomination depth. Keep captures private
-because they include labels, BEAM rows and other store data.
+because they include complete public view rows, labels and other store data.
 
 The capture records the native broad read's HNSW batches before deduplication
 and its batch-gate SQL rows. For each broad or configured scoped native read,
@@ -86,9 +86,21 @@ Compare requires the expected runtime manifest at each schema head and matching
 effective sandbox JIT settings. It checks ordered raw batches, ordered final
 facts with their contradiction blocks, and the BEAM statements' ordered rows
 and typed outcomes. It runs `EXCEPT ALL` in both directions over the SQL cuts,
-including native final confirmation and contradiction membership, so repeated
-rows still count. Use a diagnostic timeout sufficient for the previous gate to
-finish. Regenerate both captures with the native confirmation cuts.
+including native final confirmation, contradiction membership and all five
+broad sandbox views. The comparison counts repeated rows and ignores incidental
+order in those broad reads.
+
+The broad export runs as the query login and uses the recorded diagnostic
+`--timeout` to read every row before the response caps. It reads the installed
+`facts_current` definition from the catalog and replaces its statement clock
+with the case instant in the diagnostic SQL. This fixes both membership and
+the returned `evaluated_at` value. Capture also
+runs the original unfiltered requests under the interactive limits and records
+typed outcomes and executed plans, including planning time and buffer use.
+A canceled plan reports its typed error. Compare checks completion and
+truncation on both sides and requires a plan for each completed read.
+Matching statement timeouts still require equal complete exports.
+Regenerate both captures to include the broad view cuts.
 
 [Oracle and latency harness](../../benchmarks/d163_qualification.py) ·
 [Staged restore](../../benchmarks/d163_staged_restore.py)
@@ -98,10 +110,16 @@ finish. Regenerate both captures with the native confirmation cuts.
 On each PostgreSQL 18 stratum, run the target with 2 vCPU and 4 GB, fixed
 vectors, and no concurrent readers. Every qualification case specifies
 `"batch_sizes": {"observation": 804, "relation": 535}`. Supply current
-scoped anchors below the raw-row budget. The stratum gate requires both fact
-batches and both native reads to run. Run with sparse statistics and again after
-`ANALYZE`, retaining the JSON, which includes the executed custom and generic
-plans, their buffer counts and planning times.
+scoped anchors below the raw-row budget. Before timing, the gate counts chunks
+in the case deployment and checks monthly and default leaves on both `chunks`
+and `chunk_claims`. It verifies that both batches contain the required number
+of distinct facts with nonzero embeddings for the specified model and current
+fact input policy. With supplied keys, it takes the first declared number of
+IDs per kind. Each batch must return an eligible fact with supporting evidence.
+The report records the observed scale and the two control IDs.
+Run with sparse statistics and again after `ANALYZE`, retaining the JSON,
+which includes the executed custom and generic plans, their buffer counts
+and planning times.
 
 ```bash
 PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification latency \
@@ -109,9 +127,12 @@ PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification latency \
   --stratum hosted --plans --samples 40 --output latency.json
 ```
 
-Use `--stratum 300k`, `3m`, or `120-leaves` for the other gates. The latter
-uses 120 monthly leaves plus the default. The harness times SQL without
-EXPLAIN and includes the native operation at k=50, candidate depth 200.
+The hosted stratum uses 812 chunks and ten leaves including the default.
+Use `--stratum 300k` or `3m` for exactly 300,000 or 3,000,000 chunks with ten
+leaves. Use `120-leaves` for 120 monthly leaves plus the default, with the
+same chunk count and batches as the matching ten-leaf run. The harness times
+SQL without EXPLAIN and includes the native operation at k=50, candidate
+depth 200.
 Each standalone batch sample uses a fresh P1 ranked-read transaction on
 `--database`, the P1 connection URL. The timer starts after connection setup
 and includes SQL planning and execution. The report's `p1_settings` records
@@ -285,6 +306,30 @@ BEAM outcomes matched. A regression changed a single label in one native SQL
 batch on a row beyond top-k. That cut reported one missing and one extra row.
 The replay cuts and ordered results matched.
 
+### Round-four oracle rerun
+
+The four time modes matched 1,060 rows per release across 112 SQL cuts on
+physical PostgreSQL 18.6 copies. The five broad views accounted for 388 of
+those rows. All five interactive reads completed on both releases with
+inherited `jit=on`, and both captures recorded executed plans and buffer
+counts. A PostgreSQL regression changed only `evidence_lineage.source_handle`
+while preserving the sandbox row count, the ordered native results and the
+BEAM results. The broad cut reported missing and extra rows. A separate
+duplicate in that cut was counted once as extra.
+
+The latency CLI rejected a 14-chunk fixture presented as `300k` with 804
+nonexistent observation IDs and 535 nonexistent relation IDs. After growing
+the fixture to 812 chunks and ten leaves, it rejected the same IDs for
+`hosted`. The PostgreSQL regression also checks a stale model stamp, a stale
+policy stamp and an attested fact without eligible support.
+
+The valid hosted-size synthetic run passed with inherited `jit=on` and 40
+warm samples per workload. The 804-input observation batch returned 802
+rows at 0.089 s p95. The 535-input relation batch returned 530 rows at
+0.067 s p95. Native broad and scoped p95 were 2.83 s and 1.49 s. Both modes
+completed all samples and returned 50 facts in their final samples. Both
+custom and generic batch plans completed.
+
 ### Synthetic latency
 
 The round-three smoke run used 812 chunks and 121 leaves on a 2-vCPU, 3-GiB
@@ -373,6 +418,17 @@ The round-three harness and D163 eligibility selection passed all 18 tests
 with PostgreSQL 18.6. This included the native-only mutation and the test that
 reads inherited settings inside each timed P1 batch transaction. Ruff formatting
 and lint, Pyright, the import contracts and the test inventory passed.
+
+The round-four qualification, eligibility and migration selection passed all
+25 tests on PostgreSQL 18.6. The LoCoMo protocol and runner selection passed
+145 tests, including Full-v47's rejection of the D163 manifest. Ruff
+formatting and lint, Pyright, the import contracts, the test inventory and
+the capture fixture check passed.
+
+The broader selection passed 281 tests outside MinIO with one expected D122
+failure. The first MinIO run used `btree_gist` 1.9, which the native capture
+guard rejected. All 14 MinIO tests passed on the stock image with
+`btree_gist` 1.8, including the collector handoff.
 
 ```bash
 uv run ruff format --check src/ benchmarks/

@@ -20,7 +20,21 @@ def _capture(*, head: str) -> dict[str, Any]:
         "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[head],
         "sandbox_settings": {"jit": "on"},
         "case": {},
-        "cuts": {"contradiction/broad": [], "native_final/broad": []},
+        "cuts": {
+            "contradiction/broad": [],
+            "native_final/broad": [],
+            **{f"sandbox/{view}": [] for view in qualification.BROAD_VIEWS},
+        },
+        "sandbox": {
+            view: {
+                "termination": "completed",
+                "error": None,
+                "truncation": None,
+                "limits": {"statement_timeout_ms": 5000},
+                "work": {"plan": {"Execution Time": 1}, "error": None},
+            }
+            for view in qualification.BROAD_VIEWS
+        },
         "raw": {},
         "ordered": {
             "final/broad": [("observation", "fact", {"returned": 1, "total": 2})]
@@ -108,6 +122,40 @@ def test_compare_requires_native_final_confirmation_cuts() -> None:
     with pytest.raises(AssertionError, match="native final confirmation cuts"):
         qualification.compare(connection, baseline, target)
     connection.execute.assert_not_called()
+
+
+def test_compare_requires_broad_sandbox_cuts() -> None:
+    baseline = _capture(head=qualification.BASELINE_HEAD)
+    target = _capture(head=qualification.TARGET_HEAD)
+    connection = MagicMock(spec=Connection)
+    for record in (baseline, target):
+        record["cuts"].pop("sandbox/evidence_lineage")
+    with pytest.raises(AssertionError, match="all broad sandbox cuts"):
+        qualification.compare(connection, baseline, target)
+    connection.execute.assert_not_called()
+
+
+def test_compare_checks_broad_sandbox_completion_and_executed_work() -> None:
+    baseline = _capture(head=qualification.BASELINE_HEAD)
+    target = _capture(head=qualification.TARGET_HEAD)
+    connection = MagicMock(spec=Connection)
+    connection.execute.return_value.one.return_value = (0, 0)
+    assert all(
+        qualification.compare(connection, baseline, target)[
+            "sandbox_completion_matches"
+        ].values()
+    )
+
+    outcomes = target["sandbox"]
+    outcomes["claims_live"]["work"] = {"plan": None, "error": "statement_timeout"}
+    outcomes["evidence_lineage"].update(termination="failed", error="statement_timeout")
+    matches = qualification.compare(connection, baseline, target)[
+        "sandbox_completion_matches"
+    ]
+    assert {view for view, match in matches.items() if not match} == {
+        "claims_live",
+        "evidence_lineage",
+    }
 
 
 @pytest.fixture

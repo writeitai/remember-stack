@@ -61,7 +61,10 @@ from rememberstack.spine.query_space import load_manifest
 from rememberstack.surfaces.query_engine import _CONFIRM_FACTS_CONTEXT_BY_KIND
 from rememberstack.surfaces.query_engine import QueryEngine
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
+from rememberstack.surfaces.query_sandbox.executor import _database_failure_result
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from rememberstack.surfaces.query_sandbox.grammar import validate_sql
+from rememberstack.surfaces.query_sandbox.limits import INTERACTIVE_LIMITS
 
 BASELINE_HEAD = "p9_55_0076"
 TARGET_HEAD = "p9_58_0079"
@@ -83,6 +86,12 @@ LATENCY_TARGETS = {
     "300k": (2.0, 10.0),
     "3m": (2.0, 10.0),
     "120-leaves": (5.0, None),  # native operation deadline applies
+}
+LATENCY_SCALES = {
+    "hosted": (812, 10),
+    "300k": (300_000, 10),
+    "3m": (3_000_000, 10),
+    "120-leaves": (None, 121),  # vary the partition count independently
 }
 LATENCY_BATCH_SIZES = {"observation": 804, "relation": 535}
 
@@ -211,24 +220,47 @@ def _index(engine: Engine, case: Case) -> PostgresP1Index:
     )
 
 
-def _fact_keys(connection: Connection, case: Case) -> tuple[tuple[str, str], ...]:
-    if case.candidate_keys:
-        return case.candidate_keys
-    return tuple(
-        (kind, str(row[0]))
-        for kind in KINDS
-        for row in connection.execute(
+def _attested_ids(
+    connection: Connection,
+    case: Case,
+    *,
+    kind: FactKind,
+    ids: list[str] | None = None,
+    limit: int | None = None,
+) -> list[str]:
+    keyed = f"AND {kind}_id = ANY(CAST(:ids AS uuid[]))" if ids is not None else ""
+    return list(
+        connection.execute(
             text(
-                f"SELECT {kind}_id FROM {kind}s WHERE deployment_id=:deployment "
+                f"SELECT {kind}_id::text FROM {kind}s AS fact WHERE deployment_id=:deployment "
                 f"AND embedding IS NOT NULL AND vector_norm(embedding)>0 "
                 f"AND embedding_model=:model AND embedding_input_policy_version=:policy "
-                f"ORDER BY {kind}_id"
+                f"{keyed} ORDER BY fact.{kind}_id LIMIT :limit"
             ),
             {
                 "deployment": case.deployment_id,
                 "model": case.embedding_model,
                 "policy": FACT_INPUT_POLICY,
+                "ids": ids,
+                "limit": limit,
             },
+        ).scalars()
+    )
+
+
+def _fact_keys(
+    connection: Connection, case: Case, *, fixed_batches: bool = False
+) -> tuple[tuple[str, str], ...]:
+    if case.candidate_keys:
+        return case.candidate_keys
+    return tuple(
+        (kind, fact_id)
+        for kind in KINDS
+        for fact_id in _attested_ids(
+            connection,
+            case,
+            kind=kind,
+            limit=case.batch_sizes.get(kind, 0) if fixed_batches else None,
         )
     )
 
@@ -468,6 +500,25 @@ def _require_runtime(record: Mapping[str, Any], *, head: str) -> None:
         raise AssertionError(f"runtime manifest does not match schema head {head}")
 
 
+def _sandbox_completed(state: Mapping[str, Any]) -> bool:
+    return state["termination"] == "completed" and state["error"] is None
+
+
+def _sandbox_comparable(before: Mapping[str, Any], after: Mapping[str, Any]) -> bool:
+    fields = ("termination", "error", "truncation", "limits")
+    if any(before[field] != after[field] for field in fields):
+        return False
+    if _sandbox_completed(before):
+        return all(
+            outcome["work"]["error"] is None and outcome["work"]["plan"] is not None
+            for outcome in (before, after)
+        )
+    # A full diagnostic export can prove equality even if both requests time out.
+    return before["termination"] == "failed" and before["error"] == (
+        QueryErrorCode.STATEMENT_TIMEOUT
+    )
+
+
 def compare(
     connection: Connection, baseline: dict[str, Any], target: dict[str, Any]
 ) -> dict[str, Any]:
@@ -489,6 +540,12 @@ def compare(
             raise AssertionError(
                 "recapture both releases with native final confirmation cuts"
             )
+        if any(
+            f"sandbox/{view}" not in record["cuts"]
+            or "work" not in record.get("sandbox", {}).get(view, {})
+            for view in BROAD_VIEWS
+        ):
+            raise AssertionError("recapture both releases with all broad sandbox cuts")
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
     counts = {}
@@ -507,6 +564,12 @@ def compare(
         "cuts": counts,
         "raw_batches_match": baseline["raw"] == target["raw"],
         "ordered_top_k_match": baseline["ordered"] == target["ordered"],
+        "sandbox_completion_matches": {
+            view: _sandbox_comparable(
+                baseline["sandbox"][view], target["sandbox"][view]
+            )
+            for view in BROAD_VIEWS
+        },
         "beam_matches": {
             name: baseline["beam"][name] == target["beam"][name]
             and _beam_completed(name, baseline["beam"][name])
@@ -560,6 +623,64 @@ def _beam_completed(name: str, result: Mapping[str, Any]) -> bool:
     return result["termination_reason"] == "completed" and result["error_code"] is None
 
 
+def _broad_view_rows(
+    sandbox: QuerySandboxExecutor, *, evaluated_at: datetime, timeout_ms: int
+) -> dict[str, list[str]]:
+    """Export unfiltered rows before the response caps on the frozen fixture."""
+    if evaluated_at.utcoffset() is None:
+        raise AssertionError("the paired read instant requires a timezone")
+    cuts = {}
+    with sandbox._transaction(
+        limits_ms=INTERACTIVE_LIMITS, statement_timeout_ms=timeout_ms
+    ) as cursor:
+        cursor.execute("SET LOCAL TIME ZONE 'UTC'")
+        cursor.execute("SELECT pg_get_viewdef('memory_v1.facts_current'::regclass)")
+        definition = cursor.fetchone()
+        assert definition is not None
+        # Pin only the installed view's clock, including in its membership test.
+        pinned, substitutions = re.subn(
+            r"\b(?:pg_catalog\.)?statement_timestamp\(\)",
+            sql.Literal(evaluated_at).as_string(cursor),
+            definition[0].rstrip().removesuffix(";"),
+        )
+        if substitutions != 1:
+            raise AssertionError("expected one statement clock in facts_current")
+        for view in BROAD_VIEWS:
+            source = (
+                sql.SQL(cast("LiteralString", f"({pinned})"))
+                if view == "facts_current"
+                else sql.Identifier("memory_v1", view)
+            )
+            # PostgreSQL preserves JSON numbers and nulls without a Python round trip.
+            cursor.execute(
+                sql.SQL("SELECT to_jsonb(view_row)::text FROM {} AS view_row").format(
+                    source
+                )
+            )
+            cuts[f"sandbox/{view}"] = [row[0] for row in cursor.fetchall()]
+    return cuts
+
+
+def _sandbox_work(sandbox: QuerySandboxExecutor, query: str) -> dict[str, Any]:
+    """Measure the actual broad statement with the sandbox's transaction limits."""
+    statement = validate_sql(query).sql
+    try:
+        with sandbox._transaction(
+            limits_ms=INTERACTIVE_LIMITS,
+            statement_timeout_ms=INTERACTIVE_LIMITS.statement_timeout_ms_default,
+        ) as cursor:
+            cursor.execute(
+                f"EXPLAIN (ANALYZE, BUFFERS, TIMING OFF, FORMAT JSON) {statement}".encode(),
+                {},
+            )
+            row = cursor.fetchone()
+            assert row is not None
+            return {"plan": row[0][0], "error": None}
+    except psycopg.Error as error:
+        code, _ = _database_failure_result(error=error, uses_graph_helper=False)
+        return {"plan": None, "error": code}
+
+
 def _sandbox_queries(sandbox: QuerySandboxExecutor, *, samples: int) -> dict[str, Any]:
     """Time broad SQL and the corrected sample under interactive limits."""
     beam = dict(_OPEN_QUERY_SQL)
@@ -590,7 +711,9 @@ def _sandbox_queries(sandbox: QuerySandboxExecutor, *, samples: int) -> dict[str
             "error": result.error_code,
             "last_rows": len(result.rows),
             "truncation": result.truncation_reason,
+            "limits": result.limits.model_dump(mode="json"),
             "last_elapsed_ms": result.elapsed_ms,
+            **({"work": _sandbox_work(sandbox, query)} if name in BROAD_VIEWS else {}),
             **(_percentiles(times) if times else {}),
         }
     return report
@@ -642,12 +765,93 @@ def _plans(connection: Connection, statement: Statement) -> dict[str, Any]:
 
 
 def _timed_batch(
-    index: PostgresP1Index, statement: Statement, *, timeout: float
+    index: PostgresP1Index,
+    statement: Statement,
+    *,
+    timeout: float,
+    expected_rows: int | None,
 ) -> tuple[int, float]:
     with index._ranked_connection(deadline=monotonic() + timeout) as connection:
         start = monotonic()
         rows = _run(connection, statement)
-        return len(rows), monotonic() - start
+        elapsed = monotonic() - start
+    if expected_rows is not None and len(rows) != expected_rows:
+        raise AssertionError("batch result count changed after workload validation")
+    return len(rows), elapsed
+
+
+def _latency_scale(
+    connection: Connection, *, case: Case, stratum: str
+) -> dict[str, Any]:
+    expected_chunks, expected_leaves = LATENCY_SCALES[stratum]
+    chunks = connection.execute(
+        text("SELECT count(*) FROM public.chunks WHERE deployment_id=:deployment"),
+        {"deployment": case.deployment_id},
+    ).scalar_one()
+    if expected_chunks is not None and chunks != expected_chunks:
+        raise AssertionError(
+            f"{stratum} requires {expected_chunks:,} chunks for the case deployment. "
+            f"Found {chunks:,}."
+        )
+    leaf_counts = {}
+    for table in ("chunks", "chunk_claims"):
+        leaves, defaults, monthly = connection.execute(
+            text("""
+                WITH leaves AS (
+                    SELECT pg_get_expr(child.relpartbound, child.oid) AS bound
+                    FROM pg_partition_tree(CAST(:parent AS regclass)) AS part
+                    JOIN pg_class AS child ON child.oid = part.relid
+                    WHERE part.isleaf
+                ), ranges AS (
+                    SELECT bound, regexp_match(bound, :range_pattern) AS dates
+                    FROM leaves
+                )
+                SELECT count(*), count(*) FILTER (WHERE bound = 'DEFAULT'),
+                       count(*) FILTER (
+                           WHERE (dates[2]::timestamptz AT TIME ZONE 'UTC') =
+                                 (dates[1]::timestamptz AT TIME ZONE 'UTC') + interval '1 month'
+                       )
+                FROM ranges
+            """),
+            {
+                "parent": f"public.{table}",
+                "range_pattern": r"^FOR VALUES FROM \('([^']+)'\) TO \('([^']+)'\)$",
+            },
+        ).one()
+        if (leaves, defaults, monthly) != (expected_leaves, 1, expected_leaves - 1):
+            raise AssertionError(
+                f"{stratum} requires {expected_leaves - 1} monthly {table} leaves "
+                f"plus the default. Found {leaves} leaves, including {monthly} "
+                f"monthly and {defaults} default."
+            )
+        leaf_counts[table] = leaves
+    return {"chunks": chunks, "range_leaves": leaf_counts}
+
+
+def _validate_batch(
+    connection: Connection, case: Case, *, kind: FactKind, statement: Statement
+) -> tuple[int, str]:
+    ids = statement.parameters["batch_ids"]
+    attested = _attested_ids(connection, case, kind=kind, ids=ids)
+    if len(attested) != len(ids):
+        raise AssertionError(
+            f"{kind} batch requires {len(ids)} distinct model-attested facts "
+            f"in the case deployment. Found {len(attested)}."
+        )
+    eligible = _run(connection, statement)
+    control = connection.execute(
+        text(
+            f"SELECT {kind}_id::text FROM public.{kind}_evidence "
+            f"WHERE deployment_id=:deployment AND {kind}_id=ANY(CAST(:eligible AS uuid[])) "
+            f"AND stance='supports' ORDER BY {kind}_id LIMIT 1"
+        ),
+        {"deployment": case.deployment_id, "eligible": [row[0] for row in eligible]},
+    ).scalar_one_or_none()
+    if control is None:
+        raise AssertionError(
+            f"{kind} batch requires an eligible supporting-evidence control"
+        )
+    return len(eligible), control
 
 
 def latency(
@@ -677,9 +881,22 @@ def latency(
     if stratum is not None and statements.keys() != LATENCY_BATCH_SIZES.keys():
         raise AssertionError(f"{stratum} requires traced gates for both fact kinds")
     batch_timeout = min(timeout, DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS)
+    report: dict[str, Any] = {}
+    controls: dict[FactKind, tuple[int, str]] = {}
     with index._ranked_connection(deadline=monotonic() + batch_timeout) as connection:
-        keys = _fact_keys(connection, case)
-        settings = dict(
+        if stratum is not None:
+            report["scale"] = _latency_scale(connection, case=case, stratum=stratum)
+        keys = _fact_keys(connection, case, fixed_batches=True)
+        for kind, statement in statements.items():
+            if kind in case.batch_sizes:
+                statement = _fixed_batch(
+                    statement, keys, kind=kind, count=case.batch_sizes[kind]
+                )
+                statements[kind] = statement
+                controls[kind] = _validate_batch(
+                    connection, case, kind=kind, statement=statement
+                )
+        report["p1_settings"] = dict(
             connection.execute(
                 text("""
                     SELECT name, setting FROM pg_catalog.pg_settings
@@ -691,19 +908,17 @@ def latency(
             .tuples()
             .all()
         )
-    report: dict[str, Any] = {"p1_settings": settings}
     for kind, statement in statements.items():
-        if kind in case.batch_sizes:
-            statement = _fixed_batch(
-                statement, keys, kind=kind, count=case.batch_sizes[kind]
-            )
+        expected_rows, control = controls.get(kind, (None, None))
         measured = _measured(
-            lambda statement=statement: _timed_batch(
-                index, statement, timeout=batch_timeout
+            lambda statement=statement, expected_rows=expected_rows: _timed_batch(
+                index, statement, timeout=batch_timeout, expected_rows=expected_rows
             ),
             samples=samples,
         )
         measured["inputs"] = len(statement.parameters["batch_ids"])
+        if control is not None:
+            measured["positive_control_fact_id"] = control
         report[f"batch/{kind}"] = measured
         if explain:
             with index._ranked_connection(
@@ -857,6 +1072,7 @@ def main() -> None:
                 result["raw_batches_match"]
                 and result["ordered_top_k_match"]
                 and all(result["beam_matches"].values())
+                and all(result["sandbox_completion_matches"].values())
             ) or any(
                 count["missing"] or count["extra"] for count in result["cuts"].values()
             )
@@ -956,11 +1172,24 @@ def main() -> None:
                     not _beam_completed(name, outcome)
                     for name, outcome in result["beam"].items()
                 )
-                if args.operation in {"sandbox", "latency"}:
+                if args.operation == "capture":
+                    timeout_ms = int(args.timeout * 1000)
+                    result["cuts"].update(
+                        _broad_view_rows(
+                            sandbox,
+                            evaluated_at=case.evaluated_at,
+                            timeout_ms=timeout_ms,
+                        )
+                    )
+                    result["sandbox_oracle_timeout_ms"] = timeout_ms
+                    result["sandbox"] = _sandbox_queries(sandbox, samples=0)
+                else:
                     checks = _sandbox_queries(sandbox, samples=args.samples)
                     result["sandbox"] = checks
                     failed |= any(
-                        state["error"] is not None for state in checks.values()
+                        not _sandbox_completed(state)
+                        or (name in BROAD_VIEWS and state["work"]["error"] is not None)
+                        for name, state in checks.items()
                     )
             result["case"] = case.model_dump(mode="json")
             result.update(identity)

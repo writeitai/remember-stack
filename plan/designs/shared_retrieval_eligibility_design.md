@@ -858,18 +858,31 @@ completion. These are qualification targets for warm single-reader p95.
 
 | Store | P1 confirmation | Native wall time |
 | --- | --- | --- |
-| Hosted shape, 804 observation and 535 relation inputs | ≤1 s per batch | ≤5 s |
+| Hosted shape, 812 chunks and ten range leaves, 804 observation and 535 relation inputs | ≤1 s per batch | ≤5 s |
 | 300k and 3M chunks, ten range leaves, fixed candidate evidence | ≤2 s | ≤10 s for broad and bounded scoped reads |
 | 120 monthly leaves plus default, same candidates and evidence | ≤5 s | Existing operation deadline |
+
+Before timing, count the case deployment's chunks and check the actual leaves
+of both `chunks` and `chunk_claims`. The ten-leaf runs use nine monthly leaves
+and the default. Hold chunk count fixed between the 120-month run and its
+matching ten-leaf run.
+Each batch must resolve to the declared number of distinct facts of its kind
+with nonzero embeddings for the case model and fact input policy. Require an
+eligible fact with supporting evidence in each batch.
 
 Require completion and exercise the 50,000-raw-row scoped boundary.
 For the shared view dependency, check broad `claims_visible_history`,
 `claims_live`, `facts_current`, `fact_claim_evidence_live` and `evidence_lineage`
-reads without ID filters. Keep baseline rows, work and completion comparable
-under the existing sandbox deadline as corpus size, evidence fanout and
-partitions grow independently. Use the query login's effective JIT settings and
-record them in the report. Include both BEAM fact queries, keeping the typed
-error for `label` and timing `fact_label AS label`.
+reads without ID filters. Compare every column before result caps using
+`EXCEPT ALL` in both directions. In that diagnostic, bind the installed
+`facts_current` statement clock to the case instant so both releases use the
+same boundary for membership and the reported time. Record executed plans and
+typed completion for the original statements under the existing interactive
+sandbox limits as corpus size, evidence fanout and partitions grow independently.
+A paired timeout records matching deadline behavior. Full row equivalence still
+requires the complete diagnostic export. Use the query login's effective JIT
+settings and record them in the report. Include both BEAM fact queries, keeping
+the typed error for `label` and timing `fact_label AS label`.
 [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)
 
 **Migration check.** On a populated store, run `alembic upgrade head` and

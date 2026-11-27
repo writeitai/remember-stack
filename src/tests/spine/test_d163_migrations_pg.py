@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from datetime import UTC
 import json
 import logging
 import logging.config
@@ -38,6 +40,7 @@ from rememberstack.surfaces.query_sandbox.saved_queries import OperatorFixture
 from rememberstack.surfaces.query_sandbox.saved_queries import publish_surface_hash
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryRegistry
 from rememberstack.surfaces.query_sandbox.saved_queries import seed_shipped_examples
+from tests.spine.d163_scale_fixture import _expand_facts
 from tests.spine.test_d163_eligibility_pg import Corpus
 from tests.spine.test_d163_eligibility_pg import migration_config
 from tests.spine.test_d163_eligibility_pg import scratch_database
@@ -217,6 +220,89 @@ def test_d163_readers_reject_crossed_dsns_and_use_the_query_role_jit(
         assert report["sandbox_settings"]["jit"] == "on"
         assert report["sandbox_settings"]["jit_above_cost"] == "90000"
         assert report["sandbox"]["beam_predicates"]["termination"] == "completed"
+        for view in qualification.BROAD_VIEWS:
+            state = report["sandbox"][view]
+            assert state["termination"] == "completed"
+            assert state["limits"]["statement_timeout_ms"] == 5000
+            plan = state["work"]["plan"]
+            assert plan["Planning Time"] >= 0
+            assert plan["Plan"]["Actual Rows"] > 0
+            assert plan["Plan"]["Shared Hit Blocks"] > 0
+
+
+def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> None:
+    with scratch_database(TARGET_HEAD) as engine:
+        corpus = seed_corpus(engine)
+        with engine.begin() as connection:
+            _expand_facts(connection, kind="observation", size=115)
+        with _connect(engine) as connection:
+            _provision_query_role_password(connection=connection, engine=engine)
+        sandbox = _executor(engine, corpus, qualification.MANIFEST_BY_HEAD[TARGET_HEAD])
+        case = corpus.case
+
+        def snapshot(head: str) -> dict[str, Any]:
+            record = qualification.capture(engine, case, timeout=20)
+            record["cuts"].update(
+                qualification._broad_view_rows(
+                    sandbox, evaluated_at=case.evaluated_at, timeout_ms=20_000
+                )
+            )
+            return {
+                **record,
+                "schema_head": head,
+                "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[head],
+                "case": case.model_dump(mode="json"),
+                "sandbox_settings": {"jit": "off"},
+                "sandbox": qualification._sandbox_queries(sandbox, samples=0),
+                "beam": qualification._beam_queries(sandbox),
+            }
+
+        baseline = snapshot(BASELINE_HEAD)
+        current = baseline["cuts"]["sandbox/facts_current"]
+        assert current
+        assert {
+            datetime.fromisoformat(json.loads(row)["evaluated_at"]) for row in current
+        } == {case.evaluated_at}
+        early = qualification._broad_view_rows(
+            sandbox, evaluated_at=datetime(2023, 1, 1, tzinfo=UTC), timeout_ms=20_000
+        )
+        assert early["sandbox/facts_current"] == []
+
+        cut = "sandbox/evidence_lineage"
+        original = baseline["cuts"][cut]
+        state = baseline["sandbox"]["evidence_lineage"]
+        assert state["last_rows"] == state["limits"]["row_cap"] < len(original)
+        assert state["truncation"] == "row_cap"
+        with engine.begin() as connection:
+            definition = connection.exec_driver_sql(
+                "SELECT pg_get_viewdef('memory_v1.evidence_lineage'::regclass)"
+            ).scalar_one()
+            changed = definition.replace(
+                "lineage.source_handle,", "'changed'::text AS source_handle,"
+            )
+            assert changed != definition
+            connection.exec_driver_sql(
+                f"CREATE OR REPLACE VIEW memory_v1.evidence_lineage AS {changed}"
+            )
+        target = snapshot(TARGET_HEAD)
+        with engine.connect() as connection:
+            report = qualification.compare(connection, baseline, target)
+            assert report["raw_batches_match"] and report["ordered_top_k_match"]
+            assert all(report["beam_matches"].values())
+            assert all(report["sandbox_completion_matches"].values())
+            assert {
+                name: (counts["missing"], counts["extra"])
+                for name, counts in report["cuts"].items()
+                if counts["missing"] or counts["extra"]
+            } == {cut: (len(original), len(original))}
+
+            target["cuts"][cut] = [*reversed(original), original[0]]
+            assert qualification.compare(connection, baseline, target)["cuts"][cut] == {
+                "baseline": len(original),
+                "target": len(original) + 1,
+                "missing": 0,
+                "extra": 1,
+            }
 
 
 def test_d163_upgrade_and_downgrade_with_previous_readers(
