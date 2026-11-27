@@ -189,7 +189,8 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 1. **Claiming row.** One `processing_state` row owns an embed attempt for a **document
    version / representation** at stage `embed_chunk` (or an equivalent representation-scoped
    stage). Pure prepare (location facts + render) may run in that job before provider calls;
-   it does not require separate ledger rows.
+   it does not require separate ledger rows. A D162 CHUNK restart selects a distinct
+   embed delivery even when it keeps the existing cuts and IDs.
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
    configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
    (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
@@ -206,8 +207,9 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    readiness. A crash after the provider response and before a checkpoint may repeat a billable call.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
    stamp matching the **configured** `(policy_generation, embedder_generation)`
-   and input hash (or a closed typed skip: at minimum `empty_body`). Mixed or
-   stale attestation is not ready.
+   and input hash (or a closed typed skip such as `empty_body`). D162 readiness
+   and publication use the exact selected embed delivery and packing stamp.
+   Mixed or stale attestation is not ready.
 
 K/P and other stages are unchanged by this subsection.
 
@@ -253,8 +255,9 @@ infrastructure). The operational surface over it is thin and deterministic:
   transition may reroute it through the backfill lane when large. `payload` remains handler input
   for inspection, never the source of route, schedule, or retry state.
   [Proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
-  links a CHUNK restart to a confirmed oversize embed dead letter for
-  a version before first E1 readiness.
+  links a CHUNK restart to a confirmed oversize embed dead letter only for a
+  verified-private grid before first E1 completion. Other grids use same-grid
+  embed replay on a capable binding.
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.

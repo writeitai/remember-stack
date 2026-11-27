@@ -208,10 +208,11 @@ Embedding production remains asynchronous:
    `chunk_search`, with the vector and all attestation fields; and
 5. the work item becomes complete only after that transaction commits.
 
-For chunks, `search_text` may be written before the external vector returns so
-the lexical channel can become ready independently. The row is semantic-ready
-only when its non-null vector attestation matches the deployment's active
-embedding configuration.
+Legacy chunk writes may publish `search_text` before the vector returns to
+serve lexical search. [Proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
+checkpoints batches off-index and installs the full passage projection at
+first E1 publication. A row is semantic-ready only when its non-null vector
+attestation matches the deployment's active embedding configuration.
 
 Projection lag may reduce recall; it must never expose an ineligible record.
 Archive, invalidation, supersession, and forget are enforced by the

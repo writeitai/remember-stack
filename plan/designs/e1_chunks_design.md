@@ -202,8 +202,9 @@ blocks ≈ paragraphs, and the machinery is uniform.
 
 Pack whole blocks within one deepest-owner run to a whitespace-token
 target. A larger block becomes its own candidate. [Proposed D162](split_oversized_chunks_design.md)
-checks the full rendered embedding input for a new version or unpublished
-replay and cuts only over-ceiling candidates into contiguous source slices.
+checks the full rendered embedding input for new versions and recovery of
+verified-private grids. It cuts only over-ceiling candidates into contiguous
+source slices, trying fitting whole-block runs before internal anchors.
 Every piece keeps its original section owner (§3).
 
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some

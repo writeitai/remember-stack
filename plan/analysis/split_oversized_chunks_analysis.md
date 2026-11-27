@@ -45,13 +45,40 @@ coordinates and fitting output. Count the rendered D80 input with the actual
 tokenizer and qualify request-wide caps.
 [Pinned Qwen tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
 
-Inputs above the provider's actual limit cannot complete embedding. A
-conservative ceiling can sit below sizes it accepted. The incident versions
-never completed E1. CHUNK can recover them from committed E0. E0 can mark
-structure ready before E1 succeeds, so replay checks E1 completion.
-[E0 ready update](../../src/rememberstack/spine/document_catalog.py#L827-L852),
-[E1 completion](../../src/rememberstack/spine/readiness.py#L844-L881),
-[ordinary replay](../../src/rememberstack/spine/work_ledger.py#L1026-L1040).
+The incident versions never completed E1. E0 marks the version and
+representation ready, and public SQL can then expose their chunk IDs as soon
+as CHUNK commits. Legacy E1 also writes each successful batch to P1 before
+the job ends. A failed job or an empty P1 projection therefore cannot prove
+the grid stayed private. A gate applied from the first chunk write supplies
+that proof for new grids. Legacy recovery needs a recorded isolation boundary
+covering the entire exposure window.
+[E0 Ready update](../../src/rememberstack/spine/document_catalog.py#L827-L852),
+[public SQL](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719),
+[batch write](../../src/rememberstack/workers/e1.py#L535-L572).
+
+An otherwise identical embed enqueue hits the failed row because the ledger
+deduplicates on stage and component version. A new delivery generation
+separates work attempts from packing and paid reuse, including when the old
+grid fits a wider envelope.
+[Embed enqueue](../../src/rememberstack/workers/e1.py#L794-L811),
+[ledger uniqueness](../../src/rememberstack/spine/work_ledger.py#L1996-L2009).
+
+A 209-token paragraph and an appended 17,000-digit block pack together under
+D58. The paragraph fits alone and keeps its D80 hash, but its second sentence
+qualifies as an internal anchor. Trying the whole-block seam first preserves
+that hash. The pinned Qwen pre-tokenizer isolates each digit, so the appended
+block alone exceeds 16,384 model tokens.
+[Packer](../../src/rememberstack/core/chunker.py#L221-L240),
+[pinned tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
+
+D140 records the inherited date before embedding. A fresh lookup after the
+original donor is deleted can move relative dates from the inherited date to
+the version date. Refining verified same-version spans preserves those dates
+even when the new pieces consume different neighbors. Keeping committed cuts
+also avoids assigning one date to a merged piece spanning different origins.
+[Origin record](../../src/rememberstack/workers/e1.py#L167-L216),
+[donor lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345),
+[E2 date](../../src/rememberstack/workers/e2.py#L1794-L1801).
 
 ## Benchmark fixture audit
 
@@ -66,10 +93,29 @@ pinned LoCoMo binding at 22,528 or higher.
 [Frozen rendering](../../benchmarks/locomo/protocol.py#L581-L629),
 [binding](../../benchmarks/locomo/protocol.py#L127-L134).
 
-The BEAM 100K/1 Markdown rendering fit in 14,958 tokens with framing and
-header. Whole-source JSON yielded a 529,540-byte body. Use the exact
-retained inputs and public reads. Matching IDs and quotes can coexist with
-different SQL values or fact windows. Fixed vectors bypass query embedding.
-[BEAM provenance](../../benchmarks/rs_harness_beam/fixtures/PROVENANCE.md),
-[SQL path](../../benchmarks/rs_harness_beam/answer_agent.py#L511-L525),
+For BEAM 100K/1, flatten batches, turn groups and their 188 messages in file
+order. Render each message as `{role}: {content}` with a blank line between
+messages. Across single blocks and contiguous block runs of up to 400
+whitespace tokens, the largest D80-normalized body has 14,187 NFC UTF-8 bytes.
+Add up to 770 tokens for the bounded D80 header and separators and one for
+the end token. **14,958 is a conservative Qwen token bound before extra
+route framing.** Whole-source JSON yields a 529,540-byte normalized body.
+Qualification uses the exact retained rendering.
+[Pinned BEAM chat](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json).
+
+Matching chunk hashes and queries on retained vectors do not exercise ingest
+delivery. The current OpenRouter decoder sorts indices and checks count and
+dimension, so a singleton at index `1` with a valid vector passes P1. The
+strict D162 decoder rejects it. Replay from raw transport replies can detect
+that difference before a protected ingest changes worker.
+[Decoder](../../src/rememberstack/adapters/openrouter.py#L1034-L1077),
+[P1 validation](../../src/rememberstack/ports/p1_index.py#L26-L49).
+
+Matching IDs and quotes can coexist with different SQL values or fact windows.
+Conversely, identical SQL runs generate fresh request IDs and timings.
+Freeze evaluation instants and normalize the per-call telemetry to measure
+result parity. Fixed vectors bypass query embedding, so qualify that path
+before using them to isolate reader changes.
+[SQL response](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061-L1085),
+[BEAM SQL path](../../benchmarks/rs_harness_beam/answer_agent.py#L511-L525),
 [LoCoMo tool dispatch](../../benchmarks/locomo/retrieval.py#L165-L202).

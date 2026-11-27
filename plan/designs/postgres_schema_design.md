@@ -1635,7 +1635,10 @@ CREATE INDEX ix_crossrefs_pending  ON document_crossrefs (deployment_id, to_sour
 Section-bounded passages trace back to exact source offsets. `chunk_search`
 holds normalized body text and vectors. Authority rows hold offsets, section
 links and D80 location facts. [Proposed D162](split_oversized_chunks_design.md)
-allows pieces from the same block to have distinct character spans.
+allows pieces from the same block to have distinct character spans. A
+same-version recovery piece inherits its verified parent's recorded
+`text_origin_at`. The representation's selected embed delivery controls
+[first publication](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────

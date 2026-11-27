@@ -558,7 +558,8 @@ extraction input: replay (D7) uses the recorded value and never recomputes it. D
 origin version later does not change it on descendant chunks or on reused claims — those
 claims were already stamped with it and D135 retires testimony, not timestamps. Chunks created
 *after* a deletion never draw from deleted versions (step 2), so reuse never draws on retired
-testimony (D55's refinement).
+testimony (D55's refinement). [Proposed D162 recovery](split_oversized_chunks_design.md#2-coordinates-and-reuse)
+copies the recorded date from each verified same-version parent to its pieces.
 
 Because the parser, blockizer, structurer and extractor versions are part of the identity, a
 toolchain change is a reuse boundary exactly as D56/D65 define: a chunk under a new toolchain
@@ -777,6 +778,11 @@ indexed version lacks the key (a removed or repealed section), or `status = not_
 the version's sections have not been backfilled yet (§4.2) — never `absent` for an unindexed
 version. A version still processing is `status = processing`. Incoming `amends` references that
 target the section are listed with their `change_effective_from` and `change_date_known`.
+
+For both reads, [proposed D162](split_oversized_chunks_design.md#2-coordinates-and-reuse)
+gates chunk links on first E1 publication. On a split grid, `first_chunk_ids`
+holds at most the first published piece in document order that intersects the
+section's first block.
 
 The existing directed `graph_citation_path` keeps lineage grain (§7).
 

@@ -266,7 +266,7 @@ complete block runs exposed by a split on their original content key.
 | Change | Action |
 |---|---|
 | Body bytes change | Re-render; new hash ⇒ provider embed under the configured current state |
-| D162 envelope changes | Qualify the new binding for new CHUNK work and unpublished recovery. READY grids keep their cuts. |
+| D162 envelope changes | Qualify the new binding for new CHUNK work and verified-private recovery. Recovery selects a new embed delivery even when the current cuts fit. |
 | Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
 | Policy version changes | Mark semantic channel unready; re-render all in-scope chunks; reuse an exactly attested vector or re-embed; verify and publish |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |

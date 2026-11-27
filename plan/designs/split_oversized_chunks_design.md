@@ -4,10 +4,10 @@
 traces how a large block can pass the whitespace-token packer and exceed the
 provider's per-input limit.
 
-Apply D162 at CHUNK on first ingest, on each new version, and on replay of an
-oversize `embed_chunk` dead letter before first E1 completion. READY here means
-the passage grid completed E1. READY versions retain their cuts and handles,
-including chunks above the qualified ceiling that the provider accepted.
+Apply D162 at CHUNK on a qualified binding for new versions and confirmed
+oversize `embed_chunk` dead letters whose grids stayed private (§3). Preserve
+cuts and handles for any grid that could already serve, including chunks above
+the qualified ceiling that a provider accepted.
 
 ## 1. Size contract and split points
 
@@ -30,35 +30,36 @@ work on the affected binding until requalified.
 [OpenRouter routing](../../src/rememberstack/adapters/openrouter.py#L1001-L1034).
 
 1. Run the existing packer (400 whitespace tokens, anchor modulus 24 and
-   minimum gap 200 by default) and render every candidate with its original
-   D80 facts and grid count. Share the snapshot with EMBED_CHUNK so a title
-   change cannot invalidate fit. Fitting grids keep legacy bytes, spans,
-   eligibility, keys and delivery identity. Replays keep matching IDs, fresh
-   fitting rows use legacy allocation, and empty readings complete as before.
+   minimum gap 200 by default). On recovery, use the verified committed cuts
+   as bounds for further splits. Render every candidate with its D80 facts
+   and grid count. Share the snapshot with EMBED_CHUNK so a title change
+   cannot invalidate fit. Ordinary fitting grids keep legacy bytes, spans,
+   eligibility, keys, ID allocation and delivery. A recovery that fits keeps
+   its cuts and IDs and uses the new delivery (§3).
 2. Refine only failing candidates, inside their original spans. Use the
    committed eligibility ranges, including labelled gaps the parser skips.
    Unlabelled text inherits the parent's eligibility. Attach whitespace-only
    ranges left (right at the start) with their original provenance. The
    resulting eligibility changes bound probes, anchors and separator
    ownership. Keep CRLF together and emit no blank pieces.
-3. Prefer whole-block and recorded source seams (page, turn, cell or row).
-   Inside a block use YAML document or sibling key/item seams outside block
-   scalars, or prose sentence ends, then line ends, whitespace and Unicode
+3. From a block start, try whole-block prefixes first, longest first up to
+   the whitespace target, including a first block that alone exceeds the
+   target. Respect the original D58 cuts and all eligibility changes. Take
+   any proved fit, even a short one, before considering seams inside a block.
+4. When a block or gap needs splitting, prefer recorded source seams (page,
+   turn, cell or row). Then use YAML document or sibling key/item seams outside
+   block scalars, or prose sentence ends, then line ends, whitespace and Unicode
    scalars. Within other code and tables use line ends first. Pin these lexical
-   rules. Form natural units at block and source seams and at the strongest
-   structural tier within a block. Run D58's hash and minimum-gap rule on
-   their exact bytes within each eligibility run, cutting before accepted
-   anchors and resetting spacing only there.
-4. Aim for the end of the target-th whitespace token or the next eligibility
-   change, accepted anchor or candidate end, whichever comes first. From a
-   block start, try complete-block runs ending by that goal, furthest first.
-   Even a short fitting run takes priority. When cutting inside a block,
-   stop at its next edge so the following block can fit whole. Probe
-   prefixes of 1, 2, 4, … scalars from the first nonblank scalar, up to the
-   goal or that edge. Stop at the first overflow or the goal and use the
-   last proved fit. Take a reached required or block edge. Otherwise take the
-   furthest fitting seam in the strongest tier, or the proved scalar cut.
-   Attach separator whitespace left up to the next required edge or block.
+   rules. Only within the interval that needs splitting, apply D58's hash and
+   minimum-gap rule to the exact bytes of units from the strongest available
+   tier. Cut before each accepted anchor and reset spacing there. Stop at
+   the next block edge, eligibility change, accepted internal anchor,
+   target-th whitespace token or candidate end, whichever comes first.
+   Probe prefixes of 1, 2, 4, … scalars from the first nonblank scalar up to
+   that goal. Stop at the first overflow or the goal. Within the proved fit,
+   take a reached required or block edge, the furthest seam in the strongest
+   tier, or the proved scalar cut, in that order. Attach separator whitespace
+   left up to the next required edge or block.
 5. Use multi-chunk D80 rules for split pieces. If a failing singleton fits
    whole under those rules, reserve a nonblank scalar for a second piece.
    Re-render with the final count and prove fit before committing. Dry-run,
@@ -70,10 +71,14 @@ work on the affected binding until requalified.
 Pieces concatenate to the exact candidate bytes. Store half-open Unicode
 code-point offsets into the immutable E0 Markdown. Keep the parent section,
 intersected block ordinals (the preceding block for a gap-only slice) and
-source locators. Clip converter provenance to each consumed slice.
+source locators. Clip converter provenance to each consumed slice. On a split
+grid, references and section history select at most one `first_chunk_ids` entry
+per version and section. Pick the first published piece in document order
+that intersects the section's first block.
 
 Only an actual split gives the CHUNK output a new packing stamp (base
-parameters, split rules and envelope). Subsequent work names that stamp.
+parameters, split rules and envelope). A restart without new cuts retains its
+stamp. Subsequent work names that stamp and the delivery (§3).
 Split-grid IDs are UUIDv5 of representation, stamp and span. Complete
 block runs with optional edge whitespace keep the ordered block-hash key.
 Partial blocks and gaps hash exact bytes with a separate tag. E0, D80,
@@ -96,44 +101,65 @@ eligibility, text-origin, E2, reference and normalization policies keep their pi
   claim IDs on a unique verified remap. Otherwise use ordinary E2.
   [Legacy keys](../../src/rememberstack/workers/e1.py#L734-L771),
   [consumed slots](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
-- **Text origin.** Apply D140 to equivalent slots. A fragment can inherit an
-  earlier parent's date if its bytes and actual same-owner context match
-  uniquely as ordered slices with equivalent relative origins, eligibility,
-  undated facts and generations. Match even when the parent was edited or
-  offsets shifted. Use the earliest eligible date from non-deleted earlier
-  versions, at or before the target's source date. Use D140's own-date or
-  unknown fallback for unmatched text. Reuse recorded dates for equivalent
-  slots on restart. Preserve the original span and date evidence with
-  failed work so recovery order cannot change inheritance.
+- **Text origin.** On first packing a version, apply D140 to equivalent slots.
+  A fragment can inherit an earlier parent's date if its bytes and actual
+  same-owner context match uniquely as ordered slices with equivalent relative
+  origins, eligibility, undated facts and generations. Match even when the
+  parent was edited or offsets shifted. Use the earliest eligible date from
+  non-deleted earlier versions at or before the target's source date. Use D140's
+  own-date or unknown fallback for unmatched text. On same-version recovery,
+  retain the verified parent spans and copy each parent's recorded
+  `text_origin_at` to its pieces, including a recorded unknown. This holds
+  when the E2 slots change or the earlier donor was deleted. Preserve
+  committed cuts so a piece always has one parent. Keep the verified spans
+  and dates with failed work so recovery order does not change inheritance.
 
 ## 3. Recover the unpublished version at CHUNK
 
 Dry-run the affected `embed_chunk` dead letters. Require a typed length error
-or a measured overflow for the failed rendered input and binding. Verify the
-failed job's representation and packing stamp against its committed Markdown,
-blocks, section coordinates and D80 facts. Use the stored sidecar or verify
-reproduction with its pinned blockizer. Block ambiguous replays and report the
-reason. Check for prior E1 completion under the lineage lock, since E0 can
-mark structure ready before E1 succeeds.
+or a measured overflow for the failed input and binding. Verify the failed
+job's representation and packing stamp against committed Markdown, blocks,
+section coordinates and D80 facts. Use the stored sidecar or verify
+reproduction with its pinned blockizer. Block ambiguous replays and report
+the reason.
 
-Keep the failed ledger row. Link a CHUNK restart for the same version, keyed
-by failed work and qualified binding fingerprint, so it runs even when the
-old CHUNK succeeded. Repeat replay resumes that recovery. An envelope change
-before first E1 completion reserves a new CHUNK attempt from committed E0 and
-fences the obsolete attempt in one transaction, including on a first ingest
-with no earlier grid. Retain original date evidence and qualifying vectors.
-Clear superseded unpublished rows and any partial legacy search projection
-before first readiness. Readiness follows the current delivery.
+Under the lineage lock, verify that E1 never completed and the grid stayed
+private from the first chunk commit through recovery. D162's pending state
+records that protection. For a legacy grid, require a recorded isolation
+boundary covering the entire interval, such as an offline import with SQL
+and service readers fenced. E0 readiness exposes legacy IDs through SQL
+even with an empty P1 projection, and successful legacy batches can enter
+search before the job ends. Use
+ordinary same-grid `EMBED_CHUNK` replay for exposed or unverified legacy grids
+if a binding can accept the original input. Otherwise retain the dead letter.
+[Public chunk view](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719),
+[legacy batch commit](../../src/rememberstack/workers/e1.py#L535-L572).
 
-Drain and fence incompatible workers on affected routes before activation.
-Embedding, downstream workers and readiness load the named grid stamp. Check
-the grid stamp, lease attempt and version liveness in each write or barrier
-transaction under the existing lineage fence. Keep incomplete grids and new
-batch checkpoints outside ready views and serving indexes. Insert the final
-rows into the existing projection at ordinary E1 readiness and continue with
-D143 at that version's existing position in the lineage.
-[Ledger claim predicate](../../src/rememberstack/spine/work_ledger.py#L2176-L2192),
-[E1 commit boundary](../../src/rememberstack/workers/e1.py#L535-L572).
+Retain the failed ledger row. Select a CHUNK restart for the same version,
+keyed by superseded work and qualified binding fingerprint. Each restart gets
+an EMBED_CHUNK component version derived from that restart key, including
+when the wider envelope fits the grid with zero cuts. Repeated replay resumes
+the selected delivery. On an envelope change before publication, reserve the
+new delivery and fence the obsolete one in the same lineage transaction, even
+if CHUNK has yet to commit a grid. Record the selected delivery and its packing
+stamp for the representation. Readiness and D143 source completion, claims
+admission and backfill resolve that exact delivery and grid on the original
+version, including when no chunks exist. Keep qualifying checkpoints and
+verified parent dates before clearing superseded private rows.
+[Ledger key](../../src/rememberstack/spine/work_ledger.py#L1996-L2023),
+[D143 lookup](../../src/rememberstack/spine/processing_layers.py#L1268-L1275).
+
+**First publication.** Activate the gate with compatible readers and after
+draining and fencing incompatible workers. A D162 grid is pending from its
+first chunk write. Withhold its handles and bodies from current and all-version
+SQL views and body fetches, passage search, adjacency and section links. E0
+readiness governs document and section metadata. Check delivery, packing stamp,
+lease attempt and version liveness under the lineage fence in every write or
+barrier transaction. Keep batch checkpoints off the serving indexes. For a
+proven-private legacy grid, adopt the gate and withdraw partial P1 rows before
+ending isolation. At first E1 completion, install the final P1 projection and
+publish the selected grid in the same transaction as the successful ledger
+transition, including the empty-grid path. D143 continues from that delivery.
 
 ## 4. Provider rejection and retry
 
@@ -155,21 +181,32 @@ the E1 passage call. [P1 validator](../../src/rememberstack/ports/p1_index.py#L2
 
 ## 5. Benchmark admission and release checks
 
-Keep retained LoCoMo and BEAM stores on pinned readers, schema and effective
-query embedding bindings. Gate ingest, replay and reader changes on the exact
-candidate worker, reader, schema and bindings passing on copies. Dry-run
-frozen prepared inputs, including LoCoMo OCR and BEAM's retained rendering.
-Compare ordered spans, bodies, eligibility and D80 hashes. Retained grids
-keep their digests and IDs. Qualification makes zero ingestion model calls
-and zero writes to the protected stores.
+LoCoMo and BEAM use their pinned E1, reader, schema and embedding bindings
+for ingest, replay and reads until the exact candidate passes on copies.
+Dry-run frozen inputs including LoCoMo OCR and BEAM's retained rendering.
+Compare ordered spans, bodies, eligibility and D80 hashes. Check retained
+grid digests and IDs.
 
-Compare complete ordered public tool responses under the recorded filters,
-times and planner settings, including evidence, scores, statuses, pagination,
-BEAM SQL values and LoCoMo read tools. Pin query preparation, decoder,
-retries and routing. If any change, replay each route's captured raw replies
-and errors through its public tools, including a legacy singleton at
-index `1`. Use fixed vectors after query-path equivalence. A difference
-blocks admission. Scorer smoke is separate.
+For an E1 change, replay captured raw provider replies and errors at the
+transport boundary through both workers on copies. Bind replies to the
+recorded embedding requests and run the adapters, retries and persistence.
+Require equal delivery outcomes (success, retry, skip or dead letter) and
+stored float4 passage vectors for matching spans and D80 inputs. Include
+a singleton with a valid vector at index `1` on a fitting grid. If the candidate rejects a reply the pinned path
+accepts, keep the protected ingest on the pinned path. Qualification uses
+zero ingestion model calls and zero writes to protected stores.
+
+Replay the public read tools, including BEAM SQL and LoCoMo reads, with the
+recorded filters, planner settings and frozen application and SQL evaluation
+clocks, including effective and belief times. In SQL responses replace
+`request_id`, `elapsed_ms`, `execution_started_at` and `pg_snapshot_at` with
+fixed placeholders for comparison, preserving nulls. Compare the full ordered
+responses, including values, evidence, scores, applied times, statuses,
+limits, truncation and pagination. Require a reader to pass against itself
+before comparing builds. Pin query preparation, decoder, retries and routing.
+If any change, replay each route's captured raw replies and errors through its
+public tools, including the singleton at index `1`. Use fixed vectors after
+query-path equivalence. A difference blocks admission. Scorer smoke is separate.
 
 LoCoMo requires **at least 22,528 Qwen tokens** on its exact protocol binding
 (`nebius`, provider order unset) plus frozen input and grid parity. The
@@ -184,5 +221,6 @@ a separate run identity and preserves the published 94.09% and attestation.
 | --- | --- |
 | Packing | Byte-identical fitting output. Cover header-only overflow, YAML, OCR tables, long turns, CRLF, scalar fallback and a skipped labelled HTML gap. Check exact spans, clipped origins, eligibility and nonblank pieces. With equal-tier cuts at 400 and 600 tokens and an anchor at 520, cut at 400 first, then respect the anchor. |
 | Provider | Cover stock and drifted routing, inconclusive bounds, full delivery and framed minimum input, and individually fitting items that exceed a batch limit together. Exercise real 429s and typed rejections, shuffled, missing and duplicate positions, and a good vector beside a zero-norm one. Malformed batches attest nothing. Test malformed singletons in both layouts and a valid sibling checkpoint. |
-| Recovery | Canary the two hosted dead letters after qualification. Exercise ambiguous evidence, an old sidecar, changed envelopes on first ingest and replay, an interrupted P1 stamp, stale attempts and a READY grid above the ceiling. Verify idempotence, liveness checks, one visible grid and reuse of qualifying checkpoints. |
-| D56 and D140 | Test dated legacy → split and split → fitting with unchanged parent runs across a child and an oversized section elsewhere. Compare paid calls by stage, dates, spans and claim IDs. Keep the D122 window case. Edit a line in an earlier parent and check the inherited date and relative-date claims for an unchanged fragment beyond an anchor in both recovery orders. Append a dense block after a short fitting seam and require zero embedding calls for identical D80 input with full-delivery proof. Reject matching-hash vectors without that proof. |
+| Publication | Dead-letter legacy E1 after a successful batch. Observe its handles through SQL and search, refuse CHUNK recovery, and verify ordinary embed replay preserves them. Check SQL, search and body fetches, adjacency and section links before and after D162 publication. Split a section's first block and check that references and history each return its first piece only. |
+| Recovery | Audit the two hosted dead letters and canary any with verified privacy. Exercise ambiguous evidence, an old sidecar, changed envelopes on first ingest and replay, an interrupted P1 stamp, stale attempts and a published grid above the ceiling. Widen the envelope for a private legacy grid so it fits without cuts. Replay twice and check that one distinct embed delivery succeeds, IDs stay stable, and readiness and D143 advance on that delivery. |
+| D56 and D140 | Test dated legacy → split and split → fitting with unchanged parent runs across a child and an oversized section elsewhere. Compare paid calls by stage, dates, spans and claim IDs. Keep the D122 window case. Check an unchanged fragment beyond an anchor after an edit in both recovery orders. Delete the January 1 version after B inherits its date and before B's oversize replay. Verify that B's pieces keep January 1 and E2 resolves “tomorrow” to January 2. Append the 17,000-digit block to the fitting paragraph with a qualifying internal anchor. Require zero embedding calls for that intact paragraph given the same D80 input and full-delivery proof. Reject matching-hash vectors without that proof. |

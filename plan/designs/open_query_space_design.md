@@ -468,7 +468,10 @@ non-null `deployment_id`; every identifier join uses `(deployment_id, id)`;
 UUIDs use `uuid`, instants use `timestamptz`, counts use non-negative `bigint`,
 structured open fields use `jsonb`, and finite vocabularies use manifest-bound
 text enums. Summaries, profiles, location headers, and page summaries are
-labeled orientation text, never evidence.
+labeled orientation text, never evidence. Under
+[proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk),
+both chunk views and the functions that nominate or fetch chunks require first
+E1 publication for D162 grids, including queries scoped to historical versions.
 
 | View | Row grain and key | Required semantics |
 |---|---|---|

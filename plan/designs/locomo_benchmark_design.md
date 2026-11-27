@@ -68,8 +68,10 @@ and effective model binding with the composed current engine; a worker generatio
 change cannot leave a stale executable benchmark pin unnoticed.
 
 The [proposed D162 gate](split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks)
-requires 22,528 Qwen tokens or higher on the exact ingestion binding.
-Candidate readers, schemas and query embedding paths require public tool parity.
+requires 22,528 Qwen tokens or higher on the exact ingestion binding. A
+candidate E1 path needs transport-replay parity for delivery and stored passage
+vectors before replacing the pinned path for ingest or replay. Candidate readers,
+schemas and query embedding paths require public tool parity.
 
 ### 2.1 Model roles and independent judging
 
