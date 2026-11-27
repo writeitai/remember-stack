@@ -37,37 +37,49 @@ baseline and queries fact history through the database's actual query login.
 Stop the prepared PostgreSQL 18 cluster and make two physical copies,
 preserving HNSW indexes, roles, and timestamps. Use the same role and server
 settings in both copies. Keep writers stopped. Set `$BASELINE_URL` and
-`$TARGET_URL` to their SQLAlchemy connection URLs.
+`$TARGET_URL` to their SQLAlchemy connection URLs. Set
+`$BASELINE_QUERY_DSN` and `$TARGET_QUERY_DSN` to the libpq connection strings
+for the database-bound query logins.
 
 ```bash
 previous="$(mktemp -d)"
 git archive 178d72daa src/rememberstack | tar -x -C "$previous"
 REMEMBERSTACK_DATABASE_URL="$TARGET_URL" uv run alembic upgrade head
 PYTHONPATH="$previous/src:." uv run python -m benchmarks.d163_qualification capture \
-  --database "$BASELINE_URL" --case case.json --output baseline.json --timeout 180
+  --database "$BASELINE_URL" --query-dsn "$BASELINE_QUERY_DSN" \
+  --case case.json --output baseline.json --timeout 180
 PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification capture \
-  --database "$TARGET_URL" --case case.json --output target.json --timeout 180
+  --database "$TARGET_URL" --query-dsn "$TARGET_QUERY_DSN" \
+  --case case.json --output target.json --timeout 180
 PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification compare \
   --database "$TARGET_URL" --baseline baseline.json --target target.json
 ```
 
 Each case has `deployment_id`, `embedding_model`, a fixed numeric `vector`,
 and `evaluated_at`. For scoped comparisons supply `entity_ids` and the subset
-`ranking_entity_ids`, plus a `predicate` to exercise filtered nomination.
+`ranking_entity_ids`. Supply a `predicate` to exercise filtered nomination
+and final confirmation.
 The case can specify `time` (the public current, at, overlap or history
 arguments), `believed_at` for the ledger check, and distinct `candidate_keys`
 as `[kind, UUID]` pairs. Omit keys to compare every attested fact embedding
 in the deployment. `batch_sizes` also compares fixed P1 batches of those sizes
-and their complete final confirmation rows. `k` defaults to 50. Keep the
-captures private because confirmation rows include labels and other store data.
+and their complete final confirmation rows. `k` defaults to 50 and the native
+read uses the corresponding default nomination depth. Keep captures private
+because they include labels, BEAM rows and other store data.
 
-The capture records the actual broad candidate batches before client
-deduplication, actual batch-gate SQL rows, both scoped nomination paths and
-the keyed path with their caps removed, and every final confirmation column.
-It also checks nomination-to-confirmation agreement on the same candidates
-and compares normal ordered top-k outputs. Compare requires identical ordered
-raw batches, then runs `EXCEPT ALL` in each direction over the gate rows.
-Use a diagnostic timeout sufficient for the previous gate to finish.
+The capture records the native broad read's HNSW batches before deduplication
+and its batch-gate SQL rows. It removes SQL caps for the keyed, default scoped
+and filtered scoped nomination cuts and records every column from final
+confirmation for each cut. Filtered confirmation receives the nominated IDs
+and the same predicate. The capture checks nomination-to-confirmation agreement
+on the same candidates and records the native operation's ordered final facts
+for broad and configured scoped modes.
+
+Compare requires the expected runtime manifest at each schema head. It checks
+ordered raw batches, ordered final facts, and the BEAM statements' ordered rows
+and typed outcomes. It runs `EXCEPT ALL` in both directions over the SQL cuts
+so repeated rows still count. Use a diagnostic timeout sufficient for the
+previous gate to finish. Regenerate both captures after updating the harness.
 
 [Oracle and latency harness](../../benchmarks/d163_qualification.py) ·
 [Staged restore](../../benchmarks/d163_staged_restore.py)
@@ -75,9 +87,10 @@ Use a diagnostic timeout sufficient for the previous gate to finish.
 ## Run the latency gate
 
 On each PostgreSQL 18 stratum, run the target with 2 vCPU and 4 GB, fixed
-vectors, and no concurrent readers. The hosted case specifies
-`"batch_sizes": {"observation": 804, "relation": 535}`. Use scoped
-anchors below the raw-row budget. Run with sparse statistics and again after
+vectors, and no concurrent readers. Every qualification case specifies
+`"batch_sizes": {"observation": 804, "relation": 535}`. Supply current
+scoped anchors below the raw-row budget. The stratum gate requires both fact
+batches and both native reads to run. Run with sparse statistics and again after
 `ANALYZE`, retaining the JSON, which includes the executed custom and generic
 plans, their buffer counts and planning times.
 
@@ -90,11 +103,14 @@ PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification latency \
 Use `--stratum 300k`, `3m`, or `120-leaves` for the other gates. The latter
 uses 120 monthly leaves plus the default. The harness times SQL without
 EXPLAIN and includes the native operation at k=50, candidate depth 200.
-It checks the declared p95 limits and records the broad query-space reads.
+It checks the declared p95 limits and, with the query login, records the broad
+query-space reads. The native measurements use mention-backed endpoints.
 The `sandbox` operation measures those reads separately. Pass the previous
 release on `PYTHONPATH` and its login to measure the same SQL on the reference.
-The BEAM samples exercise both the
-typed error for the original `label` and successful `fact_label AS label`.
+Both releases capture the shipped BEAM queries with their SQL limits and
+40-row request cap. The original `label` query returns a typed
+`execution_error`. The sandbox report times `fact_label AS label` separately
+for diagnosis.
 
 On a disposable fixture seeded by `seed_corpus`, the following adds unrelated
 chunks and copies fixed fact and evidence cases. The 1,200-relation population
@@ -149,7 +165,7 @@ candidate-bound source checks and the shared visibility rule.
 
 ## Local evidence
 
-On physically cloned PostgreSQL 18.6 clusters, the oracle compared
+Before the round-one oracle changes, physically cloned PostgreSQL 18.6 clusters compared
 `178d72daa` at `p9_55_0076` with D163 at `p9_58_0079`. Counts below are
 per side. A gate row may appear in several cuts, and repeated nomination
 ranks count separately.
@@ -212,6 +228,16 @@ The native scoped boundary returned 50 facts at exactly 50,000 raw rows in
 20.456 s on the separate test VM. At 50,001 raw rows it returned the existing
 `entity_scope_too_broad` boundary in 0.077 s.
 
+### Round-one oracle rerun
+
+The updated harness compared the current, at, overlap and history cases on
+physical PostgreSQL 18.6 clones. Each side returned 508 rows across 68 SQL
+cuts with zero `EXCEPT ALL` differences. The raw HNSW batches and ordered
+native final facts matched for all four cases. The shipped BEAM statements
+matched in row order and typed outcomes through the two database query
+logins. The corrected sample completed on each release in the separate
+sandbox run.
+
 ### Synthetic latency
 
 PostgreSQL 18.6 on local ARM64 VMs with two vCPUs and 4 GB. Each cell reports
@@ -238,16 +264,22 @@ for observations and 130,075 / 62,312 for relations. Planning took 79–126 ms.
 The plans used 21,439 / 14,497 shared hits and zero shared reads. Both native
 reads completed within the existing 120-second operation deadline.
 
+The round-one rerun used the 812-chunk synthetic fixture with mention-backed
+endpoints. With 40 warm samples per workload, p95 was 0.078 s for 804
+observation inputs, 0.044 s for 535 relation inputs, 0.686 s for the native
+broad read and 0.710 s for the native scoped read. Both native modes completed
+with 50 facts.
+
 The executed negative probes touched one evidence leaf in both plan modes
 with one or seventeen raw links. Both stored relation endpoints seeded
 their own walk and the merged endpoint took its one keyed redirect.
 
-The same-document regression grew the historical-origin and carried-evidence
+The same-document regression grows the historical-origin and carried-evidence
 documents to 20,000 total chunks. A preliminary run with ordinary
 equality let an index on deployment and document filter out about 30,000
-unrelated rows per carried relation. With the chunk-ID probes, both
-custom and generic plans kept chunk leaf loops and traversed rows bounded for
-both fact kinds, before and after `ANALYZE`.
+unrelated rows per carried relation. The regression supplies document bridges
+for its endpoints and measures each history, carried and time-scope chunk
+probe in custom and generic plans with sparse and refreshed statistics.
 
 ## Local quality commands
 
@@ -270,6 +302,10 @@ assertion that read the private helper without qualifying `public`, which
 returned `UndefinedTable` under the query role's search path. The final
 214-test rerun passed Work Ledger and the corrected, schema-qualified
 privilege assertion.
+
+The round-one selection passed 270 unit tests and 129 PostgreSQL and MinIO
+tests, with one expected D122 failure. Ruff formatting and lint, Pyright,
+the import contracts and the test inventory passed.
 
 ```bash
 uv run ruff format --check src/ benchmarks/

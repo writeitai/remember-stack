@@ -12,7 +12,9 @@ import argparse
 from collections import Counter
 from collections import defaultdict
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import json
@@ -40,6 +42,10 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.sql.elements import TextClause
 
+from benchmarks.rs_harness_beam.answer_agent import _OPEN_QUERY_MAX_ROWS
+from benchmarks.rs_harness_beam.answer_agent import _OPEN_QUERY_SQL
+from remember.retrieval import DEFAULT_CONTEXT_K
+from remember.retrieval import DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
 from rememberstack.adapters.postgres_p1 import FACT_INPUT_POLICY
 from rememberstack.adapters.postgres_p1 import PostgresP1Index
@@ -48,13 +54,19 @@ from rememberstack.core.text_scope import TextScope
 from rememberstack.model import Envelope
 from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.envelope import NegativeKind
 from rememberstack.spine.query_space import load_manifest
 from rememberstack.surfaces.query_engine import _CONFIRM_FACTS_CONTEXT_BY_KIND
 from rememberstack.surfaces.query_engine import QueryEngine
+from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
 
 BASELINE_HEAD = "p9_55_0076"
 TARGET_HEAD = "p9_58_0079"
+MANIFEST_BY_HEAD = {
+    BASELINE_HEAD: "8e526b54aca2bbac954a0b008156ff1ccb7bf498a9e1b384bd450ccd81b6301d",
+    TARGET_HEAD: "dca2b2bb58e3e7a0e1552dac817f704b41668d10ebe47200ffb1969fd644123b",
+}
 FactKind = Literal["relation", "observation"]
 KINDS: tuple[FactKind, ...] = ("relation", "observation")
 BROAD_VIEWS = (
@@ -70,6 +82,7 @@ LATENCY_TARGETS = {
     "3m": (2.0, 10.0),
     "120-leaves": (5.0, None),  # native operation deadline applies
 }
+LATENCY_BATCH_SIZES = {"observation": 804, "relation": 535}
 
 
 class Case(BaseModel):
@@ -84,7 +97,7 @@ class Case(BaseModel):
     ranking_entity_ids: tuple[str, ...] = ()
     candidate_keys: tuple[tuple[str, str], ...] = ()
     batch_sizes: dict[str, int] = Field(default_factory=dict)
-    k: int = 50
+    k: int = DEFAULT_CONTEXT_K
 
 
 @dataclass(frozen=True)
@@ -135,14 +148,14 @@ class Trace:
             kwargs.get("execution_options", {}).get("stream_results")
             and "nomination_limit" in parameters
         ):
-            kind = next(kind for kind in KINDS if f"FROM {kind}s" in query)
-            return _TracedCursor(result, self.raw[kind])
-        if "batch_ids" in parameters:
+            kind = next((kind for kind in KINDS if f"FROM {kind}s" in query), None)
+            if kind is not None:
+                return _TracedCursor(result, self.raw[kind])
+        if "batch_ids" in parameters and "AS item_id FROM eligible_facts" in query:
             gate_kind: FactKind = next(
                 kind
                 for kind in KINDS
-                if "AS item_id FROM eligible_facts" in query
-                and f"SELECT indexed.{kind}_id::text AS item_id" in query
+                if f"SELECT indexed.{kind}_id::text AS item_id" in query
             )
             frozen = result.freeze()
             self.gates.append(
@@ -198,7 +211,12 @@ def _fact_keys(connection: Connection, case: Case) -> tuple[tuple[str, str], ...
 
 
 def _confirmation(
-    case: Case, *, kind: FactKind, ids: list[str], scoped: bool = False
+    case: Case,
+    *,
+    kind: FactKind,
+    ids: list[str],
+    scoped: bool = False,
+    predicate: str | None = None,
 ) -> Statement:
     time = case.time.model_dump(by_alias=True)
     return Statement(
@@ -208,7 +226,7 @@ def _confirmation(
             "fact_ids": ids,
             "entity_ids": list(case.entity_ids) if scoped else [],
             "ranking_entity_ids": list(case.ranking_entity_ids) if scoped else [],
-            "predicate": None,
+            "predicate": predicate,
             "time_mode": time["mode"],
             "evaluated_at": case.evaluated_at,
             "at": time.get("at"),
@@ -225,6 +243,19 @@ def _run(connection: Connection, statement: Statement) -> list[Any]:
     ]
 
 
+def _fixed_batch(
+    statement: Statement,
+    keys: tuple[tuple[str, str], ...],
+    *,
+    kind: FactKind,
+    count: int,
+) -> Statement:
+    ids = [key for key_kind, key in keys if key_kind == kind][:count]
+    if count < 1 or len(set(ids)) != count:
+        raise AssertionError(f"fixture requires {count} distinct {kind} batch inputs")
+    return Statement(statement.sql, {**statement.parameters, "batch_ids": ids})
+
+
 def _arguments(case: Case, *, timeout: float) -> dict[str, Any]:
     return {
         "deployment_id": str(case.deployment_id),
@@ -237,16 +268,22 @@ def _arguments(case: Case, *, timeout: float) -> dict[str, Any]:
     }
 
 
-def _record_nomination(
-    index: PostgresP1Index, *, arguments: dict[str, Any], use_default: bool = False
-) -> tuple[Trace, list[Any]]:
+@contextmanager
+def _trace_sql() -> Iterator[Trace]:
     trace = Trace()
-    nominate = index.nominate_facts_scored if use_default else index.search_facts_scored
     with patch.object(
         Connection,
         "execute",
         lambda conn, *args, **kw: trace.execute(conn, *args, **kw),
     ):
+        yield trace
+
+
+def _record_nomination(
+    index: PostgresP1Index, *, arguments: dict[str, Any], use_default: bool = False
+) -> tuple[Trace, list[Any]]:
+    nominate = index.nominate_facts_scored if use_default else index.search_facts_scored
+    with _trace_sql() as trace:
         result = nominate(**arguments)
     if not result.account.termination.complete:
         raise AssertionError(result.account)
@@ -255,6 +292,7 @@ def _record_nomination(
 
 def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
     index = _index(engine, case)
+    query = _query_engine(engine, index, case, timeout=timeout)
     with engine.connect() as connection:
         connection.exec_driver_sql(
             "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
@@ -267,12 +305,11 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
         keys = _fact_keys(connection, case)
         if not keys:
             raise AssertionError("fixture has no attested fact embeddings")
-        broad, top = _record_nomination(
-            index, arguments=_arguments(case, timeout=timeout)
-        )
+        with _trace_sql() as broad:
+            top = _final_top_k(query, case)
         record: dict[str, Any] = {
             "raw": broad.raw,
-            "ordered": {"broad": top},
+            "ordered": {"final/broad": top},
             "cuts": {},
         }
         for batch, (kind, statement, rows) in enumerate(broad.gates):
@@ -290,13 +327,14 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
         for kind in KINDS:
             if kind not in case.batch_sizes:
                 continue
-            count = case.batch_sizes[kind]
-            ids = [key for key_kind, key in keys if key_kind == kind][:count]
-            assert len(ids) == count, (kind, count)
-            original = gates[kind]
-            batch = Statement(original.sql, {**original.parameters, "batch_ids": ids})
+            batch = _fixed_batch(
+                gates[kind], keys, kind=kind, count=case.batch_sizes[kind]
+            )
             rows = _run(connection, batch)
-            final = _run(connection, _confirmation(case, kind=kind, ids=ids))
+            final = _run(
+                connection,
+                _confirmation(case, kind=kind, ids=batch.parameters["batch_ids"]),
+            )
             if sorted(row[0] for row in rows) != sorted(str(row[2]) for row in final):
                 raise AssertionError(f"fixed batch stage disagreement in {kind}")
             record["cuts"][f"fixed_batch/{kind}"] = [(kind, *row) for row in rows]
@@ -307,15 +345,12 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
                 "entity_ids": case.entity_ids,
                 "ranking_entity_ids": case.ranking_entity_ids,
             }
-            scenarios.update(
-                default=scoped,
-                filtered={
+            scenarios["default"] = scoped
+            if case.predicate is not None:
+                scenarios["filtered"] = {
                     **scoped,
-                    "equality_filters": {"predicate": case.predicate}
-                    if case.predicate
-                    else {},
-                },
-            )
+                    "equality_filters": {"predicate": case.predicate},
+                }
         for name, options in scenarios.items():
             trace, top = _record_nomination(
                 index,
@@ -324,7 +359,33 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
             )
             assert trace.scoped is not None, name
             record["ordered"][name] = top
-            record["cuts"][name] = _run(connection, trace.scoped)
+            nominated = _run(connection, trace.scoped)
+            record["cuts"][name] = nominated
+            if name == "keyed":
+                continue
+            predicate = case.predicate if name == "filtered" else None
+            record["ordered"][f"final/{name}"] = _final_top_k(
+                query, case, scoped=True, predicate=predicate
+            )
+            for kind in KINDS:
+                expected = [(row[0], row[3]) for row in nominated if row[1] == kind]
+                scoped_rows = _run(
+                    connection,
+                    _confirmation(
+                        case,
+                        kind=kind,
+                        ids=[fact_id for fact_id, _ in expected],
+                        scoped=True,
+                        predicate=predicate,
+                    ),
+                )
+                if sorted(expected) != sorted(
+                    (str(row[2]), row[-1]) for row in scoped_rows
+                ):
+                    raise AssertionError(
+                        f"{name} ID or coverage disagreement in {kind}"
+                    )
+                record["cuts"][f"{name}_final/{kind}"] = scoped_rows
         for kind in KINDS:
             ids = list(
                 dict.fromkeys(fact for key_kind, fact in keys if key_kind == kind)
@@ -338,23 +399,6 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
             record["cuts"][f"final/{kind}"] = rows
             # One eligible key repeated at two original ranks.
             repeat = [str(rows[0][2])] if rows else []
-            if case.entity_ids:
-                scoped_ids = [
-                    row[0] for row in record["cuts"]["default"] if row[1] == kind
-                ]
-                scoped_rows = _run(
-                    connection,
-                    _confirmation(case, kind=kind, ids=scoped_ids, scoped=True),
-                )
-                if sorted(
-                    (row[0], row[3])
-                    for row in record["cuts"]["default"]
-                    if row[1] == kind
-                ) != sorted((str(row[2]), row[-1]) for row in scoped_rows):
-                    raise AssertionError(
-                        f"scoped ID or coverage disagreement in {kind}"
-                    )
-                record["cuts"][f"scoped_final/{kind}"] = scoped_rows
             record["cuts"][f"repeated/{kind}"] = _run(
                 connection, _confirmation(case, kind=kind, ids=repeat * 2)
             )
@@ -393,9 +437,20 @@ SELECT (SELECT count(*) FROM (TABLE baseline EXCEPT ALL TABLE target) missing),
 """)
 
 
+def _require_runtime(record: Mapping[str, Any], *, head: str) -> None:
+    if record.get("schema_head") != head:
+        raise AssertionError(f"expected schema head {head}")
+    if record.get("surface_manifest_hash") != MANIFEST_BY_HEAD[head]:
+        raise AssertionError(f"runtime manifest does not match schema head {head}")
+
+
 def compare(
     connection: Connection, baseline: dict[str, Any], target: dict[str, Any]
 ) -> dict[str, Any]:
+    _require_runtime(baseline, head=BASELINE_HEAD)
+    _require_runtime(target, head=TARGET_HEAD)
+    if baseline["case"] != target["case"]:
+        raise AssertionError("the two releases must use identical inputs")
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
     counts = {}
@@ -414,6 +469,11 @@ def compare(
         "cuts": counts,
         "raw_batches_match": baseline["raw"] == target["raw"],
         "ordered_top_k_match": baseline["ordered"] == target["ordered"],
+        "beam_matches": {
+            name: baseline["beam"][name] == target["beam"][name]
+            and _beam_completed(name, baseline["beam"][name])
+            for name, _ in _OPEN_QUERY_SQL
+        },
         "ordered_raw": {
             kind: [len(batch) for batch in batches]
             for kind, batches in baseline["raw"].items()
@@ -422,28 +482,58 @@ def compare(
     }
 
 
-def _sandbox_queries(case: Case, *, dsn: str, samples: int) -> dict[str, Any]:
-    """Run broad SQL through its actual login and interactive limits."""
-    sandbox = QuerySandboxExecutor(
+def _sandbox(case: Case, *, dsn: str) -> QuerySandboxExecutor:
+    return QuerySandboxExecutor(
         deployment_id=case.deployment_id,
         connect=lambda: psycopg.connect(dsn, options="-c jit=off"),
     )
+
+
+def _beam_queries(sandbox: QuerySandboxExecutor) -> dict[str, Any]:
+    """Capture the ordered results and typed outcomes that the BEAM agent sees."""
+    return {
+        name: sandbox.query_sql(sql=query, max_rows=_OPEN_QUERY_MAX_ROWS).model_dump(
+            mode="json",
+            include={
+                "columns",
+                "rows",
+                "empty_result",
+                "ordered_result",
+                "returned_row_count",
+                "termination_reason",
+                "truncated",
+                "truncation_reason",
+                "error_code",
+                "error_message",
+            },
+        )
+        for name, query in _OPEN_QUERY_SQL
+    }
+
+
+def _beam_completed(name: str, result: Mapping[str, Any]) -> bool:
+    if name == "facts_sample":
+        return (
+            result["termination_reason"] == "failed"
+            and result["error_code"] == QueryErrorCode.EXECUTION_ERROR
+        )
+    return result["termination_reason"] == "completed" and result["error_code"] is None
+
+
+def _sandbox_queries(sandbox: QuerySandboxExecutor, *, samples: int) -> dict[str, Any]:
+    """Time broad SQL and the corrected sample under interactive limits."""
+    beam = dict(_OPEN_QUERY_SQL)
     queries = {
         **{view: f"SELECT * FROM {view}" for view in BROAD_VIEWS},
-        "beam_predicates": "SELECT predicate, count(*) AS n FROM facts_current "
-        "GROUP BY 1 ORDER BY 2 DESC LIMIT 25",
-        "beam_sample": "SELECT fact_kind, fact_id::text, predicate, fact_label AS label "
-        "FROM facts_current ORDER BY predicate, fact_id LIMIT 40",
+        "beam_predicates": beam["facts_predicates"],
+        "beam_sample_corrected": beam["facts_sample"].replace(
+            "predicate, label", "predicate, fact_label AS label"
+        ),
     }
-    invalid = sandbox.query_sql(
-        sql=queries["beam_sample"].replace("fact_label AS label", "label")
-    )
-    if invalid.error_code != "execution_error":
-        raise AssertionError("the original BEAM label query should fail")
-
-    report: dict[str, Any] = {"beam_undefined_label": str(invalid.error_code)}
+    report: dict[str, Any] = {}
     for name, query in queries.items():
-        result = sandbox.query_sql(sql=query)
+        max_rows = _OPEN_QUERY_MAX_ROWS if name.startswith("beam_") else None
+        result = sandbox.query_sql(sql=query, max_rows=max_rows)
         times = []
         for _ in range(samples):
             if (
@@ -452,7 +542,7 @@ def _sandbox_queries(case: Case, *, dsn: str, samples: int) -> dict[str, Any]:
             ):
                 break
             start = monotonic()
-            result = sandbox.query_sql(sql=query)
+            result = sandbox.query_sql(sql=query, max_rows=max_rows)
             times.append(monotonic() - start)
         report[name] = {
             "samples": len(times),
@@ -513,13 +603,31 @@ def _plans(connection: Connection, statement: Statement) -> dict[str, Any]:
 
 
 def latency(
-    engine: Engine, case: Case, *, timeout: float, samples: int, explain: bool
+    engine: Engine,
+    case: Case,
+    *,
+    timeout: float,
+    samples: int,
+    explain: bool,
+    stratum: str | None = None,
 ) -> dict[str, Any]:
     """Use shipped budgets for native calls; time executable SQL with planning."""
+    if stratum is not None:
+        if case.batch_sizes != LATENCY_BATCH_SIZES:
+            raise AssertionError(
+                f"{stratum} requires 804 observation and 535 relation batch inputs"
+            )
+        if not case.entity_ids:
+            raise AssertionError(
+                f"{stratum} requires anchors for the scoped native read"
+            )
     index = _index(engine, case)
     trace, _ = _record_nomination(index, arguments=_arguments(case, timeout=timeout))
-    statements = {kind: statement for kind, statement, _ in reversed(trace.gates)}
-    report: dict[str, Any] = {}
+    statements: dict[FactKind, Statement] = {
+        kind: statement for kind, statement, _ in reversed(trace.gates)
+    }
+    if stratum is not None and statements.keys() != LATENCY_BATCH_SIZES.keys():
+        raise AssertionError(f"{stratum} requires traced gates for both fact kinds")
     with engine.connect() as connection:
         connection.exec_driver_sql("SET TRANSACTION READ ONLY")
         connection.exec_driver_sql("SET LOCAL jit = off")
@@ -529,13 +637,14 @@ def latency(
             {"value": str(int(timeout * 1000))},
         )
         keys = _fact_keys(connection, case)
-        for kind, statement in statements.items():
-            if kind in case.batch_sizes:
-                ids = [key for key_kind, key in keys if key_kind == kind][
-                    : case.batch_sizes[kind]
-                ]
-                assert len(ids) == case.batch_sizes[kind]
-                statement.parameters["batch_ids"] = ids
+        batches = {
+            kind: _fixed_batch(statement, keys, kind=kind, count=case.batch_sizes[kind])
+            if kind in case.batch_sizes
+            else statement
+            for kind, statement in statements.items()
+        }
+        report: dict[str, Any] = {}
+        for kind, statement in batches.items():
             measured = _measured(
                 lambda statement=statement: len(_run(connection, statement)),
                 samples=samples,
@@ -552,7 +661,7 @@ def latency(
 
         def measure() -> int:
             response = _native_read(query, case, entities=entities)
-            if response.truncation and (reason := response.truncation.reason):
+            if reason := _native_failure(response):
                 incomplete[reason] += 1
             return len(response.facts)
 
@@ -566,7 +675,13 @@ def latency(
     return report
 
 
-def _query_engine(engine: Engine, index: PostgresP1Index, case: Case) -> QueryEngine:
+def _query_engine(
+    engine: Engine,
+    index: PostgresP1Index,
+    case: Case,
+    *,
+    timeout: float = DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS,
+) -> QueryEngine:
     provider = MagicMock()
     provider.embed.return_value = MagicMock(vectors=(case.vector,), usage=None)
     return QueryEngine(
@@ -575,21 +690,61 @@ def _query_engine(engine: Engine, index: PostgresP1Index, case: Case) -> QueryEn
         model_provider=provider,
         embedding_model=case.embedding_model,
         fact_read_pool=index._read_pool,
+        database_budget_seconds=timeout,
     )
 
 
 def _native_read(
-    query: QueryEngine, case: Case, *, entities: tuple[str, ...]
+    query: QueryEngine,
+    case: Case,
+    *,
+    entities: tuple[str, ...],
+    ranking_entities: tuple[str, ...] | None = None,
+    predicate: str | None = None,
+    k: int = DEFAULT_CONTEXT_K,
 ) -> Envelope:
     return query.facts_context(
         deployment_id=case.deployment_id,
         query="fixed stored vector",
         entity_ids=tuple(UUID(entity) for entity in entities),
-        k=50,
-        candidate_k=200,
+        k=k,
+        predicate=predicate,
         time=case.time,
         evaluated_at=case.evaluated_at,
+        _required_entity_ids=(
+            tuple(UUID(entity) for entity in ranking_entities)
+            if ranking_entities is not None
+            else None
+        ),
     )
+
+
+def _native_failure(response: Envelope) -> str | None:
+    if response.truncation and response.truncation.reason:
+        return response.truncation.reason
+    if response.negative and response.negative.kind != NegativeKind.KNOWN_EMPTY:
+        return response.negative.kind.value
+    return None
+
+
+def _final_top_k(
+    query: QueryEngine,
+    case: Case,
+    *,
+    scoped: bool = False,
+    predicate: str | None = None,
+) -> list[tuple[str, str]]:
+    response = _native_read(
+        query,
+        case,
+        entities=case.entity_ids if scoped else (),
+        ranking_entities=case.ranking_entity_ids if scoped else None,
+        predicate=predicate,
+        k=case.k,
+    )
+    if reason := _native_failure(response):
+        raise AssertionError(f"native final confirmation did not complete: {reason}")
+    return [(fact.kind, str(fact.fact_id)) for fact in response.facts]
 
 
 def main() -> None:
@@ -620,17 +775,12 @@ def main() -> None:
                 parser.error("compare requires --baseline and --target")
             baseline = json.loads(args.baseline.read_text())
             target = json.loads(args.target.read_text())
-            assert (baseline["schema_head"], target["schema_head"]) == (
-                BASELINE_HEAD,
-                TARGET_HEAD,
-            )
-            assert baseline["case"] == target["case"], (
-                "the two releases must use identical inputs"
-            )
             with engine.connect() as connection:
                 result = compare(connection, baseline, target)
             failed = not (
-                result["raw_batches_match"] and result["ordered_top_k_match"]
+                result["raw_batches_match"]
+                and result["ordered_top_k_match"]
+                and all(result["beam_matches"].values())
             ) or any(
                 count["missing"] or count["extra"] for count in result["cuts"].values()
             )
@@ -647,6 +797,18 @@ def main() -> None:
                     "SHOW server_version_num"
                 ).scalar_one()
                 assert int(server) // 10000 == 18, server
+            identity = {
+                "schema_head": head,
+                "surface_manifest_hash": load_manifest()["surface_manifest_hash"],
+            }
+            _require_runtime(
+                identity,
+                head=TARGET_HEAD
+                if args.operation == "latency" and args.stratum
+                else head,
+            )
+            if args.operation in {"capture", "sandbox"} and not args.query_dsn:
+                parser.error(f"{args.operation} requires --query-dsn")
             if args.operation == "capture":
                 result = capture(engine, case, timeout=args.timeout)
             elif args.operation == "scope":
@@ -666,13 +828,9 @@ def main() -> None:
                     (reason == "entity_scope_too_broad") != args.expect_scope_boundary
                 )
             elif args.operation == "sandbox":
-                if not args.query_dsn or args.samples < 1:
-                    parser.error("sandbox requires --query-dsn and at least one sample")
-                result = {
-                    "sandbox": _sandbox_queries(
-                        case, dsn=args.query_dsn, samples=args.samples
-                    )
-                }
+                if args.samples < 1:
+                    parser.error("sandbox requires at least one sample")
+                result = {}
             else:
                 if args.samples < 40:
                     parser.error("latency requires at least 40 warm samples")
@@ -682,11 +840,8 @@ def main() -> None:
                     timeout=args.timeout,
                     samples=args.samples,
                     explain=args.plans,
+                    stratum=args.stratum,
                 )
-                if args.query_dsn:
-                    result["sandbox"] = _sandbox_queries(
-                        case, dsn=args.query_dsn, samples=args.samples
-                    )
                 failed = any(
                     value["incomplete"]
                     for name, value in result.items()
@@ -706,16 +861,21 @@ def main() -> None:
                         )
                     ]
                     failed |= bool(result["missed_targets"])
-            if "sandbox" in result:
+            if args.query_dsn and args.operation in {"capture", "sandbox", "latency"}:
+                result["beam"] = _beam_queries(_sandbox(case, dsn=args.query_dsn))
                 failed |= any(
-                    state["error"] is not None
-                    for state in result["sandbox"].values()
-                    if isinstance(state, dict)
+                    not _beam_completed(name, outcome)
+                    for name, outcome in result["beam"].items()
                 )
+            if args.query_dsn and args.operation in {"sandbox", "latency"}:
+                sandbox = _sandbox_queries(
+                    _sandbox(case, dsn=args.query_dsn), samples=args.samples
+                )
+                result["sandbox"] = sandbox
+                failed |= any(state["error"] is not None for state in sandbox.values())
             result["case"] = case.model_dump(mode="json")
-            result["schema_head"] = head
+            result.update(identity)
             result["server_version_num"] = int(server)
-            result["surface_manifest_hash"] = load_manifest()["surface_manifest_hash"]
         rendered = json.dumps(result, indent=2, default=str, sort_keys=True) + "\n"
         if args.output is None:
             print(rendered, end="")

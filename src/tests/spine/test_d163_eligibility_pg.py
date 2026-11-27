@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
+import re
+from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
@@ -366,8 +369,14 @@ def test_split_links_and_duplicate_survivors_at_every_eligible_cut(
         (row,) = [row for row in cuts[stage] if row[0] == merged]
         assert row[2:] == (1.0, 1)
         assert snapshot["ordered"][stage][0][1] == near
-    (row,) = [row for row in cuts["scoped_final/relation"] if str(row[2]) == merged]
-    assert row[-1] == 1
+        (confirmed,) = [
+            row for row in cuts[f"{stage}_final/relation"] if str(row[2]) == merged
+        ]
+        assert confirmed[-1] == 1
+    assert cuts["default_final/observation"]
+    assert cuts["filtered_final/observation"] == []
+    for mode in ("broad", "default", "filtered"):
+        assert snapshot["ordered"][f"final/{mode}"] == [("relation", near)]
     with engine.connect() as connection:
         rows = (
             connection.execute(
@@ -483,25 +492,48 @@ def test_origin_probes_stay_keyed_as_their_own_documents_grow(
     )
     gates = {kind: statement for kind, statement, _ in trace.gates}
 
-    def keyed_work() -> dict[tuple[str, str, str], tuple[int, float, int]]:
+    def keyed_work(
+        connection: Connection,
+    ) -> dict[tuple[str, str, str, str], tuple[int, float, int]]:
         work = {}
-        with engine.connect() as connection:
-            connection.exec_driver_sql("SET LOCAL jit = off")
-            for kind in KINDS:
-                for name in ("multi_source", "carried"):
-                    statement = gates[kind]
-                    statement.parameters["batch_ids"] = [str(corpus.facts[kind, name])]
-                    for mode, result in _plans(connection, statement).items():
-                        plan = result["Plan"]
-                        assert plan["Actual Rows"] == 1, (kind, name, mode)
-                        leaves = [
-                            node
-                            for node in _plan_nodes(node=plan)
-                            if str(node.get("Relation Name", "")).startswith("chunks_")
-                            and node.get("Actual Loops", 0)
-                        ]
-                        assert leaves, (kind, name, mode)
-                        work[kind, name, mode] = (
+        for kind in KINDS:
+            for name in ("multi_source", "carried"):
+                statement = gates[kind]
+                statement.parameters["batch_ids"] = [str(corpus.facts[kind, name])]
+                for mode, result in _plans(connection, statement).items():
+                    plan = result["Plan"]
+                    assert plan["Actual Rows"] == 1, (kind, name, mode)
+                    probes: dict[str, list[dict[str, Any]]] = defaultdict(list)
+                    for node in _plan_nodes(node=plan):
+                        if (
+                            not str(node.get("Relation Name", "")).startswith("chunks_")
+                            or str(node.get("Alias", "")).split("_", 1)[0] != "ch"
+                            or not node.get("Actual Loops", 0)
+                        ):
+                            continue
+                        # History probes the claim's origin. Both other paths probe
+                        # an occurrence, and carried membership checks its document.
+                        conditions = " ".join(
+                            node.get(field, "")
+                            for field in ("Index Cond", "Recheck Cond", "Filter")
+                        )
+                        match = re.search(
+                            r"= (claim|cc|occurrence)(?:_\d+)*\.chunk_id\b", conditions
+                        )
+                        assert match is not None, (kind, name, mode, conditions)
+                        if match[1] == "claim":
+                            probe = "history"
+                        elif re.search(r"\bdoc_id\b", conditions):
+                            probe = "carried"
+                        else:
+                            probe = "time_scope"
+                        probes[probe].append(node)
+                    expected = {"history", "time_scope"}
+                    if name == "carried":
+                        expected.add("carried")
+                    assert probes.keys() == expected, (kind, name, mode, probes.keys())
+                    for probe, leaves in probes.items():
+                        work[kind, name, mode, probe] = (
                             sum(leaf["Actual Loops"] for leaf in leaves),
                             sum(
                                 leaf["Actual Rows"] * leaf["Actual Loops"]
@@ -515,14 +547,29 @@ def test_origin_probes_stay_keyed_as_their_own_documents_grow(
                         )
         return work
 
-    initial = keyed_work()
-    with engine.begin() as connection:
+    with engine.connect() as connection:
+        connection.exec_driver_sql("SET LOCAL jit = off")
+        # Keep endpoint visibility independent of the mention-provenance probe.
+        # These two bridge lineages are outside the documents being grown.
+        for entity, claim in zip(
+            corpus.case.entity_ids, (corpus.source_only, corpus.time_only), strict=True
+        ):
+            result = connection.execute(
+                text("""
+                    UPDATE documents AS doc SET document_entity_id = CAST(:entity AS uuid)
+                    FROM claims AS claim
+                    WHERE claim.claim_id = :claim AND doc.doc_id = claim.doc_id
+                      AND doc.deployment_id = claim.deployment_id
+                """),
+                {"entity": entity, "claim": claim},
+            )
+            assert result.rowcount == 1
+        initial = keyed_work(connection)
         _expand_chunks(connection, size=10_000)
         _expand_chunks(connection, size=20_000, claim_text="carried")
-    sparse = keyed_work()
-    with engine.begin() as connection:
+        sparse = keyed_work(connection)
         connection.exec_driver_sql("ANALYZE chunks")
-    refreshed = keyed_work()
+        refreshed = keyed_work(connection)
     for actual in (sparse, refreshed):
         for key, counters in actual.items():
             assert all(
