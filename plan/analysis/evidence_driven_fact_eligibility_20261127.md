@@ -54,6 +54,15 @@ both kinds of multiplicity error.
 [Broad confirmation](../../src/rememberstack/adapters/postgres_p1.py#L1675-L1691) ·
 [Final confirmation](../../src/rememberstack/surfaces/query_engine.py#L6231-L6249)
 
+Scoped nomination ranks by distinct requested anchor coverage, then vector
+distance. Final confirmation counts distinct requested anchors again and
+sorts each confirmed batch by coverage before the result cap. Two stored
+endpoints can resolve to one requested anchor. Counting that anchor twice
+can change the top `k` with identical fact IDs and nomination ranks.
+[Scoped ranking](../../src/rememberstack/adapters/postgres_p1.py#L1450-L1465) ·
+[Confirmation coverage](../../src/rememberstack/surfaces/query_engine.py#L6208-L6249) ·
+[Result cap](../../src/rememberstack/surfaces/query_engine.py#L1515-L1538)
+
 A keyed claim alone leaves the origin chunk and visible-version joins
 reorderable. Keying the origin chunk first lets a missing origin skip
 readability probes, including in the carried branch's shared origin-absence
@@ -102,6 +111,18 @@ view while a reader held the fact view and waited for the survivor.
 Separate compatible revisions let the fixture upgrade and downgrade
 after `55P03`.
 [D161 runner](../../src/rememberstack/spine/migrations/env.py#L68)
+
+The v0.22.4 image ships an `alembic.ini` that sets a 60-second lock wait.
+The runner sets the timeout for the session, so it applies to the advisory
+lock and to DDL. An interactive saved query queued behind an exclusive view
+lock request can hit its 250 ms lock limit. The runner's three-second
+default bounds each migration lock wait, and retry backoff gives readers a
+chance to acquire locks between attempts.
+[Released config](https://github.com/writeitai/remember-stack/blob/v0.22.4/alembic.ini#L5-L6) ·
+[Image build](../../Dockerfile#L21) ·
+[Runner configuration](../../src/rememberstack/spine/migrations/env.py#L57-L81) ·
+[Session lock timeout](../../src/rememberstack/spine/migrations/env.py#L98-L114) ·
+[Interactive lock limit](../../src/rememberstack/surfaces/query_sandbox/limits.py#L48-L52)
 
 Stock `setup` applies migrations and then publishes the new manifest hash,
 suspending active saved queries in the same transaction. A previous-release

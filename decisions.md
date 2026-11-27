@@ -8755,13 +8755,14 @@ The hosted planner checked evidence last and made about 1.99 million
 probes. Starting from the candidate's evidence removed the unrelated-chunk
 multiplier and produced the same eligible IDs in the paired prototype.
 
-Qualify equal gate rows, including multiplicity and final nomination ranks,
-on retained LoCoMo and hosted-shaped stores against the archive-aware
-`p9_55_0076` gate, with a latency gate on hosted-size hardware. Commit
-compatible view replacements separately under D161. Publish the new manifest
-atomically with the saved-query registry transition after previous-release
-readers drain. D142 ranking and D56 ingestion identities continue to use
-their existing inputs.
+Compare eligible rows with multiplicity, scoped ranking values and complete
+final confirmation rows against the archive-aware `p9_55_0076` gate on
+retained LoCoMo and hosted-shaped stores. Qualify latency on hosted-size
+hardware. Commit compatible view replacements separately under D161 and
+qualify the shipped three-second lock wait with previous-release readers.
+Publish the new manifest atomically with the saved-query registry transition
+after previous-release readers drain. D142 ranking and D56 ingestion
+identities continue to use their existing inputs.
 
 [Fact path](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
 [Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·

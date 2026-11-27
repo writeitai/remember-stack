@@ -479,7 +479,7 @@ This removes the unrelated-chunk multiplier seen in the hosted plans.
 | --- | --- |
 | `facts_visible_history` | Explicit eighteen-column projection of the full authority; same rows, types, counts and values |
 | `fact_claim_evidence_live`, `evidence_lineage`, `v_memory_page_citation_visible`, `changes_visible` | Keep complete membership through `v_memory_fact_visible`; audit whole-row projections, preserve all public values and do not add a second source/endpoint truth query |
-| `_FACT_AUTHORITY_JOIN`: scoped nomination, fact loop and scored fact search | Replace per-row endpoint checks with the shared bounded builder, preserving kind/time/evidence/model/filter/coverage predicates |
+| Scoped and keyed nomination, broad fact loop and scored fact search | Qualify source and endpoints with `fact_eligibility_ctes` and fetch indexed rows by eligible key with `_fact_indexed_relation`. Apply the existing kind, time, evidence, model, filter and coverage predicates |
 | `_CONFIRM_FACTS_CONTEXT_BY_KIND` | Join eligible facts back to the input nominations. Emit one row per eligible nomination, including repeats, with its original `WITH ORDINALITY` rank |
 | `_FACTS_CONTEXT_CONTRADICTION_MEMBERS` | Enumerate matching group fact IDs with current time predicates, then shared endpoint qualification; exact existing group count/member semantics, same deadline, no invented group cap |
 | `graph_queries.py`, SQL sandbox `nomination.py` | Preserve complete public authority for graph traversal/sandbox SQL; use shared builder where they call bounded native fact nomination. No private helper becomes caller-reachable |
@@ -584,8 +584,10 @@ Replacing a dependency and its caller together can deadlock a reader
 holding the caller's lock and waiting on the dependency. Commit each
 replacement before acquiring the next exclusive view lock. Under D161 the
 runner holds its migration session lock across commits and retries
-`55P03` from the last committed revision using its bounded schedule and
-three-second default lock wait.
+`55P03` from the last committed revision. Remove
+`migration_lock_timeout_seconds = 60` and its comment from the shipped
+`alembic.ini` so the runner's three-second lock wait applies to the advisory
+lock and DDL.
 [D160 and D161](packaging_distribution_design.md#61-migration-compatibility)
 
 Preserve owners, grants, column contracts and other comments at each step.
@@ -718,16 +720,22 @@ or concurrency qualification.
 hosted-shaped fixture at the deployed v0.22.4 schema, `p9_55_0076`. Run that
 gate and D163 on paired copies with identical data, vectors, filters and read
 instants. Capture the SQL gate rows before result limits or client-side
-deduplication. Require empty `EXCEPT ALL` results in both directions on
-`(fact_kind, fact_id)` at each eligible cut. Include `nomination_rank` in the
-final confirmation comparison. Exercise scoped and keyed nomination, broad
-batch confirmation and final confirmation, including agreement between stages
-for the same inputs. Run the baseline to completion with a recorded diagnostic
-timeout if needed.
+deduplication. Require empty `EXCEPT ALL` differences in both directions so
+duplicate rows count.
+Compare `(fact_kind, fact_id)` at each eligible cut, including broad batch
+confirmation and agreement between stages on the same inputs. Include
+`distance` in scoped and keyed nomination and `coverage` when entity-scoped.
+Compare every final confirmation column, including `coverage` and
+`nomination_rank`. Require the same ordered top `k` with the normal limits.
+Run the baseline to completion with a recorded diagnostic timeout if needed.
 
 - Include observations and relations with multiple qualifying evidence links.
   Retain the repeated-nomination regression with one row per eligible rank.
   [Repeated nominations regression](../../src/tests/spine/test_d153_eligibility_pg.py#L718-L743)
+- Include a relation whose distinct stored endpoints resolve to one requested
+  anchor. Require coverage of one at nomination and final confirmation. Pair
+  it with a nearer eligible fact matching that anchor and require that fact to
+  win at `k=1`.
 - Cover D140 `current`, `at`, `overlap` and `history` with disjoint periods,
   exact boundaries, retractions, a cleared declaration mode and an earlier
   belief pin. Include undeclared historical support, an unready in-force
@@ -780,13 +788,20 @@ partitions grow independently. Include both BEAM fact queries, keeping the
 typed error for `label` and timing `fact_label AS label`.
 [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)
 
-**Migration check.** Upgrade and downgrade a populated store while the previous
-manifest is authoritative. After every DDL commit, run an active customer
-saved query on `facts_visible_history` through the previous-release API and
-require its expected rows and the previous hash. Hold a reader open through
-the next contended replacement in each direction. Require reader completion,
-`55P03` recovery from the committed revision and zero `40P01` deadlocks.
-Check definitions, grants, comments and gate rows at each head.
+**Migration check.** On a populated store, run `alembic upgrade head` and
+`alembic downgrade p9_55_0076` with the incoming release's shipped `alembic.ini`
+while the previous manifest is authoritative. After every DDL commit, run an
+active customer saved query on `facts_visible_history` through the
+previous-release API and require its expected rows and the previous hash.
+
+In each direction, hold a reader's lock on `v_memory_entity_survivor` and
+require its replacement to report `55P03` at the three-second lock timeout.
+During retry backoff, run the same saved query through a second
+previous-release reader under the normal 250 ms interactive lock limit.
+Require the expected rows and previous hash before releasing the first
+reader. Verify that the retry reaches its target from the last committed
+revision with zero `40P01` deadlocks. Check definitions, grants, comments
+and gate rows at each head.
 
 At the upgraded head, drain the previous-release readers and run stock
 `setup`. Verify that the new hash and the query's `pending_revalidation`
