@@ -1641,6 +1641,8 @@ same-version recovery piece inherits its verified parent's recorded
 metadata outside P1, indexed by document for erasure. Both extraction and
 date-free reuse keys for split grids hash exact consumed slot bytes, including
 gaps and separators, as specified in [E1 §7](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
+Index the chunk rows' digest of the actual E2 slots by deployment and document
+for [extraction donor lookup across layouts](split_oversized_chunks_design.md#2-coordinates-and-reuse).
 New D162 representations record pending passage enrollment at E0 readiness, before
 chunk rows exist. The selected embed delivery controls
 [first publication](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk).

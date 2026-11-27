@@ -1948,7 +1948,8 @@ identity rules per source kind are a named spike.
 > this decision's cost promise did not hold. Proposed
 > [D162](#d162-split-oversized-chunks-before-embedding) keys split grids on exact
 > consumed slot bytes, admits a verified slice match for the date and checks
-> paid reuse separately.
+> paid reuse separately. It finds extraction donors across layouts by their
+> consumed slots and tries eligible donors until verification succeeds.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -8772,10 +8773,12 @@ qualified provider limits. Split oversized candidates losslessly at
 structural or scalar boundaries with exact provenance. Split grids add a
 packing and delivery generation. Fitting grids retain their packing and paid
 input identities.
-Split grids key extraction and D140 reuse on exact consumed slot bytes.
-Paid extraction reuse also compares relative passage catalogues and the
-typed D80 location pairs used by E2, including for the preceding D122
-producers. Vector donors require full-delivery and request-to-vector proof.
+Split grids key extraction and D140 reuse on exact consumed slot bytes. Use
+those slots to find extraction donors across layouts and try eligible donors in
+order until one passes. Paid extraction reuse also compares relative passage
+catalogues and the typed D80 location pairs used by E2, including for the
+preceding D122 producers. Vector donors require full-delivery and
+request-to-vector proof.
 The first fitting edit after activation can re-embed unchanged passages
 that lack a verified donor.
 Every CHUNK recovery has a distinct embed delivery.
@@ -8787,9 +8790,10 @@ selected E1 delivery publishes passages and supplies the packing stamp for
 claim embedding and reconciliation. Grids that could already serve retain
 their cuts and handles. Confirmed per-input rejection is terminal, and
 capacity retries stay bounded. Qualify the hosted route and require
-byte-identical frozen LoCoMo v45 and BEAM grids at the benchmark binding's
-qualified ceiling of at least 22,528 Qwen tokens. The offline grid check
-requires zero splits and zero model calls.
+byte-identical frozen LoCoMo v45 and BEAM grids and matching effective E2
+location pairs at the benchmark binding's qualified ceiling of at least
+22,528 Qwen tokens. The offline grid check requires zero splits and zero
+model calls.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

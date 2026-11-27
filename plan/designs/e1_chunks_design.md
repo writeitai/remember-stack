@@ -315,8 +315,8 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   rendered inputs or consumed extraction context before reusing work.
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
-- **A3 — Carry forward derived context when inputs match.** Selection reuses
-  results that match `extraction_input_hash`. Claimify also checks its D122
+- **A3 — Carry forward derived context when inputs match.** Selection uses
+  `extraction_input_hash` within the same layout. Claimify also checks its D122
   reference window. Unchanged regions keep the prior version's structure under
   `structurer_version`. LLM output stays out of identity keys (D7).
   The **extraction reuse key contains only stable components**.
@@ -325,8 +325,9 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   Legacy keys use block content identities. Proposed D162 keys split grids on
   exact consumed slot bytes, including gaps and separators. If either grid is
   split, verify each slot's bytes by role for D140 and paid extraction.
-  Extraction reuse also requires equivalent ordered passage ranges and
-  typed D80 inputs from E2's location bundle.
+  For paid reuse across layouts, find donors by those slots. Try donors in
+  order until verification and remapping pass, including the checks for
+  equivalent ordered passage ranges and typed D80 inputs on split grids.
   [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
 
   **Stable header facts** come from the deterministic document metadata the E2

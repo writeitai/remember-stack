@@ -1,8 +1,8 @@
 # Oversized E1 chunks in v0.22.4
 
 The incident audit uses `c1f15b783`. The rescope round-three source checks
-use `8bd115b7a`. The PR #681 round-three checks use `8393bdef8` and the
-offline-check review uses `11b3b805f`.
+use `8bd115b7a`. The PR #681 round-three checks use `8393bdef8`. The two
+offline grid reviews use `11b3b805f` and `75542dc72`.
 [Proposed D162](../designs/split_oversized_chunks_design.md).
 
 ## Incident and failure path
@@ -127,6 +127,18 @@ from its date-free evidence.
 [D80 rendering](../../src/rememberstack/core/embedding_input_policy.py#L188-L234),
 [E2 bundle and grounding](../../src/rememberstack/workers/e2.py#L1596-L1737).
 
+Both extraction queries order by version and ordinal and return one row. A
+local SQL probe with two completed same-key donors returned `Orchard` alone
+for both stages, although `Terrace` also satisfied the filters. If `Orchard`
+fails location verification, continuing to `Terrace` saves both calls.
+Across layouts, a split fragment's block hashes can differ from those of an
+identical fitting passage because its enclosing blocks differ. A shared digest
+of the exact consumed slots narrows the search without scanning the E0 text
+again on each lookup. Each donor still needs a completed stage and equivalent
+inputs and remappable evidence.
+[Selection lookup](../../src/rememberstack/spine/selection_catalog.py#L102-L138),
+[Claimify lookup](../../src/rememberstack/spine/claim_catalog.py#L425-L447).
+
 D140 records the inherited date before embedding. A fresh lookup after the
 original donor is deleted can move relative dates from the inherited date to
 the version date. Refining verified same-version spans preserves those dates
@@ -214,6 +226,14 @@ detect missing, extra or reordered output.
 [LoCoMo restore command](../../benchmarks/locomo/sharding/README.md#4-restore-one-conversation),
 [CHUNK replay](../../src/rememberstack/workers/e1.py#L132-L165),
 [legacy allocator](../../src/rememberstack/workers/e1.py#L683-L731).
+
+The embedding hash covers the rendered text. E1 separately persists typed
+location elements. A local probe removed only `section_title` from that
+payload and changed E2's ordered pairs with the embedding text, hash and
+coordinates held fixed. Compare the effective pairs from both payloads in the
+same offline check.
+[E1 payload](../../src/rememberstack/workers/e1.py#L551-L567),
+[E2 location validation](../../src/rememberstack/workers/e2.py#L1691-L1737).
 
 ## Read behavior for fitting grids
 

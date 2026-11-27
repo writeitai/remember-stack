@@ -369,11 +369,16 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
-   discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
-   origin time of the earliest chunk of a non-deleted version of the lineage with the same
-   date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
-   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
-   E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
+   discipline). At chunk creation, record the earliest eligible **text origin
+   time** from a non-deleted lineage version. Match by date-free identity or,
+   under D162, by a uniquely verified slice match for the target and its
+   consumed neighbours. A donor's date must be at or before the new version's
+   date. A chunk with no eligible donor takes its own version's
+   `source_modified_at` or `published_at`, leaving the date unknown if both
+   are absent.
+   [D140 date rule](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
+   The per-chunk date feeds the reuse key, the E2 header, and the `asserted_at`
+   of claims freshly extracted from the chunk. Keying on the
    version's own date instead would change every key whenever the source stamps a new
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of

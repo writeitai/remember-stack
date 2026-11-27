@@ -124,18 +124,33 @@ fragment matches, verify the exact slices in the immutable E0 Markdown.
   re-embedding supplies a verified donor for later matching versions.
   [Legacy decoder](../../src/rememberstack/adapters/openrouter.py#L1052-L1077),
   [legacy E1 stamps](../../src/rememberstack/workers/e1.py#L502-L572).
-- **Selection and Claimify.** Whenever either grid is split, including with
-  the same packing stamp, compare the passage catalogues E2 builds from
-  each grid's committed blocks. In label order, match each range's slot
-  role and its start and end relative to that slot. An edit outside a
-  slot can change its catalogue by changing the block that encloses it.
+- **Selection and Claimify.** For each stage, search earlier non-deleted
+  versions of the same live lineage for committed results, including empty
+  results. Use stored stage hashes between grids of the same layout. Across
+  fitting and split layouts, use one indexed digest of the exact E2 slot bytes
+  by role, including absent slots. Derive it from each grid's committed spans
+  and E0 Markdown. Fill missing digests by representation on first
+  mixed-layout lookup so earlier grids participate. Both stages use this
+  digest to find candidates. Verify each completion against its own layout's
+  key under the current policies and compare the underlying inputs across
+  layouts.
+
+  Visit eligible donors from both lookups in descending version number, then
+  ascending chunk ordinal and chunk ID. Continue past failed verification or
+  remapping and use the first donor that passes. Run ordinary E2 only after
+  exhausting the candidates for that stage.
+
+  Whenever either grid is split, including with the same packing stamp,
+  compare the passage catalogues E2 builds from each grid's committed
+  blocks. In label order, match each range's slot role and its start and end
+  relative to that slot. An edit outside a slot can change its catalogue by
+  changing the block that encloses it.
   Also verify passage text, relative origins, eligibility, stable facts,
   dates and generations. Compare the ordered typed D80 `(kind, text)` pairs
   admitted by E2 for the target, using its provenance checks and legacy
   fallback. E2 can receive a changed section title even when the bounded
-  embedding header omits it. Apply this comparison to paid reuse after key
-  matching. Carry equivalent frozen context and remap Selection cards
-  through the paired slots to matching catalogue ranges.
+  embedding header omits it. Carry equivalent frozen context and remap
+  Selection cards through the paired slots to matching catalogue ranges.
 
   For Claimify, match the target's frozen Selection result and use its keep
   ranges in the catalogue. Also match each range's origin eligibility.
@@ -150,8 +165,11 @@ fragment matches, verify the exact slices in the immutable E0 Markdown.
   section. Use D119's relative offsets and exact substring checks. Require a
   distinct catalogue range for each remapped span. The origin must still
   overlap a Selection keep on the target. Reuse the claim IDs with provenance
-  resolved in the new representation. Use ordinary E2 if verification fails.
-  [Legacy keys](../../src/rememberstack/workers/e1.py#L734-L771),
+  resolved in the new representation.
+  [Legacy header facts and eligibility marker](../../src/rememberstack/workers/e1.py#L768-L791),
+  [dated key](../../src/rememberstack/workers/e1.py#L678-L731),
+  [date-free key](../../src/rememberstack/workers/e1.py#L656-L675),
+  [Claimify key](../../src/rememberstack/core/selection_references.py#L70-L86),
   [consumed slots](../../src/rememberstack/spine/chunk_catalog.py#L373-L419),
   [E2 location inputs and grounding](../../src/rememberstack/workers/e2.py#L1596-L1737).
 - **Text origin.** On first packing a version, apply D140 to equivalent slots.
@@ -302,23 +320,36 @@ representation inventory. In the implementation PR, record the source
 revisions, backup receipts or snapshot IDs, document, version and
 representation IDs with chunk counts, SHA-256 digests of the frozen inputs
 and expected grids, and the exact restore or extraction and check commands.
+Record the results of hosted qualification, the offline comparison and the
+rollout rehearsal in that PR.
 [LoCoMo restore workflow](../../benchmarks/locomo/sharding/README.md#4-restore-one-conversation).
 
 Take expected rows and embedding inputs from the pre-D162 grids. When the
 D80 header and normalized body were stored separately, join them with
 D80's separator when a header is present and verify the stored embedding
-hash. Run the D162 packer and renderer on the saved E0 Markdown, blocks,
-sections, provenance, eligibility, rendering facts, packing parameters,
-generations and text-origin dates. Inject the legacy UUIDv4 sequence in
+hash. For each baseline passage retain its stored `location_facts_json`
+and the joined section title E2 uses as a fallback. Run the D162 packer and
+renderer on the saved E0 Markdown, blocks, sections, provenance, eligibility,
+source facts, packing parameters, generations and text-origin dates. Derive
+candidate passage facts from the candidate grid's sections and chunk count
+and prepare the payload E1 would publish. Inject the legacy UUIDv4 sequence in
 allocation order only at the fitting-grid allocator. Require it to be
 consumed exactly.
-[Legacy row assembly](../../src/rememberstack/workers/e1.py#L683-L731),
-[D80 input assembly](../../src/rememberstack/core/embedding_input_policy.py#L218-L230).
+[Legacy row assembly](../../src/rememberstack/workers/e1.py#L678-L731),
+[E1 location facts](../../src/rememberstack/workers/e1.py#L628-L653),
+[D80 input assembly](../../src/rememberstack/core/embedding_input_policy.py#L218-L230),
+[E1 payload](../../src/rememberstack/workers/e1.py#L551-L567).
 
 Require the same number and order of chunks as the stored grids, with
 byte-identical spans, IDs, eligibility, hashes and full rendered D80 inputs.
-Require zero splits and zero model calls. Missing fixtures, digest
-mismatches or differences fail the release check.
+Compare the ordered `(kind, text)` pairs E2 admits from the stored and
+prepared payloads using its provenance checks and each grid's section title
+for the legacy fallback. As a negative control, remove only `section_title`
+from a prepared payload with other valid pairs. Keep grid coordinates,
+embedding bytes and hashes fixed and require the same check to fail. Require
+zero splits and zero model calls. Missing fixtures, digest mismatches or
+differences fail the release check.
+[E2's location validation and fallback](../../src/rememberstack/workers/e2.py#L1691-L1737).
 
 Fitting grids enrolled under §3 are pending for passage reads until first
 E1 publication. The publication and scoped-passage checks below exercise
@@ -342,7 +373,7 @@ when the original packing fits. Update the YAML judge in the implementation PR.
 | Gap-only evidence | Split an eligible HTML gap beside a neighbour with a clipped block. Require a published D122 card citing the exact gap-only target span with its clipped converter provenance. |
 | Provider | Cover stock and drifted routing, inconclusive bounds, full delivery and framed minimum input, and individually fitting items that exceed a batch limit together. Exercise real 429s and typed rejections, shuffled, missing and duplicate positions, and a good vector beside a zero-norm one. Malformed batches attest nothing. Test malformed singletons in both layouts and a valid sibling checkpoint. |
 | Publication | Check current and all-version SQL, passage search, body fetches, adjacency, section references and history with a fitting D162 grid and a published legacy control. Checkpoint a batch and verify that the fitting grid's passages and links are absent. Verify that they appear together with their committed IDs at first publication and that the control is readable throughout. Dead-letter legacy E1 after a successful batch. Observe its handles through SQL and search, refuse CHUNK recovery, and verify ordinary embed replay preserves them. Split a section's first block and check that references and history each return its first piece only. |
-| Rollout | Force a DDL lock timeout and verify D161 retry from the last committed revision. Exercise previous-release writes and compare ordinary SQL and active saved-query reads on both schemas. After old readers drain, verify setup publishes the hash atomically with saved-query revalidation and that new readers enforce the passage gate before enrollment. Reject an incompatible worker's late write. Rehearse both rollback paths in §3, including pre-activation rollback after manifest setup. |
+| Rollout | Force a DDL lock timeout and verify D161 retry from the last committed revision. With enrollment off, use previous-release binaries to exercise writes and compare ordinary SQL and active saved-query reads before and after schema expansion. After old readers drain, verify setup publishes the hash atomically with saved-query revalidation and that new readers enforce the passage gate before enrollment. Reject an incompatible worker's late write. Rehearse both paths in §3 and verify previous-release reads after the manifest rollback on the expanded schema and after the pre-activation restore. |
 | Publication races | Pause after checkpoint validation until the lease expires and verify the reaper skips the locked row. Reclaim before locked validation on a second run and verify the old attempt writes nothing. Interrupt first publication before commit. In `section_history`, keep published `first_chunk_ids`, withhold pending IDs and return one first piece after resume. |
 | Scoped passages | Scope the fitting-grid fixture to its in-force D162 version by document ID. Check before CHUNK enqueue, after CHUNK dead-letters without writing rows and after an EMBED_CHUNK dead letter. Each yields `boundary` and names the document in `scope_pending`. Check that publication clears pending. On a published empty grid with an exhausted search, require `known_empty`. Publish between nomination and the pending check and verify both use the original read snapshot. |
 | Claims tails | Ingest a fresh document that splits, with facts disabled and with the full pipeline. After each tail finishes, find a new claim through semantic claim search and verify it remains current testimony with no `reextracted` transition. |
@@ -355,4 +386,5 @@ when the original packing fits. Update the YAML judge in the implementation PR.
 | Split-to-split gap edit | Pack January 1 and February 1 versions of one lineage into split grids with stable names and cuts. Change `Friday` to `Monday` in a parser-skipped HTML gap within a whole-block prefix, holding block and relative origin hashes fixed. Require the changed target and consumers of that slot to take February 1 and miss Selection reuse. Outside the affected slots and D122 window, require inherited dates, reused claim IDs and zero new embedding, Selection or Claimify calls. |
 | Split-to-split catalogue edit | Remove fence markers outside the three consumed slots and hold the packing stamp, slot bytes and relative origin hashes equal. Require the matching D140 date to carry over. Reject Selection and Claimify reuse where the catalogue changes even if old spans remap. Require controls with matching catalogues and inputs to keep claim IDs with zero embedding, Selection or Claimify calls. |
 | Split-to-split heading edit | Rename a section heading from `Orchard` to `Terrace` outside the three slots. Hold the document title, slot bytes, relative origins, catalogue and D80 inputs fixed. Keep the D140 date and reuse verified vectors. Miss Selection and Claimify reuse for the affected target and reject `Orchard` as ungrounded added context. With a change only to a preceding D122 producer's location pairs, including a zero-card producer, reuse the consumer's Selection and rerun Claimify. The matching-heading control keeps claim IDs with zero embedding, Selection or Claimify calls. |
-| Cross-layout citations | Hold the local slots and preceding eight Selection inputs and results fixed while a split child shifts ordinals. Exercise a secondary citation to the next same-owner chunk across the child and an admitted card support outside the old ordinal window. In both layout directions require the same claim IDs, exact remapped spans and zero Claimify calls for matching targets. |
+| Multiple extraction donors | Give `Orchard` and `Terrace` in an earlier split grid matching Selection and Claimify hashes, with `Orchard` first by ordinal. For an unchanged `Terrace` target, require both stages to reject `Orchard` on typed location, reuse the committed `Terrace` results and claim IDs, and make zero Selection and Claimify calls for the target. |
+| Cross-layout citations | Hold the local slots and preceding eight Selection inputs and results fixed while a split child shifts ordinals. Exercise a secondary citation to the next same-owner chunk across the child and an admitted card support outside the old ordinal window. Test both layout directions with different stored stage hashes, including a pre-D162 fitting donor with no lookup digest. Require the same claim IDs, exact remapped spans and zero Selection and Claimify calls for matching targets. |
