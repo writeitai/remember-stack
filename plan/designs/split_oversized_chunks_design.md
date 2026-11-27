@@ -106,9 +106,16 @@ extraction reuse require equal slot bytes by role. Matching split-slot
 digests establish byte equality for hash matches. For cross-layout and
 fragment matches, verify the exact slices in the immutable E0 Markdown.
 
-- **Passage vectors.** Match content and full D80 input hashes, policy, model
-  and dimensions within the lineage on non-deleted versions at or before the
-  target. Prove full delivery on the original route, or on all possible
+- **Passage vectors.** Search non-deleted versions of the same lineage at or
+  before the target. Require matching full D80 input hashes, policy, model and
+  dimensions. Look for a matching content hash first. If that lookup yields
+  no verified donor, use the D80 input hash to find candidates across
+  whole-block and fragment hashes in either direction. Require byte-identical
+  slices from their immutable E0 Markdown. Apply the same donor proofs to
+  both paths. Publish the target's own content hash and prepared projection
+  with the verified vector.
+
+  Prove full delivery on the original route, or on all possible
   original routes if the endpoint is unknown. Duplicate reply indices can
   associate valid vectors with the wrong inputs. Verify the original
   request and raw reply under §4 and match the position's input hash and
@@ -116,7 +123,7 @@ fragment matches, verify the exact slices in the immutable E0 Markdown.
   Require both proofs for P1-only checkpoints, matched by exact chunk ID.
   Keep the verified binding and mapping with new checkpoints, published
   vectors and any copies made on reuse.
-  Skip an unverified newer row and look for an older verified match.
+  Continue to older donors if a newer one fails source or proof verification.
   The first D162 delivery of a fitting edit to a pre-D162 E1 READY version
   can re-embed unchanged passages that have no verified donor. A legacy
   vector and expected input hash alone cannot prove their mapping because
@@ -315,41 +322,55 @@ before its header. It would split at the hosted starting ceiling of 16,384.
 [Fixture audit](../analysis/split_oversized_chunks_analysis.md#benchmark-fixture-audit),
 [LoCoMo binding](../../benchmarks/locomo/protocol.py#L127-L134).
 
-Freeze the pre-D162 LoCoMo v45 and BEAM 100K/1 stores' complete
-representation inventory. In the implementation PR, record the source
-revisions, backup receipts or snapshot IDs, document, version and
-representation IDs with chunk counts, SHA-256 digests of the frozen inputs
-and expected grids, and the exact restore or extraction and check commands.
-Record the results of hosted qualification, the offline comparison and the
-rollout rehearsal in that PR.
+Freeze the complete representation inventory from the pre-D162 stores.
+Identify the LoCoMo v45 backups by ingestion revision and receipt. Identify
+the retained BEAM 100K/1 store by ingestion revision and snapshot ID, and
+record its upstream data revision. In the implementation PR, record those
+identifiers, document, version and representation IDs with stored chunk
+counts, SHA-256 digests of the frozen inputs and expected grids, and the
+exact restore or extraction and check commands. Publish the offline
+comparison, hosted qualification and rollout rehearsal results there.
 [LoCoMo restore workflow](../../benchmarks/locomo/sharding/README.md#4-restore-one-conversation).
 
-Take expected rows and embedding inputs from the pre-D162 grids. When the
-D80 header and normalized body were stored separately, join them with
-D80's separator when a header is present and verify the stored embedding
-hash. For each baseline passage retain its stored `location_facts_json`
-and the joined section title E2 uses as a fallback. Run the D162 packer and
-renderer on the saved E0 Markdown, blocks, sections, provenance, eligibility,
-source facts, packing parameters, generations and text-origin dates. Derive
-candidate passage facts from the candidate grid's sections and chunk count
-and prepare the payload E1 would publish. Inject the legacy UUIDv4 sequence in
-allocation order only at the fitting-grid allocator. Require it to be
-consumed exactly.
+Take expected rows and embedding inputs from the pre-D162 grids. Keep
+the normalized body and optional D80 header as separate expected fields.
+Recompose the full input with D80's separator when a header is present
+and verify the stored embedding hash. Retain each passage's
+`location_facts_json` and the joined section title E2 uses as a fallback.
+Run the D162 packer and renderer on the saved E0 Markdown, blocks,
+sections, provenance, eligibility, source facts, packing parameters,
+generations and text-origin dates. Use the candidate grid's sections and
+chunk count to build its passage facts and prepare the payload E1 would
+publish. Inject the legacy UUIDv4 sequence in allocation order only at the
+fitting-grid allocator. Require it to be consumed exactly.
 [Legacy row assembly](../../src/rememberstack/workers/e1.py#L678-L731),
 [E1 location facts](../../src/rememberstack/workers/e1.py#L628-L653),
 [D80 input assembly](../../src/rememberstack/core/embedding_input_policy.py#L218-L230),
 [E1 payload](../../src/rememberstack/workers/e1.py#L551-L567).
 
-Require the same number and order of chunks as the stored grids, with
-byte-identical spans, IDs, eligibility, hashes and full rendered D80 inputs.
-Compare the ordered `(kind, text)` pairs E2 admits from the stored and
-prepared payloads using its provenance checks and each grid's section title
-for the legacy fallback. As a negative control, remove only `section_title`
-from a prepared payload with other valid pairs. Keep grid coordinates,
-embedding bytes and hashes fixed and require the same check to fail. Require
-zero splits and zero model calls. Missing fixtures, digest mismatches or
-differences fail the release check.
-[E2's location validation and fallback](../../src/rememberstack/workers/e2.py#L1691-L1737).
+Require the same chunk count and compare the grids field by field in
+ordinal order. Check IDs, exact numeric `ordinal` values, the owning
+`section_id`, block and character bounds, source bytes, token counts,
+eligibility and its policy stamp, text origin, packing stamp and CHUNK
+hashes. Compare the deterministic projection fields, including section
+role, source kind and shape, D80 policy and model stamps, the normalized
+indexed body and the optional `location_header` as separate fields.
+Require byte-identical full D80 inputs and matching embedding hashes.
+Compare the ordered `(kind, text)` pairs E2 admits using its provenance
+checks and each grid's section title for the legacy fallback. D122 uses
+numeric ordinals to choose producers, and body fetches return the two
+text fields separately.
+[D122 producer window](../../src/rememberstack/workers/extraction_references.py#L56-L63) ·
+[Body fetch](../../src/rememberstack/surfaces/query_sandbox/nomination.py#L811-L832) ·
+[E2 location validation and fallback](../../src/rememberstack/workers/e2.py#L1691-L1737).
+
+Require the same comparison to fail on each negative control. Multiply
+the ordinals by ten in a multi-chunk grid. Move a nonempty location header
+and its separator into the indexed body and clear the separate header.
+Remove only `section_title` from a prepared payload with other valid pairs.
+Keep row order, source spans, full D80 inputs and hashes fixed in each
+control. Require zero splits and zero model calls on the baseline check.
+Missing fixtures, digest mismatches or differences fail the release check.
 
 Fitting grids enrolled under §3 are pending for passage reads until first
 E1 publication. The publication and scoped-passage checks below exercise
@@ -373,13 +394,14 @@ when the original packing fits. Update the YAML judge in the implementation PR.
 | Gap-only evidence | Split an eligible HTML gap beside a neighbour with a clipped block. Require a published D122 card citing the exact gap-only target span with its clipped converter provenance. |
 | Provider | Cover stock and drifted routing, inconclusive bounds, full delivery and framed minimum input, and individually fitting items that exceed a batch limit together. Exercise real 429s and typed rejections, shuffled, missing and duplicate positions, and a good vector beside a zero-norm one. Malformed batches attest nothing. Test malformed singletons in both layouts and a valid sibling checkpoint. |
 | Publication | Check current and all-version SQL, passage search, body fetches, adjacency, section references and history with a fitting D162 grid and a published legacy control. Checkpoint a batch and verify that the fitting grid's passages and links are absent. Verify that they appear together with their committed IDs at first publication and that the control is readable throughout. Dead-letter legacy E1 after a successful batch. Observe its handles through SQL and search, refuse CHUNK recovery, and verify ordinary embed replay preserves them. Split a section's first block and check that references and history each return its first piece only. |
-| Rollout | Force a DDL lock timeout and verify D161 retry from the last committed revision. With enrollment off, use previous-release binaries to exercise writes and compare ordinary SQL and active saved-query reads before and after schema expansion. After old readers drain, verify setup publishes the hash atomically with saved-query revalidation and that new readers enforce the passage gate before enrollment. Reject an incompatible worker's late write. Rehearse both paths in §3 and verify previous-release reads after the manifest rollback on the expanded schema and after the pre-activation restore. |
+| Rollout | Under D160, compare previous-release writes, ordinary SQL and active saved queries before and after schema expansion with enrollment off. Force a DDL lock timeout and verify D161 retry from the last committed revision. After old readers drain, verify setup publishes the new hash and moves active saved queries on the old hash to pending revalidation in one commit. Verify the passage gate before enrollment and reject an incompatible worker's late write. Rehearse both §3 rollbacks. Verify previous-release SQL and revalidated saved queries after manifest rollback on the expanded schema and after restoring the pre-activation snapshot. |
 | Publication races | Pause after checkpoint validation until the lease expires and verify the reaper skips the locked row. Reclaim before locked validation on a second run and verify the old attempt writes nothing. Interrupt first publication before commit. In `section_history`, keep published `first_chunk_ids`, withhold pending IDs and return one first piece after resume. |
 | Scoped passages | Scope the fitting-grid fixture to its in-force D162 version by document ID. Check before CHUNK enqueue, after CHUNK dead-letters without writing rows and after an EMBED_CHUNK dead letter. Each yields `boundary` and names the document in `scope_pending`. Check that publication clears pending. On a published empty grid with an exhausted search, require `known_empty`. Publish between nomination and the pending check and verify both use the original read snapshot. |
 | Claims tails | Ingest a fresh document that splits, with facts disabled and with the full pipeline. After each tail finishes, find a new claim through semantic claim search and verify it remains current testimony with no `reextracted` transition. |
 | Recovery | Audit the two hosted dead letters and canary any with verified privacy. Exercise ambiguous evidence, an old sidecar, changed envelopes on first ingest and replay, an interrupted P1 stamp, stale attempts and a published grid above the ceiling. Widen the envelope for a private legacy grid so it fits without cuts. Replay twice and check that one distinct embed delivery succeeds, IDs stay stable, and readiness and D143 advance on that delivery. |
 | Legacy vector recovery | Let a two-input legacy batch accept duplicate index `0` replies before a later batch dead-letters on oversize. Reject both disputed vectors despite matching hashes and full delivery, including with only a P1 row. Supply a separate verified donor for one passage and a verified P1-only checkpoint as a control. Re-embed only inputs without a verified donor. |
 | Fitting edit with legacy vectors | Edit a pre-D162 E1 READY version under an active D162 binding and keep the grid fitting. Count provider calls and require new embeddings for unchanged passages with no verified match. An older verified donor must prevent a call even when a newer matching row lacks proof. A subsequent edit reuses newly verified matching vectors. |
+| Whole block becomes a fragment | At a 16,384-token Qwen ceiling, embed a standalone, body-only 8,192-digit paragraph and retain its verified vector. Append 9,000 digits without a block break in a new version of the same lineage. Assert that the first split piece has the original slice and D80 hash and a different content hash. Require zero embedding calls for the prefix and embed the new suffix. |
 | Date lookup across publication | Narrow a private January 1 grid in recovery. Give the February 1 version an edit in another section and a wider ceiling so its unchanged piece and context match the original parent, with the piece spanning multiple recovered pieces. Pack February before January recovery and after January publication on independent copies. Require January 1 as `text_origin_at` in both orders. |
 | Forget | Checkpoint a partial batch and dead-letter the delivery. Forget, then release an obsolete attempt's reply after the hide. Also forget a document with a published recut grid. Verify immediate invisibility to readers and date lookup, rejection of the late write, and zero staged content, retained origin records or P1 rows after repeated sweeps. |
 | D56 and D140 | Test dated legacy → split and split → fitting within one lineage with stable names and untouched sections on both sides of an edited multi-chunk section. Check paid calls by stage, identities, dates, spans and claim IDs under Rule 4, including the D122 window case. Require a verified fragment to inherit the date of a donor with different inputs or no extraction, then apply normal paid reuse checks. Check an unchanged fragment beyond an anchor after an edit in both recovery orders. Delete the January 1 version after B inherits its date and before B's oversize replay. Verify that B's pieces keep January 1 and E2 resolves “tomorrow” to January 2. Append the 17,000-digit block to the fitting paragraph with a qualifying internal anchor. Require zero embedding calls for that intact paragraph with a matching D80 input and verified donor. |

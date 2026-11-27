@@ -1,8 +1,8 @@
 # Oversized E1 chunks in v0.22.4
 
 The incident audit uses `c1f15b783`. The rescope round-three source checks
-use `8bd115b7a`. The PR #681 round-three checks use `8393bdef8`. The two
-offline grid reviews use `11b3b805f` and `75542dc72`.
+use `8bd115b7a`. The PR #681 round-three checks use `8393bdef8`. The
+offline grid reviews use `11b3b805f`, `75542dc72` and `d89ac335b`.
 [Proposed D162](../designs/split_oversized_chunks_design.md).
 
 ## Incident and failure path
@@ -85,6 +85,17 @@ that hash. The pinned Qwen pre-tokenizer isolates each digit, so the appended
 block alone exceeds 16,384 model tokens.
 [Packer](../../src/rememberstack/core/chunker.py#L221-L240),
 [pinned tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
+
+Appending digits to an 8,192-digit paragraph without a block break keeps
+one legacy block. At a 16,384-token ceiling including the Qwen end token,
+the 16,384-scalar probe overflows and the 8,192-scalar cut fits. With D80
+body-only rendering, the piece has the same source bytes and embedding
+input as the original block. The two content hash forms give different
+lookup keys. The existing D80 hash can find the donor and the stored
+spans can prove source equality without a new digest.
+[Pinned tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json) ·
+[Carry-forward lookup](../../src/rememberstack/spine/chunk_catalog.py#L422-L439) ·
+[Worker lookup](../../src/rememberstack/workers/e1.py#L338-L356).
 
 D80 can choose a different header for a shorter prefix. With a 39-emoji
 channel name, one-letter document and section titles, and a line break after
@@ -195,10 +206,10 @@ Reviewers reproduced public LoCoMo text and BEAM sizing. The hosted probe and
 archived LoCoMo OCR audit remained author-reported. The latter covered 272 v45
 sessions (frozen manifest SHA-256
 `04869f1b20ed5bf6bab6e5cd1fce639a770cc82fcbf2fc12790dcae22ad7c98c`).
-Across 352,993 legacy candidates it reports a 21,567-token singleton in
-`conv-41/D19` before its header, including the end token, and a 22,337-token
-upper bound with headers. A 16,384 cap splits that singleton. Qualify the
-pinned LoCoMo binding at 22,528 or higher.
+The sizing bound enumerated 352,993 possible block spans. The audit reports
+a 21,567-token singleton body in `conv-41/D19` including the end token and
+a 22,337-token upper bound with headers. A 16,384 cap splits that singleton.
+Qualify the pinned LoCoMo binding at 22,528 or higher.
 [Frozen rendering](../../benchmarks/locomo/protocol.py#L581-L629),
 [binding](../../benchmarks/locomo/protocol.py#L127-L134).
 
@@ -234,6 +245,15 @@ coordinates held fixed. Compare the effective pairs from both payloads in the
 same offline check.
 [E1 payload](../../src/rememberstack/workers/e1.py#L551-L567),
 [E2 location validation](../../src/rememberstack/workers/e2.py#L1691-L1737).
+
+Two more probes changed deterministic fields while preserving the composed
+embedding input. Renumbering three chunks from `0, 1, 2` to `0, 10, 20`
+kept their row order and removed both D122 producers for the last chunk.
+Moving the location header and its separator into the indexed body passed
+the body fetch's hash check and returned different `source_text`. The
+offline check compares the ordinal and the two text fields directly.
+[D122 producer window](../../src/rememberstack/workers/extraction_references.py#L56-L63) ·
+[Body fetch](../../src/rememberstack/surfaces/query_sandbox/nomination.py#L811-L832).
 
 ## Read behavior for fitting grids
 

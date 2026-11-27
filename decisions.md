@@ -8778,7 +8778,8 @@ those slots to find extraction donors across layouts and try eligible donors in
 order until one passes. Paid extraction reuse also compares relative passage
 catalogues and the typed D80 location pairs used by E2, including for the
 preceding D122 producers. Vector donors require full-delivery and
-request-to-vector proof.
+request-to-vector proof. Matching D80 inputs can reuse a vector across
+whole-block and fragment hashes when the exact source slices match.
 The first fitting edit after activation can re-embed unchanged passages
 that lack a verified donor.
 Every CHUNK recovery has a distinct embed delivery.
@@ -8790,10 +8791,10 @@ selected E1 delivery publishes passages and supplies the packing stamp for
 claim embedding and reconciliation. Grids that could already serve retain
 their cuts and handles. Confirmed per-input rejection is terminal, and
 capacity retries stay bounded. Qualify the hosted route and require
-byte-identical frozen LoCoMo v45 and BEAM grids and matching effective E2
-location pairs at the benchmark binding's qualified ceiling of at least
-22,528 Qwen tokens. The offline grid check requires zero splits and zero
-model calls.
+matching deterministic grid and projection fields and effective E2 location
+pairs on frozen LoCoMo v45 and BEAM fixtures at the benchmark binding's
+qualified ceiling of at least 22,528 Qwen tokens. The offline check requires
+zero splits and zero model calls.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

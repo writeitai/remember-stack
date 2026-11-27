@@ -266,7 +266,9 @@ explicit unready maintenance operation; it must never claim that a vector was
 produced from different text. D162 requires proof of full delivery and of
 which original request input produced the stored vector, including P1-only
 checkpoints. Complete block runs exposed by a split keep their original
-content key. [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
+content key. A match across whole-block and fragment hashes also requires
+the exact E0 source slice to match.
+[D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
 
 | Change | Action |
 |---|---|

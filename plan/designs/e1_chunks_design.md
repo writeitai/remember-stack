@@ -358,10 +358,13 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   version, including a previous processing generation of that same version, but
   exclude deleted versions. Keep each distinct `(chunk_content_hash,
   embedding_text_hash)` pair under the requested policy/model so identical body
-  text at one location cannot hide the matching vector from another. Under
-  D162, use a donor with proof of full delivery and request-to-vector mapping.
+  text at one location cannot hide the matching vector from another. When
+  D162 makes a whole block into a fragment or vice versa, find matching D80
+  inputs across the two hash forms and verify exact source slice equality.
+  Both D162 reuse paths require full-delivery and request-to-vector proof.
   The first fitting edit after activation can re-embed an unchanged passage
   when none of its matching donors has both proofs.
+  [D162 vector reuse](split_oversized_chunks_design.md#2-coordinates-and-reuse).
   Advancing the chunk-row and embed-delivery generations for converter-origin
   input hashes creates fresh work without changing packing or the model/policy.
   The embed-delivery identity includes the chunker base generation; a base
