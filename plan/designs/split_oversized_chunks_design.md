@@ -78,13 +78,28 @@ slice and `EXTRACTION_ELIGIBILITY_POLICY_VERSION` as its Selection key. Each
 new ineligible row records a fresh empty Selection and Claimify completion
 without a model call. Every producer keeps its slot in the ordered D122
 window, and an unchanged empty producer has the same key across versions.
-Recompute intact-chunk reuse keys from their actual inputs and windows,
-including any split neighbours consumed by E2.
 A new split piece takes the version's D140 source date or unknown, with its
 date-free lookup key unset. In CHUNK recovery it keeps its same-version
 parent's recorded date, including unknown. Ordinary retries use completions
 of the same row.
-[Existing E1 reuse rules](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
+
+For intact chunks, compute `reuse_identity_hash` and `extraction_input_hash`
+from the unsplit candidates using the legacy E1 calculation. It includes
+the previous and next document chunks only if they share the target's
+section. E2 reads the closest same-section chunk on each side and can see
+past a nested section. A cut outside those E2 windows leaves both key
+calculations on the legacy path.
+
+When an eligible intact target reads a D162 piece as an E2 neighbor, use
+the final E2 windows in both keys. Use the actual previous and next
+content hashes and the window-relative converter-origin hashes for the
+target and those neighbors. The tagged slice hash distinguishes the recut
+input. Both paths keep the existing key generations and other fields.
+Resolve `text_origin_at` through the D140 lookup before hashing it into the
+Selection key. D119 checks evidence remapping, and D122 can re-key Claimify
+when its ordered producer keys change.
+[E1 reuse](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3) ·
+[D140 text origin](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
 
 ## 3. Recover through CHUNK while the grid is unpublished
 
@@ -174,3 +189,13 @@ Edit only a later Appendix and hold the Results inputs fixed. Verify new
 code piece IDs, empty E2 completions and equal Selection keys in window
 order. Assert that Results reuses the same claim IDs and makes zero calls
 for embedding, Selection and Claimify.
+
+Also ingest two dated versions of one lineage in each direction, fitting to
+split and split to fitting. In each pair, edit only a later Appendix. Keep
+an intact parent chunk whose closest E2 neighbor lies across a nested
+section, with identical local inputs, D80 input and ordered D122 producer
+keys. Assert matching `reuse_identity_hash`, `extraction_input_hash` and
+`claimify_input_hash`, the first version's `text_origin_at`, the same nonempty
+claim IDs through `chunk_claims`, and zero paid embedding, Selection and
+Claimify calls for the parent target. A control that cuts the closest
+same-section neighbor must change both E1 keys.

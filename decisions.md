@@ -1948,7 +1948,8 @@ identity rules per source kind are a named spike.
 > this decision's cost promise did not hold.
 >
 > **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Split pieces get fresh E1 and E2 work. Intact chunks follow D56.
+> Split pieces get fresh E1 and E2 work. Intact targets retain the legacy
+> Selection and text-origin key calculations when their E2 windows stay intact.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -2038,8 +2039,14 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
 > **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
-> The provider ceiling replaces the oversized-unit rules and allows cuts
-> within blocks. Sections, anchor restarts and non-overlap still govern packing.
+> The anchored E1 packer emits whole-block candidates. A provider-qualified D80
+> fit check replaces the oversized-unit rules and permits cuts within blocks.
+> Intact chunks retain the ordered-block content hash. Split pieces use D162's
+> tagged digest of the exact source slice. Sections, anchor restarts and
+> non-overlap still govern packing.
+>
+> D80 supersedes the context-prefix branch in the original decision below.
+> [Embedding-input policy](plan/designs/e1_embedding_input_policy.md).
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2208,6 +2215,10 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
 > (since the D98 RC 1 amendment, a relational one-hop join instead of SQL/PGQ).
+
+> **Proposed D162 amendment.** The fixed chunking rule is the engine's anchored
+> packer followed by the D80 fit check.
+> [D162](#d162-split-oversized-chunks-before-embedding).
 
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
@@ -8763,6 +8774,8 @@ section-bounded pieces with exact offsets, provenance and deterministic IDs.
 Fitting grids keep every stored field. Each split piece gets a
 generation-specific ID, a fresh vector and a fresh E2 completion. Stable
 Selection keys for ineligible pieces preserve matching Claimify inputs.
+Intact chunks keep legacy Selection and text-origin keys when their E2
+windows are unaffected by cuts.
 E1-complete and exposed grids keep their cuts. CHUNK recovers confirmed size
 dead letters on incomplete grids with proven reader isolation. Confirmed
 input rejection is terminal and capacity retries remain bounded.

@@ -96,13 +96,14 @@ call. Empty representations follow the existing empty completion path.
 
 ## Reuse, including negative dependencies
 
-For intact chunks, Selection's stable reuse basis is its own/neighbor source
-context, header and generation. [D162 defines Selection keys for split
-pieces](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
+Each producer supplies its E1 Selection key. Eligible intact chunks use the
+final windows when E2 consumes a split piece. Other intact chunks use the
+legacy inputs.
+[E1 key inputs and split-piece keys](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
+
 Claimify's effective basis adds the ordered stable
 Selection-input bases of every owning unit in its eligible preceding region,
 including units that emitted no cards, and the reference-policy generation.
-Those Selection bases include any neighbor source used to define their cards.
 
 Hashing only cited/admitted cards is incorrect: an edited chunk may introduce a
 competing referent even though the old cited card is unchanged. Hashing the entire

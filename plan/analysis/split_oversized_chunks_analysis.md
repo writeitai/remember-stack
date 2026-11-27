@@ -53,6 +53,27 @@ for each unchanged slice preserves matching inputs for its Claimify consumers.
 [E2 enqueue](../../src/rememberstack/workers/e1.py#L855-L871) ·
 [Empty Selection and D122 hashing](../../src/rememberstack/workers/e2.py#L540-L606).
 
+## Intact reuse across layouts
+
+E1's two legacy keys include only document-adjacent chunks that share the
+target's section. E2 finds the closest chunk in the same section on each
+side, even across a nested section. For a parent chunk followed by a nested
+child and then more parent text, an Appendix-only split leaves that E2
+window intact. A probe using the existing window query and key functions
+showed that switching the parent to the full E2 window on mixed grids moved
+its text origin from January 1 to February 1 in both layout directions.
+The parent's Selection and Claimify keys changed too. Keeping the legacy
+payload for such chunks preserved all three keys and the original date.
+[E1 key inputs](../../src/rememberstack/workers/e1.py#L656-L765) ·
+[E2 window query](../../src/rememberstack/spine/chunk_catalog.py#L373-L420) ·
+[D140 fallback](../../src/rememberstack/core/text_origin.py#L76-L85) ·
+[D122 key](../../src/rememberstack/core/selection_references.py#L70-L86).
+
+When a cut replaces an E2 neighbor, using the final window and its tagged
+slice hash distinguishes the changed input even across a nested section.
+The legacy path preserves fitting-grid equality and reuse for unrelated
+cuts. The ordered D122 producers can still change independently.
+
 ## Benchmark sizing
 
 The published 94.09% LoCoMo result uses retained Full-v45 ingestion at

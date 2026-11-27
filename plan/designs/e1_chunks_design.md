@@ -28,7 +28,8 @@ Numbers are starting points to measure, not committed constants (CLAUDE.md).
 
 ## 1. The three-layer model
 
-One document, one ordered text, three views over it:
+One document, one ordered text, three views. In this example every candidate
+fits the D80 input limit.
 
 ```
 document.md = [b1][b2][b3][b4][b5][b6][b7][b8][b9][b10]      BLOCKS — deterministic atoms
@@ -45,12 +46,11 @@ chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  CHU
 | used for | reuse diff (D56), the grounding chain, edit locality | chunk boundaries, E2 role signal, P1 role filter, P3 placement | P1 index rows, E2 bundles, `claims.chunk_id` |
 | in identity/reuse keys? | **yes** | **never** (non-deterministic) | ordered block hashes for intact candidates, exact slice hash for split pieces (§4) |
 
-In motion: someone edits paragraph `b5`. Only `b5`'s hash changes; the block diff aligns
-everything else; chunk `c2` (b4–b5) is the only chunk whose block sequence changed → it alone
-re-extracts and re-embeds; `c1/c3/c4/c5` carry forward with their claims, embeddings, and
-stored context untouched; reconciliation (D54) touches only the facts `c2` evidenced. A
-structurer re-run may redraw sections without threatening any of that — sections never
-participate in identity; they only decide where *future* packing may cut.
+A text edit to `b5` that leaves the cuts fixed changes `c2`'s content and
+embedding input. It also changes Selection for `c3`, whose key includes
+`c2` as a same-section neighbor. Following chunks can re-run Claimify if
+those Selection keys enter their D122 windows. Matching keys and evidence
+remaps allow carry-forward under §7.
 
 ## 2. Blocks and the blockizer (D57)
 
@@ -214,8 +214,8 @@ uses the original row assembly and identities.
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
   tables). A chunk boundary is forced wherever eligibility changes between blocks, so every
   chunk is wholly eligible or wholly ineligible. D162 also respects labelled gaps
-  in a failing candidate. E2 schedules Selection only when `chunks.extraction_eligible`
-  is true (`format_conversion_design.md` §4.5).
+  in a failing candidate. E2 calls the Selection model for eligible chunks and
+  records an empty result for ineligible chunks (`format_conversion_design.md` §4.5).
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost
@@ -232,9 +232,9 @@ uses the original row assembly and identities.
   so an early edit can shift boundaries up to the next accepted anchor. Where
   anchors are sparse, packing follows the budget. Parameters (`M`, `min_gap`, budget)
   live in `chunker_version`. D162 refines inside the resulting candidate bounds.
-- **Determinism:** chunks = f(blocks, sections, budget, anchors, `chunker_version`) — a
-  chunker bump is a cheap repack of existing atoms (no re-conversion, no re-blockize), though
-  it does re-key reuse (a deliberate version boundary, like any D7 version bump).
+- **Determinism.** The base packing depends on blocks, sections, eligibility and
+  `chunker_version`. The final grid also depends on the pinned D162 fit inputs
+  and seam rules. A chunker bump repacks the existing blocks. Reuse follows §7.
 - The **token budget** is an eval number, not an argument: recall@k per size class on the
   golden set (spike 1). Starting point: mid-hundreds of tokens.
 
@@ -318,23 +318,27 @@ change.
 
 The lifecycle design owns the *contract* (cost ∝ the edit); this section owns the mechanism:
 
-These reuse rules apply to intact chunks. [D162 split pieces](split_oversized_chunks_design.md#2-refine-only-failing-candidates)
-get fresh embeddings and E2 completions. Stable Selection keys for ineligible
-pieces allow their D122 consumers to reuse matching inputs.
+These reuse rules apply to intact chunks. The legacy Selection and date-free
+keys include the previous and next document chunks only when they share the
+target's section. An eligible intact target keys on the final E2 windows if
+it consumes a split piece. The pieces get fresh embeddings and E2 completions.
+Ineligible pieces have stable Selection keys for their D122 consumers.
+[D162 reuse rules](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
 
 - **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
-  new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain). A chunk
-  is **reusable iff its constituent block-hash sequence is unchanged**, regardless of where
-  it moved — offsets never participate.
+  new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain). Reuse of
+  an intact chunk requires the same constituent block-hash sequence wherever it moved.
+  Offsets stay out of the key.
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
-  inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
-  when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
-  under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
+  inputs are unchanged.** Matching `extraction_input_hash` permits Selection
+  reuse when evidence remaps. Claimify also requires the D122 hash. Unchanged
+  regions keep the prior version's structure under `structurer_version`.
+  LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
-  `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
-  facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
+  `extraction_input_hash = hash(own content hash + keyed neighbor content hashes + stable header
+  facts + keyed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
   deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
   the old one), source kind, the chunk's **text origin time**, language (from
@@ -344,9 +348,8 @@ pieces allow their D122 consumers to reuse matching inputs.
   smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
   versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
   and **not later than this version's own date** (so a back-filled older edition never inherits
-  a later date) — own and neighbour
-  block hashes, non-date header facts, consumed converter-origin hashes,
-  blockizer/structurer/extractor versions, indexed per
+  a later date) — own and keyed neighbor content hashes, non-date header facts,
+  keyed converter-origin hashes and blockizer/structurer/extractor versions, indexed per
   lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
   and replayed, never recomputed; deleting the origin version later does not change it. The
   E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
@@ -377,8 +380,8 @@ pieces allow their D122 consumers to reuse matching inputs.
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
-- A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
-  changed → the input hash changed) — correct by construction.
+- A change to a keyed neighbor's content or converter origins changes the
+  Selection key even when the target's text is identical.
 
 ## 8. What reaches Postgres
 

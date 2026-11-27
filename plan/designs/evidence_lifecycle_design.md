@@ -362,9 +362,8 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
 4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
    **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
-   block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
-   metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
-   extractor version + the
+   content hash + keyed neighbor hashes + window-relative converter origins + stable header facts
+   (title, file name, source kind, the chunk's **text origin time**, language) + the extractor version + the
    structurer version (a stable config string — a deliberate structurer bump is a
    re-extraction boundary, since section roles feed Selection).
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
@@ -379,10 +378,11 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
-   A chunk whose key is already extracted for this lineage **reuses its claims**
-   (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
-   re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
-   embedding version) the same way. **The mechanics — block-hash diff alignment,
+   Intact chunks **reuse the same claim IDs** when their Selection and Claimify
+   keys match and their evidence remaps. A keyed neighbor can re-key a target
+   whose own text is intact. Embedding reuse checks the full D80 input. Split
+   pieces get fresh work under D162's piece-specific identity and date rules.
+   **The mechanics — block-hash diff alignment,
    anchor-stabilized boundaries, the carry-forward rules — are bound in
    `e1_chunks_design.md` §7 (D57–D58)**; this design owns the contract.
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,

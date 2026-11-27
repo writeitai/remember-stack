@@ -1634,15 +1634,14 @@ CREATE INDEX ix_crossrefs_pending  ON document_crossrefs (deployment_id, to_sour
 
 Retrieval-sized units that preserve context and trace back to position. Chunk
 **search text and embedding live in the private PostgreSQL `chunk_search`
-sidecar**; authority
-tables hold metadata, offsets, the section link, and the **generated
-context prefix** (LLM-derived, so it is *replayed* on rebuild, not regenerated — D7 — and therefore
-stored as derived metadata, not body text).
+sidecar**. Authority tables hold metadata, source offsets, section links and
+the D80 embedding-input stamps, including the optional deterministic header.
+[E1 packing and fit check](split_oversized_chunks_design.md).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
 -- chunks — section-bounded E1 units (D58/D162). Body = markdown_uri sliced
--- by [char_start,char_end] (NOT stored in the authority row, D37). P1 is keyed by chunk_id. Large
+-- by [char_start,char_end) (NOT stored in the authority row, D37). P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (
@@ -1679,7 +1678,7 @@ CREATE TABLE chunks (
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
+  'Section-bounded E1 retrieval units after anchored packing and the D162 fit check. Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup
