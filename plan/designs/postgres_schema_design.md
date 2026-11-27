@@ -1662,7 +1662,7 @@ CREATE TABLE chunks (
   token_count     integer,                     -- token length (sizing/budget)
   text_origin_at  timestamptz,                 -- D140: recorded once from the earliest eligible origin after D162 window checks, else this version's source_modified_at or published_at; feeds the E2 header, the Selection key, and fresh claims' asserted_at
   reuse_identity_hash text,                    -- D140: date-free identity for the text-origin lookup (e1_chunks_design.md §7)
-  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
+  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5 governs labeled ranges. Eligibility is uniform for nonblank text in D162 split pieces.
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
   -- stored here (D37); chunk_search holds normalized body + one current vector.

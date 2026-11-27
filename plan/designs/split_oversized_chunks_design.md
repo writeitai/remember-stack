@@ -21,7 +21,7 @@ for incompatible binding changes.
 With D162 enabled, CHUNK checks legacy whole-block candidates for input and
 singleton-request fit. With legacy-only reuse state, an all-fit grid gives
 byte-identical `chunks` and `chunk_search` rows for equal inputs and
-allocations. Fitting candidates keep their spans and legacy row builder.
+allocations. Fitting candidates keep their spans and row layout.
 Derive count, order and extraction windows from the final grid. A change
 from one to multiple chunks can change D80 headers, so check again after
 that transition. EMBED_CHUNK verifies fit before reuse or dispatch. Keep
@@ -33,7 +33,8 @@ to meet request limits.
 Within a failing candidate, cut at changes in nonblank text's extraction
 eligibility. Use E0 block eligibility within blocks and D133 labels in gaps
 (unlabelled gap text is eligible). Attach separator whitespace to the
-preceding piece, and keep leading whitespace with the first.
+preceding piece, and keep leading whitespace with the first. Preserve the
+whitespace's converter labels.
 For size cuts, prefer block seams, then recorded structural seams such as
 turn, page or table-row boundaries, then sentence, line and whitespace
 seams. Use the legal seam nearest the midpoint in the first available tier,
@@ -58,24 +59,34 @@ split discriminator. Use that hash for the piece's own Selection and D140
 keys and vector reuse. Matching split inputs can carry paid results forward
 under D56 and D119.
 
-Hash the final same-section neighbour windows and their converter origins
-for both Selection and D140.
-For a window running from the exact start of its first block to the end of
-its last, with whitespace-only gaps, try both the legacy ordered-block hash
-and the exact split hash to match across a cut. Look up same-lineage
-candidates by date-free key. If either occurrence has a split neighbour,
-use the donor's saved grid and E0 artifacts to compare the actual consumed
-neighbour slots. Require matching presence, verbatim Markdown including
-gaps, ordered relative passage boundaries and canonical converter origins.
-Equal block and origin hashes can hide a changed gap.
+E2 reads the nearest same-section chunk on each side, including across a
+child section. Legacy E1 fills the content and converter-origin slots only
+for adjacent document chunks of the same section. Keep the legacy key
+rules for matches with no split neighbour in either grid.
 
-Before writing both keys, use the neighbour hashes of the first verified
-match in [D140 order](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
-With no eligible origin, use the hashes of the newest verified earlier
+To match across a cut, try the exact split hash and the legacy ordered-block
+hash of each present window, each paired with its relative converter-origin
+hash. Feed the legacy block hashes of the ordered, clipped block passages
+to the legacy chunk hash. This covers partial blocks and passages separated
+by nonblank gaps. Also try the pair of empty slots that a legacy donor can
+have across a child section. An absent window uses only the empty pair.
+Look up same-lineage candidates by date-free key using the combinations of
+previous and next pairs. Try these forms when a cut appears or disappears.
+
+If either occurrence has a split neighbour, verify both actual E2 windows
+before choosing a donor for either key. Use the saved grids and E0 artifacts
+to compare presence, verbatim Markdown including gaps, ordered relative
+passage boundaries, and canonical converter origins. A legacy hash or an
+empty pair can match even when the consumed text differs.
+
+Use the slot pairs that matched the first verified donor in
+[D140 order](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
+With no eligible origin, use the slots of the newest verified earlier
 occurrence whose Selection key matches using the version's own date or
-unknown date. Otherwise use the final grid's content hashes, including
-the split hash for a changed split window. Break remaining ties by ascending
-date-free key. Use the same neighbour hashes in both keys.
+unknown date. With neither match at a split boundary, use the final grid's
+content and actual origin hashes for present neighbours, including the
+split hash and origin for a split neighbour across a child section. Break
+remaining ties by ascending date-free key. Use the same slots in both keys.
 
 Apply the same check to the actual Selection donor, including empty
 results, and to Claimify's matched target and D122 producers. Skip unequal
@@ -150,13 +161,17 @@ whole and split ranges on both sides of an edit. Include three same-section
 list items where an edit to the first causes D162 to restore the second
 item's original whole-block window. Put a relative date in the third item.
 Verify it keeps both keys and its origin date with zero new Selection calls.
-Repeat with a restored two-paragraph neighbour whose old HTML comment gap
-became equal-length whitespace. Keep block and converter-origin hashes
-equal. Require the target to use the split neighbour hash in both keys,
-take the new version's date and make a fresh Selection call even if the
-old result has no cards. When candidate donors share a key, verify that
-an unequal window cannot win either lookup. The Claimify key follows the
-D122 producer window. Cover anchors and mark the existing D122
+Repeat with a two-paragraph neighbour containing an unchanged HTML comment,
+a cut at the former end of an extended paragraph, and a restored parent
+neighbour across a child section. Check that the legacy content and origin
+slots for the cross-child neighbour were empty. Then replace the comment
+with equal-length spaces while keeping block and origin hashes equal, and
+change the consumed cross-child neighbour while keeping its legacy slots
+empty. For each changed window, require both keys to use the split hash and
+actual origin hash. Require the new version's date and a fresh Selection
+call even if the old result has no cards. When candidate donors share a key,
+verify that an unequal window cannot win either lookup. The Claimify key
+follows the D122 producer window. Cover anchors and mark the existing D122
 cross-section reuse gap as an expected failure.
 Verify that identical ingest returns the failed version and an edited
 successor publishes with the matching origin.

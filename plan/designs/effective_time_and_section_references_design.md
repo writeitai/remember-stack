@@ -549,8 +549,8 @@ to each window. Indexed on `(deployment_id, doc_id, reuse_identity_hash)`.
    unknown there is no eligible match;
 3. with verified eligible matches, the new chunk's `text_origin_at` is the smallest of their
    `text_origin_at` (ties broken by `version_no`, then `ordinal`). Otherwise
-   `text_origin_at = d` (`NULL` for an unknown date). D162 chooses the neighbour hashes
-   for the final identity and Selection key, which includes the recorded date.
+   `text_origin_at = d` (`NULL` for an unknown date). D162 chooses the neighbour content
+   and origin slots for the final identity and Selection key, which includes the recorded date.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the

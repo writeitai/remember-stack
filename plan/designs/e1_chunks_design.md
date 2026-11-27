@@ -211,7 +211,7 @@ budget. A block larger than that budget forms its own candidate.
   candidates that fail the qualified provider's input or singleton-request limits.
   For split pieces, character spans determine coverage and block ordinals can repeat.
 - **Never cross a section boundary** (§3 makes this well-defined).
-- **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
+- **Uniform extraction eligibility** (D133). The extraction eligibility policy marks some
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
   tables). The base packer cuts between blocks of different eligibility. D162
   applies eligibility to nonblank text when splitting, including gap text.
@@ -330,7 +330,7 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   `extraction_input_hash = hash(own content hash + same-section neighbour hashes + stable
   header facts + consumed converter-origin hashes + extractor_version + structurer_version)`.
   At split boundaries, both this key and the D140 identity can keep the
-  donor's neighbour hashes after verifying its consumed windows.
+  donor's neighbour content and origin slots after verifying its consumed windows.
   [D162 hash rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
   **Stable header facts** are the deterministic document metadata the E2 bundle
   feeds the extractor. They include title, **file name**

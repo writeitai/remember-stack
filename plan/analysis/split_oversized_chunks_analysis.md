@@ -80,6 +80,24 @@ The identical-window control kept January's date and both keys.
 [Origin hash](../../src/rememberstack/core/source_origins.py#L55-L65) ·
 [Neighbour text](../../src/rememberstack/workers/e2.py#L1819-L1834).
 
+A second probe kept the comment or cut an extended paragraph at its former
+end. Both cuts restored the old Markdown, relative passage boundaries and
+origins. The legacy packer hashes the ordered block hashes. Applying the
+same block normalizer to each clipped passage recovered both keys and the
+January origin. The exact window comparison still rejected the changed gap.
+[Block normalization](../../src/rememberstack/core/blockizer.py#L86-L102) ·
+[Ordered hash](../../src/rememberstack/core/chunker.py#L135-L138) ·
+[Passage clipping](../../src/rememberstack/core/source_passages.py#L124-L168).
+
+In a parent–child–parent grid, E2 reads the closest parent chunk across the
+child. Legacy E1 uses consecutive document ordinals and leaves both the
+content and origin slots empty. With a simulated cut that restored that
+neighbour, only the empty pair recovered the legacy keys. The same pair
+also found a donor for a changed neighbour. The window check rejected it
+and the target took February's date with the split and origin hashes.
+[E1 slots](../../src/rememberstack/workers/e1.py#L734-L765) ·
+[E2 window query](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
+
 D140 takes the earliest eligible origin. Selection picks the newest frozen
 result, and remapping can succeed with no cards to compare. Verify each
 actual donor's window before applying the stage's ordering. The indexed keys
