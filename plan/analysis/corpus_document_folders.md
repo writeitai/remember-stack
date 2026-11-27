@@ -77,6 +77,37 @@ An exhaustive registry-family test makes every new family require an explicit
 type expectation. These reader-policy corrections change only P3 paths/digests;
 they do not change converter generations or any paid-work reuse identity.
 
+### Links in the reader view (2026-11-27)
+
+Git sync records a lineage as `source_kind = git` and
+`source_ref = <repository>:<path>`. A link from `design/designs/foo.md` to
+`../decisions.md#d100` refers to `design/decisions.md` in that repository.
+The export folder is organized by type, optional topic and document identity,
+so the same relative URL means something different in the mount. A link can
+also legitimately point to a file the owner chose to leave out of the corpus.
+Rejecting either case makes one author link prevent publication of the entire
+document, including the original and otherwise usable reader files.
+
+Simply dropping the check would make repository links point at the wrong
+files and could send a local reader outside the mount. Editing the exact
+Markdown copy would make its character offsets disagree with PageIndex and
+the source map. Publish a rendered reading alongside the exact copy. Use the
+existing Markdown parser to interpret link syntax and collect text, and emit
+only checked destinations in the reader view. Keep the label when a local
+target is missing or unsafe. This costs one generated reader file per folder
+and preserves the mounted evidence and its offsets.
+
+Resolve repository links by the normalized path and the existing
+deployment/source-kind/source-ref identity. Use the live served DB selection
+for the destination, so source and target can publish in either order. A
+publication marker or a store probe would make the result depend on which
+file was written first, even when both documents are ready to export. A
+target that moves, becomes served or leaves the corpus can change an inbound
+link without changing the source's export identity. Ordinary publication
+refreshes its own links and the existing verifying reconcile refreshes the
+rest of the tree. Keeping a reverse-link index and enqueueing every referrer
+would add state and unbounded fan-out for a current-tree browsing aid.
+
 The suffix is `sha256(doc_id.bytes).hexdigest()[:24]`: 24 lowercase hex characters,
 or 96 bits. For n distinct document UUIDs, the accidental collision probability
 is approximately n(n−1)/(2 × 2^96), below 6.4 × 10^-14 even at 100 million
