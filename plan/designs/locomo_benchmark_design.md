@@ -498,12 +498,13 @@ returns at most 400 lines from a file no larger than 256 KiB. These operative
 limits are present in the hashed descriptors, not only in implementation
 constants.
 
-Reader tools use `MemoryClient` and the normal P3 mount. Under the proposed
-D163 admission rule, `answer` and live retrieval ablations verify the saved
-endpoint, serving image, live schema and store before retrieving or writing
-answers on every start and resume. Protected runs use an isolated, unmigrated
-restore. Using D163 requires explicit opt-in under a fresh run identity.
-[Benchmark admission](shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
+Reader tools use `MemoryClient` and the normal P3 mount. Under proposed D163,
+a launcher verifies the serving build, live schema and the sample's pinned
+store on every start and resume. It runs the recorded evaluator with its
+original checkpoint checks and binds every reader, including the Codex MCP
+child, to the private service and frozen store through the last checkpoint.
+Using D163 requires explicit opt-in under a fresh run identity.
+[Benchmark admission](shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime)
 
 ## 7. Answer loop
 
@@ -825,7 +826,7 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
   response says a new version was created; before answering, the same exact
   checkpointed tuples equal the complete prepared sample.
 - Explicit ingestion model IDs are set; no rotating model router.
-- All eleven workers are running.
+- All eleven workers are running during ingestion.
 - Every prepared session has an ingest record.
 - Selected document P3 publication markers match current export inputs; live-graph
   catalog/grant/helper readiness and a committed-edge visibility probe passed.

@@ -181,6 +181,47 @@ breaks that invariant, so the oracle needs a specific exception for that chain.
 [Adapter](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L64) ·
 [Redirect foreign key](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L32)
 
+## Round-three source checks
+
+- BEAM creates a client for every question. LoCoMo's Codex MCP child invokes
+  `remember mcp --read-only` and resolves its connection from its environment.
+  The host store lock coordinates restores and wipes. The normal shard restart
+  brings up the processing stack, and `restore --start` starts setup. A live
+  catalog check at admission still leaves time for a swap. The launcher can
+  reuse the lock and own a private API instance over a frozen scoring store.
+  [BEAM client](../../benchmarks/rs_harness_beam/answer_agent.py#L692) ·
+  [MCP child](../../benchmarks/locomo/ablation.py#L1821) ·
+  [Store lock](../../benchmarks/locomo/sharding/store_backup.py#L247) ·
+  [Shard restart](../../benchmarks/locomo/sharding/run_shard.sh#L334) ·
+  [Restore startup](../../benchmarks/locomo/sharding/store_backup.py#L1616)
+- Native LoCoMo `answer` checks the evaluator checkout against `run.json`.
+  The ablation resume check hashes the evaluator revision into its output
+  identity. Run the recorded evaluator under the external guard to preserve
+  both checks. The shard prepares one run directory for multiple stores.
+  Scoring-base verification already checks immutable input files and the
+  selected sample's ingests independently of later answer checkpoints.
+  [Native guard](../../benchmarks/locomo/runner.py#L1660) ·
+  [Ablation identity](../../benchmarks/locomo/ablation.py#L862) ·
+  [Shard store switch](../../benchmarks/locomo/sharding/run_shard.sh#L454) ·
+  [Scoring-base check](../../benchmarks/locomo/sharding/store_backup.py#L421)
+- Exact D54 counts aggregate the widened live claim view, whose evidence join
+  can reorder. Representative selection adds a separate occurrence check,
+  and document filters add another for a matching version. Reuse the
+  candidate-driven lookups in these reads while keeping their distinct time,
+  stance and document predicates.
+  [Counts](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L364) ·
+  [Live evidence join](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L234) ·
+  [Representatives](../../src/rememberstack/surfaces/query_engine.py#L6302) ·
+  [Document filters](../../src/rememberstack/core/document_filters.py#L232)
+- Saved tool calls record public inputs and outputs. The engine gets its
+  query vectors from the embedder and pins the operation clock separately.
+  SQL can also read its own transaction or statement clock. A paired replay
+  needs those inputs or a separately identified fixture that supplies them.
+  [Tool records](../../benchmarks/locomo/model.py#L373) ·
+  [Embedding request](../../src/rememberstack/surfaces/query_engine.py#L4838) ·
+  [Operation clock](../../src/rememberstack/adapters/bounded_postgres_read.py#L65) ·
+  [SQL clock](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L267)
+
 ## Prior qualification and alternatives
 
 - D142's 300k-chunk gate measured BM25 chunk retrieval at 263/267 ms unfiltered
