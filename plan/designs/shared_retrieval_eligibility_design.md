@@ -722,13 +722,27 @@ or concurrency qualification.
 
 **Equivalence oracle.** Verify and restore the LoCoMo conv-26, conv-30 and
 conv-47 backups in isolation on their recorded PostgreSQL versions. For each
-PostgreSQL 19 restore, transfer the stored application rows and vectors once
-via text `COPY` with explicit columns into a disposable PostgreSQL 18 database
-at the source Alembic revision with matching partition bounds. Record the
-backup and source revision. Verify row counts and key-ordered hashes of the
-copied columns, including vectors. Bring each PostgreSQL 18 fixture to the
-deployed v0.22.4 schema (`p9_55_0076`) with Alembic and prepare the hosted-shaped
-fixture at the same head.
+PostgreSQL 19 restore, record the backup and its Alembic revision. Use
+PostgreSQL 18 `pg_dump --schema-only --format=custom` on a reference database
+at that revision with the source's partition bounds. Stage the transfer
+into an empty database in the same isolated PostgreSQL 18 cluster and stop
+on any restore or copy error.
+
+1. Apply `pg_restore --section=pre-data --exit-on-error` to create the tables
+   and partitions before the foreign keys.
+2. Load the retained application rows and vectors with text `COPY` and
+   explicit writable columns. Keep the original current pointers, Alembic
+   revision row and sequence state.
+3. Apply `pg_restore --section=post-data --exit-on-error` to build the indexes
+   and install triggers and constraints. Compare row counts and key-ordered
+   row and vector hashes with the source. Verify that each current-version
+   and current-reading pointer matches the source, including nulls, and that
+   populated pointers name versions of their own lineage or readings of
+   their own version.
+
+Then bring each PostgreSQL 18 fixture to the deployed v0.22.4 schema
+(`p9_55_0076`) with Alembic and prepare the hosted-shaped fixture at the same
+head.
 [Retained-store evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#retained-store-oracle)
 
 Take two physical copies of each fixture's stopped PostgreSQL 18 cluster with

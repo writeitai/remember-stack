@@ -118,6 +118,16 @@ available for the deployed-schema comparison.
 [Volume backup](../../benchmarks/locomo/sharding/store_backup.py#L1248-L1263) ·
 [PostgreSQL storage compatibility](postgres18_reference_server.md#failure-recovery-and-boundaries)
 
+Documents and versions reference each other, as do versions and their
+readings. The current-pointer foreign keys are immediate, so either table
+order fails for populated pointers once both constraints exist. The PostgreSQL
+18 schema archive puts these foreign keys in `post-data`. Loading between
+`pre-data` and `post-data` preserves the original pointers and lets the
+constraints validate them after both sides exist.
+[Document/version cycle](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L384-L396) ·
+[Version/reading cycle](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L443-L452) ·
+[PostgreSQL 18 restore sections](https://www.postgresql.org/docs/18/app-pgrestore.html)
+
 pgvector draws a random graph level for each HNSW index entry. Independent
 builds can therefore change the ordered candidates before the gate sees them.
 Physical copies of one prepared PostgreSQL 18 fixture preserve the index.

@@ -429,18 +429,16 @@ the index is used and eligibility stays exact. For each target and channel:
    searches with a document filter use the plain loop (their filter is per
    occurrence).
 3. **Confirm the batch.** Apply the complete target eligibility rules before
-   a candidate counts toward top-k. D153 constrains source/coordinate lookups
-   to the materialized candidate IDs, while sharing entity visibility across
-   distinct endpoints within the statement. Facts use the canonical private
-   source-qualified helper plus the endpoint conjunction proven equivalent to
-   the public full authority; testimony uses the canonical mention relation.
-   Do not execute full entity provenance anew for each candidate sharing an
-   endpoint. Candidate source lookups remain correlated primary-key probes;
-   a free set join that starts from unrestricted eligibility views is forbidden.
-   The same predicate builders preserve model, scope, document, time and
-   per-fact evidence gates. Rejections remain counted; first-failed-rule-class
-   diagnostics do not permit dropping a guard. See
-   [D153 §4](shared_retrieval_eligibility_design.md#4-one-maintained-source-of-eligibility).
+   a candidate counts toward top-k. Testimony uses D153's canonical mention
+   relation with source and coordinate lookups constrained to the candidate
+   IDs and entity visibility shared within the statement. Under D163, native
+   fact confirmation binds source membership and survivor resolution to each
+   candidate key and shares visibility checks across distinct endpoints.
+   Broad SQL uses set-based source joins with the same fact visibility
+   predicates. Preserve model, scope, document, time and per-fact evidence
+   gates and count rejections, including first-failed-rule diagnostics.
+   [D153 §4](shared_retrieval_eligibility_design.md#4-one-maintained-source-of-eligibility) ·
+   [D163 §4.3](shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule)
 4. **Stop** under exactly one termination reason (§8.6):
    - `k_filled` — `k` rows are confirmed **and** the stream has moved past the
      `k`-th confirmed score (the next fetched score is strictly worse), so a
@@ -584,17 +582,20 @@ gate counts as a failure (rising truncation).
 
 ### 8.5 Facts
 
-Fact search runs one §8.3 loop per fact table (relations, observations), each
-on its own HNSW index, in the operation's context, with complete fact authority,
-fact-time and entity predicates and the per-fact D140 evidence gate in
-confirmation. D153 composes that authority from one canonical source-qualified
-projection and a shared, distinct-endpoint visibility relation; it must match
-the public fact view in every returned row and count. Without entity anchors the branches merge by
-`(distance, fact_kind, fact_id)`. With anchors, the whole result — both
-branches — is ordered by `(coverage DESC, distance, fact_kind, fact_id)`
-using the §8.4 fact coverage, and any per-branch depth is applied only after
-that ordering and eligibility; a two-anchor relation therefore outranks a
-closer one-anchor observation.
+Broad fact search runs one §8.3 loop per fact table (relations, observations)
+on its own HNSW index in the operation's context. Confirmation applies complete
+fact visibility, fact-time and entity predicates and the per-fact D140 evidence
+gate. Use D163's candidate-bound source and survivor lookups for native fact
+confirmation and scoped or keyed nomination. Broad SQL retains set-based
+source joins. Both paths enforce the same fact visibility predicates. Every
+confirmed fact's fields and counts match the public fact view for that ID.
+[D163 §4.3](shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule)
+
+Without entity anchors the branches merge by `(distance, fact_kind, fact_id)`.
+With anchors, both branches together are ordered by
+`(coverage DESC, distance, fact_kind, fact_id)` using the §8.4 fact coverage.
+Apply any per-branch depth after that ordering and eligibility. A two-anchor
+relation therefore outranks a closer one-anchor observation.
 
 **Entity-scoped facts: bounded exact scan (post-approval alternative to the
 §8.4 tier loop, review r2 P2-7).** With entity anchors, fact search does not
