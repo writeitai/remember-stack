@@ -59,15 +59,22 @@ membership keys are version-scoped. A completed flush blocks a repack's
 fan-out even when the new grid carries new claims for the same entity.
 On the claims-only path the enqueue hits the old `embed_claim` and
 `reconcile` keys. Filtering readiness leaves both paths missing work.
-Scope flush membership and the version-level tail to the grid, with
-normalization and application receipts reusable by claim. Reusing or
-overwriting the old barrier would lose the evidence of what it completed.
-Both reconciliation modes need the selected grid because the living
-supersession query can see occurrence links from every grid of the version.
+Scope the tail to the grid. The flush marker also needs the composed flush
+generation. Prompt and Jev use distinct relation and observation application
+versions under the same normalizer. The original marker proves completion
+for its own applications. Reuse frozen normalization by claim and normalizer.
 [Flush guard](../../src/rememberstack/spine/work_ledger.py#L1538-L1547) ·
 [Flush keys](../../src/rememberstack/spine/work_ledger.py#L2585-L2641) ·
 [Claims tail](../../src/rememberstack/spine/processing_layers.py#L1093-L1138) ·
-[Application membership](../../src/rememberstack/spine/fact_applications.py#L470-L488) ·
+[Composed versions](../../src/rememberstack/spine/fact_adjudication.py#L64-L92) ·
+[Application membership](../../src/rememberstack/spine/fact_applications.py#L470-L488).
+
+Both reconcile modes change the same currency cache. Suppose A reconciles,
+B is selected before it reconciles, and C replaces it. Comparing C with
+B alone misses current A-only testimony, especially in snapshot mode
+where version succession leaves currency alone. Use the existing occurrence
+links to find all displaced bases and surviving current occurrences.
+[Shared reconcile](../../src/rememberstack/workers/reconcile.py#L132-L189) ·
 [Testimony selectors](../../src/rememberstack/spine/lifecycle.py#L1433-L1474).
 
 The D118 entity stream assigns admission sequences using materialized unit
@@ -122,6 +129,13 @@ retry guard.
 [CHUNK replay](../../src/rememberstack/workers/e1.py#L132-L165) ·
 [Dead-letter transition](../../src/rememberstack/spine/work_ledger.py#L2365-L2391).
 
+A private recut can move the count from two to three while keeping the
+same multi-chunk header and body. The matching-vector fast path skips
+the authority write, though the stored location facts contain the old
+count. Refresh those facts from the final grid and reuse the vector.
+[D80 render and facts](../../src/rememberstack/core/embedding_input_policy.py#L204-L265) ·
+[E1 reuse fast path](../../src/rememberstack/workers/e1.py#L330-L381).
+
 Packing can produce a new grid over the same representation and spans.
 P1 upserts and E2 work deduplication use chunk IDs, so the full packing
 generation belongs in a split piece's ID. D122 hashes each producer's
@@ -134,6 +148,17 @@ for each unchanged slice preserves matching inputs for its Claimify consumers.
 [Empty Selection and D122 hashing](../../src/rememberstack/workers/e2.py#L540-L606).
 
 ## Intact reuse across layouts
+
+E1 already finds vectors across packing generations of a version. Both E2
+catalogs filter by strictly earlier version number, so a repack of the first
+version pays for unchanged intact input again. Pin the donor to the preceding
+completed grid and match its consumed inputs. Two copies of a passage in one
+grid can have distinct E2 context. The window queries filter by full packing
+generation, so remapping must load the donor's generation.
+[Vector lookup](../../src/rememberstack/spine/chunk_catalog.py#L209-L225) ·
+[Selection lookup](../../src/rememberstack/spine/selection_catalog.py#L102-L125) ·
+[Claimify lookup](../../src/rememberstack/spine/claim_catalog.py#L425-L446) ·
+[Window query](../../src/rememberstack/spine/chunk_catalog.py#L373-L420).
 
 E1's two legacy keys include only document-adjacent chunks that share the
 target's section. E2 finds the closest chunk in the same section on each

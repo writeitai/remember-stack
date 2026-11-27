@@ -321,9 +321,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 These reuse rules apply to intact chunks. The legacy Selection and date-free
 keys include the previous and next document chunks only when they share the
 target's section. D162 preserves both keys for intact targets with matching
-E2 inputs and keys changed windows on the final inputs. Split pieces get fresh
-embeddings and E2 completions. Ineligible pieces have stable Selection keys
-for their D122 consumers.
+E2 inputs and keys changed windows on the final inputs. Same-version repacks
+can reuse keys, text origin and E2 results from the preceding completed grid.
+Split pieces get fresh embeddings and E2 completions. Ineligible pieces have
+stable Selection keys for their D122 consumers.
 [D162 reuse rules](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
 
 - **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
@@ -345,8 +346,8 @@ for their D122 consumers.
   the old one), source kind, the chunk's **text origin time**, language (from
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
   LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
-  `published_at` header facts. It is recorded once when the chunk is created: the
-  smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
+  `published_at` header facts. On a new document version, E1 records the smallest
+  `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
   versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
   and **not later than this version's own date** (so a back-filled older edition never inherits
   a later date) — own and keyed neighbor content hashes, non-date header facts,

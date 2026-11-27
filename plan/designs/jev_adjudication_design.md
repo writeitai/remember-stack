@@ -487,6 +487,10 @@ defined in `src/rememberstack/spine/fact_adjudication.py`:
    - In `_entity_obs_flush_barrier_ready`: calls `version_applications_ready_on` passing `relation_version=active_rel`, `observation_version=active_obs` from `active_adjudicator_versions(adjudication_engine)`.
    - In empty-extract fanout: enqueues with `obs_flush_component_version = active_flush_version(adjudication_engine)`.
 
+D162 takes these generation pins at facts admission. Fan-out and completion
+use the pinned generation with the packing grid.
+[D90 flush state and membership](e3_entity_obs_flush_fanout_design.md#51-stored-version-and-entity-membership).
+
 ### B. Snapshot Hash & Backwards-Compatible Attempt Fingerprinting
 `snapshot_hash` binds:
 ```python

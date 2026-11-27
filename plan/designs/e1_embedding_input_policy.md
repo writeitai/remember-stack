@@ -349,8 +349,10 @@ pack chunks + check the full D80 input under D162
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
 - **Readiness** requires the exact grid's successful embed work. Each nonblank
-  chunk in that grid has prepare and embed stamps matching the configured policy
-  and model. An `empty_body` skip satisfies the per-chunk check. A confirmed rejection
+  chunk has prepare and embed stamps matching its final grid facts, policy
+  and model. After private recovery, refresh stale prepare metadata on
+  surviving rows and retain vectors with matching attestations. An
+  `empty_body` skip satisfies the per-chunk check. A confirmed rejection
   of a nonblank input fails the stage.
   [D162 delivery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished) ·
   [D162 provider errors](split_oversized_chunks_design.md#4-rejection-and-retry).

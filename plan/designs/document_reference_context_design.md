@@ -78,14 +78,18 @@ results, its generation and stable source-input basis. Normalize temporary label
 to validated source descriptors before persistence; preserve exact text and
 range/origin information needed for occurrence remapping.
 
-Intact chunks with matching prior-version inputs reuse the frozen Selection
-output. Retries replay the committed response. Uncommitted concurrent calls may race, but only
-one accepted result becomes authoritative through existing transaction/CAS
-patterns. Do not add a second queue or distributed cache. Associate results with
-each consuming chunk occurrence so position changes do not corrupt evidence.
+Intact chunks with matching inputs reuse frozen Selection from the preceding
+completed grid of the same version or an earlier non-deleted version.
+Retries replay the committed response.
+[D162 donor and remapping rules](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
 
-The Selection barrier uses the expected chunks of the immutable representation
-and pinned generations. Create Claimify work idempotently and transactionally
+Existing transaction/CAS patterns make one accepted result authoritative
+when uncommitted calls race. Do not add a second queue or distributed cache.
+Associate results with each consuming chunk occurrence so position changes
+do not corrupt evidence.
+
+The Selection barrier uses the expected chunks of the pinned packing grid
+and extractor generation. Create Claimify work idempotently and transactionally
 once all results exist. Reused results count as complete. A terminal missing or
 invalid Selection result cannot be silently treated as zero references. Existing
 failure/retry policy remains visible. Claim normalization begins only after the
@@ -103,6 +107,8 @@ producer whose consumed extraction inputs match across layouts.
 Claimify's effective basis adds the ordered stable
 Selection-input bases of every owning unit in its eligible preceding region,
 including units that emitted no cards, and the reference-policy generation.
+Reuse Claimify only from an eligible donor with a matching full key and a
+committed completion.
 
 Hashing only cited/admitted cards is incorrect: an edited chunk may introduce a
 competing referent even though the old cited card is unchanged. Hashing the entire

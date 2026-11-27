@@ -1912,8 +1912,9 @@ CREATE INDEX ix_grounding_claim ON grounding_audits (claim_id);
 -- Written by the reconciliation step of the lifecycle flow (evidence_lifecycle_design §5),
 -- which runs only on COMPLETED basis changes and then recounts affected facts.
 -- Serialize on the claim row and deduplicate transitions by run, claim, reason
--- and direction. A D162 packing-only retirement records the old and completing
--- bases on its reconcile receipt. A verified reuse occurrence can restore currency
+-- and direction. A D162 packing-only retirement records the displaced bases
+-- that carried the claim and its completing basis on the reconcile receipt.
+-- A verified reuse occurrence can restore currency
 -- with reason reextracted and became_current=true (lifecycle §3).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE testimony_currency_events (

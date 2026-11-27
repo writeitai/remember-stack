@@ -1779,9 +1779,10 @@ config choice.
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Both reconcile modes use the selected packing grid's claim occurrences.
-> A packing-only loss follows the `reextracted` rule. Verified reuse can
-> restore the same claim and recount its support.
+> Both reconcile modes compare the completed selected grid with every
+> displaced grid of that version still carrying current testimony. Preserve
+> claims carried by another current basis. A packing-only loss follows the
+> `reextracted` rule. Verified reuse can restore the claim and its support.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
@@ -1955,7 +1956,8 @@ identity rules per source kind are a named spike.
 > **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
 > Split pieces get fresh E1 and E2 work. Intact targets retain the legacy
 > keys for unchanged windows and can carry both keys across a split when
-> their consumed extraction inputs match.
+> their consumed extraction inputs match. On a same-version repack, intact
+> chunks can reuse verified E2 results from the preceding completed grid.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -4124,9 +4126,10 @@ for an unused benchmark harness.
 ## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Flush units and completion state add the representation and full packing
-> generation to the version's keys. Entity-global apply order still governs
-> assertions admitted by those units.
+> Flush units and completion state key on the representation, full packing
+> generation and pinned composed flush generation as well as the version.
+> Match application receipts at the pinned adjudicator versions. Entity-global
+> apply order governs assertions admitted by those units.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The empty path opens `adjudicate_supersession` and `embed_claim` only when the facts layer is
@@ -7268,6 +7271,7 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 ## D140. Declared effective periods, section keys, and version-aware references
 
 > **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
+> An intact repack match can inherit the preceding completed grid's date.
 > New split pieces use their version date or unknown. Private CHUNK recovery
 > retains each intact row's effective date and passes the parent's date to each
 > replacement piece. For unstamped pre-D140 rows this is the version's source
@@ -8800,17 +8804,21 @@ Fitting grids with legacy reuse inputs keep every stored field. Each split
 piece gets a generation-specific ID, a fresh vector and a fresh E2 completion.
 Ineligible pieces have stable Selection keys for their Claimify consumers.
 Intact chunks keep their Selection key, date-free key and date when the
-consumed E2 inputs match across a split. Claimify still checks D122's producers.
-Each additional packing grid gets its own delivery and barrier keys through
-the claims-only or facts tail. Existing keys stay with their grids, including
-verified empty legacy completions. A repack drains admitted fact applications
-before switching grids. New fact admissions and reconcile use the selected
-grid. Verified reuse restores testimony retired solely by repacking.
-E1-complete and exposed grids keep their cuts. Size recovery calls CHUNK's
-shared fit-and-refine routine for the exact failed embed attempt and commits
-the private recut and replay together. Recovery carries the effective date, using E2's version-date fallback
-for unstamped pre-D140 rows. Confirmed input rejection is terminal and capacity
-retries remain bounded.
+consumed E2 inputs match across a split. A same-version repack can reuse
+intact E2 results from the preceding completed grid after key checks and
+D119 remapping. Claimify still checks D122's producers.
+Each additional grid gets delivery and barrier keys through its applicable
+tail. Facts also pin the composed flush generation. Existing keys stay with
+their grids, including verified empty legacy completions. A repack drains
+admitted fact applications before switching grids. Both reconcile modes
+account for all displaced grids still carrying current testimony. Verified
+reuse restores testimony retired solely by repacking.
+E1-complete and exposed grids keep their cuts. Size recovery uses CHUNK's
+shared fit-and-refine routine for the exact failed attempt and commits the
+private recut and replay together. Replay refreshes the final-grid D80
+metadata and retains matching vectors. Recovery carries the effective date,
+using E2's version-date fallback for unstamped pre-D140 rows. Confirmed
+input rejection is terminal and capacity retries remain bounded.
 
 Require offline full-row equality on frozen LoCoMo v45 and BEAM inputs at
 their qualified benchmark ceiling of at least 22,528 tokens, including the

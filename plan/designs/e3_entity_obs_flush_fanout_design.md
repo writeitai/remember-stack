@@ -31,44 +31,41 @@ expected-set insert with durable packing-grid membership for each unit.
 ## 1. Decision
 
 1. **Primary work unit** for stage `adjudicate_observations` under the entity
-   fan-out generation is one **entity flush unit per packing grid**:
-   - Durable membership row in `obs_flush_entity_units` (name fixed in impl
-     migration) keyed  
-     `(deployment_id, version_id, representation_id, chunker_version, normalizer_version, subject_entity_id)`
-     with a generated `unit_id uuid` primary key.
+   fan-out generation is one **entity flush unit per packing grid and
+   composed flush generation**.
+   - Durable membership row in `obs_flush_entity_units` uses the flush state
+     key from §5.1 plus `subject_entity_id`, with a generated `unit_id uuid`
+     primary key.
    - Ledger row: `target_kind = entity`, `target_id = unit_id` (the membership
      PK — **not** the bare canonical `subject_entity_id`),  
      `stage = adjudicate_observations`,  
-     `component_version` pins the composed normalizer and adjudicator generations.
+     `component_version` matches the unit's pinned composed flush generation.
 2. **Why not `target_id = subject_entity_id`:** D12 work identity is
    `(deployment_id, target_kind, target_id, stage, component_version)` with no
    version column. Canonical entities are deployment-global. Two versions that
    stage observations for the same entity would `ON CONFLICT DO NOTHING` onto
    one row and either skip a version’s slice or open a false barrier. A repack
    of the same version can also add claims for the same entity, so each grid
-   needs its own membership and completion.
+   needs its own membership and completion. Prompt and Jev can share normalized
+   claims while requiring separate application receipts and units.
 3. **Fan-out** when the claim-normalize barrier would open obs flush: in **that
    same transaction**, materialize the complete unit set + ledger rows for every
    distinct entity in the grid's staged applications (or take the empty path).
-   Mark fan-out materialized on a durable row for that grid so
+   Mark fan-out materialized for that grid and flush generation so
    “missing unit” is detectable.
-4. **Barrier:** supersession + embed follow-ups enqueue only when every unit in
-   the membership set for that grid and normalizer generation has a terminal
-   `succeeded` processing row at the fan-out component version. `dead_letter` /
-   `failed` / missing processing row for a membership unit **blocks**.
+4. **Barrier:** supersession + embed follow-ups enqueue only when every expected
+   unit has a terminal `succeeded` row and the matching application receipts
+   are complete. Check membership and work at the pinned flush generation.
+   `dead_letter` / `failed` / missing processing row for an expected unit **blocks**.
 5. **Within a unit:** apply assertions **serially**
    in total order  
    `(asserted_at NULLS LAST, claim_id, statement)`  
    under D118's [prepare and apply contract](mutable_fact_windows_design.md#4-writes-concurrency-and-retry).
 6. **Across different `subject_entity_id` values:** concurrent units are allowed.
-7. **Across different versions or grids of the same entity:** units may exist
-   concurrently in the ledger, but **at most one apply stream for a given
-   `subject_entity_id` may run at a time**. When a worker holds that exclusive
-   apply, it applies **all unapplied staging for that entity** across every
-   non-dead-letter unit (all versions) in the **global** total order
-   `(asserted_at NULLS LAST, claim_id, statement)` — not one version slice at a
-   time by `min_asserted_at` (§5.5). Unit rows are grid-scoped for barrier
-   membership. Each unit certifies its own receipt-backed completion.
+7. **Across versions or grids of the same entity**, units share a single
+   D118 apply stream. Admit eligible assertions under §5.3 and drain them
+   in the entity-wide order in §5.5. Each unit certifies receipt-backed
+   completion for its grid and flush generation.
 8. **Empty staging:** no units; durable empty completion **only** via
    `obs_flush_version_state` (or equivalent), **never** via a
    `document_version` processing row at the fan-out component version (§5.1,
@@ -101,48 +98,55 @@ idle. Analysis §1.
 | --- | --- |
 | New docs while V flushes | Separate membership sets / unit ids |
 | New version same lineage | New `version_id` → new units even for shared entities |
-| One unit DLQ | Only that version’s supersession/embed blocked |
+| One unit DLQ | Its grid and flush generation's barrier stays open |
 | Empty staging | Empty completion + supersession + embed_claim |
 
 ## 5. Contracts
 
 ### 5.1 Stored version and entity membership
 
-`obs_flush_version_state` keys materialized, empty and completed state by
-deployment, version, representation, full packing generation and normalizer.
-`obs_flush_entity_units` adds the subject and gives each unit a `unit_id`.
-Use the grid coordinates already stored on both rows. Membership points to
-D118's reusable application receipts for the grid's `chunk_claims` set.
-[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
+Facts admission pins the composed `flush_version` from D126. It includes the
+normalizer and both relation and observation adjudicator versions. Key
+`obs_flush_version_state` by
+`(deployment_id, version_id, representation_id, chunker_version, normalizer_version, flush_version)`.
+`obs_flush_entity_units` adds `subject_entity_id` and gives each unit a
+`unit_id`. All state lookups and writes, including empty completion, use
+the same key. Bind retained state only when its grid and flush generation
+are proven.
+[D126 generation identity](jev_adjudication_design.md#a-generation-identity-and-unified-call-sites) ·
+[D162 grid binding](split_oversized_chunks_design.md#delivery-and-completion).
 
 ### 5.2 Fan-out (claim barrier transaction)
 
-When the claim barrier is ready for grid G of version V at normalizer N:
+When the claim barrier is ready for grid G of version V at the pinned
+normalizer and flush generation:
 
 1. If a **non-terminal legacy** version-level `adjudicate_observations` row exists
    for V at a **pre-entity-fanout** component version → **do not fan out**; leave
    legacy to finish (or ops dead-letters legacy first). See §5.7.
-2. If membership already materialized for (V, G, N) → reuse its units;
-   only ensure barrier evaluation can still fire (idempotent complete path).
-3. Otherwise derive the staged application set from G's claim occurrences
-   at the extractor generation recorded by the barrier. Use that set to
-   scope each subject's staging membership.
-4. **Empty:** record `empty_complete` for G and enqueue
-   `adjudicate_supersession` and `embed_claim` as sibling follow-ups for G.
-5. **Non-empty:** insert one membership row + one processing_state row per
-   entity (`target_kind=entity`, `target_id=unit_id`, fan-out component version);
-   set `obs_flush_version_state.fanout_status=materialized`.
+2. If state already exists at the exact §5.1 key, reuse the marker and its
+   units and evaluate their barrier.
+3. Derive the expected applications from G's claim occurrences at the pinned
+   extractor generation and their frozen normalization outputs. Match D118
+   application receipts by claim, normalizer, output kind and ordinal, and
+   the pinned adjudicator version for that kind. Stage missing applications
+   from the frozen outputs and scope each subject's membership to this set.
+4. **Empty:** record `empty_complete` at the same key and enqueue
+   `adjudicate_supersession` and `embed_claim` as sibling follow-ups.
+5. **Non-empty:** insert a membership and a processing row per subject.
+   Set `fanout_status=materialized` for this grid and flush generation.
 
-`content_hash` / `lane` from barrier parent work.
-
-Resolve the grid from the `unit_id` in the claimed job and read its flush
-state by (V, G, N). Missing membership is a non-retryable error.
+Use the barrier parent's `content_hash` and `lane`. Resolve the grid and
+flush generation from the claimed job's `unit_id` and check its component
+version against the membership. Missing or mismatched membership is a
+non-retryable error.
 
 ### 5.3 Handler (entity unit)
 
 Load the generation-qualified unit by `work.target_id`. Resolve its canonical
 entity block, admit a finite set of eligible assertions from materialized
-units on selected grids, and apply the earliest outstanding admission.
+units at admitted flush generations on selected grids, and apply the
+earliest outstanding admission.
 Preparation and completed output are durable, inference holds no database locks,
 and application revalidates the inputs under D118's locks.
 [D162 fact-application fence](split_oversized_chunks_design.md#fact-application-fence).
@@ -156,11 +160,11 @@ or invoke version-wide staging clear.
 ### 5.4 Completion and version barrier
 
 After releasing application locks, acquire the existing representation barrier
-lock and complete the leased unit. Close the grid's barrier when all of its
-expected units succeeded at the pinned flush generation and its D118
-application receipts are complete. The empty path uses its own marker.
-Commit the barrier and its `adjudicate_supersession` and `embed_claim`
-enqueues together using the grid's work coordinates, hash and lane.
+lock and complete the leased unit. Close the barrier at the exact §5.1 key
+when all expected units succeeded at its flush generation and the matching
+D118 application receipts are complete. The empty path uses that key too.
+Commit completion and its `adjudicate_supersession` and `embed_claim`
+enqueues together using D162's delivery keys, hash and lane.
 
 ### 5.5 Ordering
 
@@ -252,8 +256,9 @@ version readiness remains closed until every expected receipt is certified.
 `OBS_FLUSH_VERSION`** (claim barrier empty, all-claims-already-succeeded hop,
 E1/E2 zero-chunk paths): after the component-version bump they must either:
 
-- write `obs_flush_version_state.empty_complete` for the grid and enqueue
-  its supersession and `embed_claim` directly for a true empty set, or
+- write `obs_flush_version_state.empty_complete` for the grid and pinned
+  flush generation and enqueue its supersession and `embed_claim` directly
+  for a true empty set, or
 - enqueue a **legacy-component-version** version-serial row only if a serial
   path is still required for cutover — never a `document_version` row at the
   fan-out component version.
@@ -262,8 +267,8 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 
 | Surface | Rule |
 | --- | --- |
-| Readiness | Check the expected grid's unit rows by `unit_id`, or its `empty_complete` marker |
-| Lifecycle / connector-cycle | Wait on the selected grid's unit rows, including dead letters |
+| Readiness | Require the expected grid and flush generation's barrier completion or empty marker |
+| Lifecycle / connector-cycle | Wait for that same completion, including any dead-lettered units |
 | Forget | Forget's sweep (D159) deletes **units for forgotten versions** via membership `version_id` / `doc_id` and clears their work rows' error text. Do **not** null payloads or kill units solely because `target_id` equals a canonical entity id that appears in a forgotten document’s entity set (that strand unrelated versions). Staging delete-by-doc remains. |
 
 ### 5.9 Workers and indexes
@@ -307,6 +312,7 @@ E1/E2 zero-chunk paths): after the component-version bump they must either:
 | --- | --- |
 | Claim barrier, 3 staging entities | 3 units + 3 processing rows |
 | Two versions, same subject entity | 2 distinct unit_ids; both can succeed |
+| Same grid and normalizer, separately admitted Prompt and Jev runs | Distinct markers, units and application receipts. Both nonempty and empty paths satisfy completion and readiness only for the pinned generation. Replay uses the same key. |
 | V2 after V1 succeeded for same entity | V2 still gets its own unit and apply |
 | Same entity, two pending units | single apply stream; global assertion order |
 | Unit A {t1:A,t3:A} + unit B {t2:B} co-present | final slices A[t1,t2), B[t2,t3), A[t3,∞) |

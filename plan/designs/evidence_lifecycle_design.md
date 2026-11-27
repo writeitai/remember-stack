@@ -210,20 +210,23 @@ no-op before any bytes move; unchanged bytes are a `content_hash` no-op as today
 One new, deliberately narrow notion: a claim is **current testimony** iff it belongs to its
 lineage's current extraction basis *under the lineage's mode*:
 
-- **Re-derivation.** When the selected basis completes for a version, retire claims
-  carried only by its displaced basis as `reextracted`. Keep currency for claims
-  carried into the replacement grid or another current basis under the lineage's mode.
-  Compare occurrence links so a reused claim keeps its identity.
+- **Re-derivation.** When the selected basis completes, use `chunk_claims` to
+  collect current claims from every displaced grid of that version. Retire
+  each claim once as `reextracted` if it has no occurrence on the completing
+  grid or on another basis current under the lineage's mode. For example,
+  if A reconciles, B is selected and displaced before reconcile, and C
+  completes, C retires the claims supported only by A.
 - **Living version supersession.** Claims absent from the selected grid of the new
   current version flip non-current (`version_superseded`).
 - **`snapshot`**: version succession flips nothing.
 
 Both reconcile modes verify selection under the lineage lock before
 changing currency. Classify loss from a same-version repack as `reextracted`
-before evaluating living supersession. Record the old and completing bases
-on the reconciliation receipt so loss from packing alone, with the same
-representation and extractor, can be identified. Late writes from a
-displaced grid record historical claims.
+before evaluating living supersession. Record the displaced bases that carried
+each retired claim and its completing basis on the reconciliation receipt.
+For packing-only retirement, those bases share the representation and
+extractor and differ in packing generation. Late writes from a displaced
+grid record historical claims.
 
 When a completed selected grid carries a verified D56 reuse occurrence,
 restore a non-current claim whose last currency transition was such a
@@ -319,7 +322,7 @@ retract-then-reassert; a lineage still extracting at finalization defers its ret
 to the next finalization (recorded grace). A cross-cycle move leaves a short, visible,
 self-healing gap (a named spike, not papered over):
 
-1. **Diff** the lineage's evidence links: facts evidenced under the old basis vs the new.
+1. **Diff** the lineage's evidence links using all displaced and surviving bases under §3.
 2. **Transition currency** per §3, appending ledger rows and updating the cache.
 3. **Recount** affected facts using the lineage's evidence links. On retry, include
    transitions already written by this reconciliation so the recount can finish.
@@ -395,7 +398,8 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
    Intact chunks **reuse the same claim IDs** when their Selection and Claimify
-   keys match and their evidence remaps. A keyed neighbor can re-key a target
+   keys match and their evidence remaps, including from the preceding completed
+   grid on a same-version repack. A keyed neighbor can re-key a target
    whose own text is intact. Embedding reuse checks the full D80 input. Split
    pieces get fresh work under D162's piece-specific identity and date rules.
    **The mechanics — block-hash diff alignment,

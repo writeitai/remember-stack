@@ -534,10 +534,11 @@ target and keyed neighbor content and their window-relative converter origins,
 the undated header facts (title, file name, source kind, language and the
 eligibility policy marker), and the blockizer, structurer and extractor
 versions. The lookup index uses `(deployment_id, doc_id, reuse_identity_hash)`.
-New D162 pieces leave the lookup key unset and take the version's date or
-unknown. In private CHUNK recovery, rebuilt rows carry the effective date
-of the intact row or piece parent, including the legacy E2 fallback for
-unstamped pre-D140 rows.
+An intact same-version repack can carry the preceding completed grid's
+date with matching inputs under D162. New split pieces leave the lookup key
+unset and take the version's date or unknown. In private CHUNK recovery,
+rebuilt rows carry the effective date of the intact row or piece parent,
+including the legacy E2 fallback for unstamped pre-D140 rows.
 [D162 recovery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 **Rule at intact chunk creation.** When E1 creates an intact chunk for a new version of lineage `L`:

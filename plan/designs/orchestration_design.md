@@ -207,8 +207,9 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    no cross-store gap. A crash after provider response but before commit may
    repeat a billable call; the design does not claim exactly-once provider spend.
 6. **Readiness** — The grid is embed-ready when its embed row succeeds and every
-   nonblank chunk in that grid has a successful stamp matching the configured
-   `(policy_generation, embedder_generation)` and input hash. An `empty_body` skip
+   nonblank chunk has a successful stamp matching the final grid's location
+   facts, input hash and configured `(policy_generation, embedder_generation)`.
+   An `empty_body` skip
    satisfies the per-chunk check. Claims and facts handoffs and their barriers
    use that same grid through the applicable tail. [D162 delivery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 

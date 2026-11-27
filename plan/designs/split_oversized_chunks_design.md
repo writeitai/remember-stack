@@ -98,16 +98,27 @@ each target, previous and next slot using window-relative coordinates. Keep
 absent slots in place. Compare the typed D80 location pairs E2 admits and the
 other date-free key inputs.
 When they match, keep the prior `reuse_identity_hash`, `extraction_input_hash`
-and `text_origin_at`. On a new version, choose among matching rows in earlier
-non-deleted versions using D140's date eligibility and ordering. An undated
-version can keep matching keys with an unknown date.
+and effective `text_origin_at`. On a new version, choose among matching rows
+in earlier non-deleted versions using D140's date eligibility and ordering.
+An undated version can keep matching keys with an unknown date. On a
+same-version repack, compare with the preceding completed grid (§3).
 
-Without a match, hash the final stable inputs. Resolve the date under D140
-for a new version and use the effective date in §3 for recovery. Include it
-in the Selection key. Tag both new keys `d162:` so later grids can recognize
-them even after the neighbor fits. For this reuse path, verify the inputs
-of the row supplying the result and remap evidence under D119. Claimify
-also checks its ordered D122 producer keys.
+If the split-aware comparison has no match, hash the final stable inputs.
+Resolve the date under D140 for a new grid and use the effective date in §3
+for recovery. Include it in the Selection key. Tag both new keys `d162:`
+so subsequent grids recognize them even after the neighbor fits.
+
+Selection and Claimify try an intact donor from the pinned preceding
+completed grid before the ordinary earlier-version lookup. Verify the
+consumed inputs above even for matching legacy keys. Require a committed
+Selection result at the matching Selection key and extractor generation.
+For Claimify also require a committed completion at the full D122 key,
+including the ordered producer keys and reference policy. Verify the donor's
+inputs on the split-aware earlier-version path too. Load each window from
+its recorded grid and remap cards and every claim span under D119.
+Successful reuse attaches the original claim IDs to the new occurrence.
+A missing match or ambiguous remap falls back to the usual lookup or fresh
+work. Retries within a grid replay the target row's own results.
 [E1 reuse](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3) ·
 [D140 text origin](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
 
@@ -123,7 +134,10 @@ evidence proves the pair. Use the base component version at an unused key
 and append an unambiguous encoding of the pair for additional grids.
 Repeated enqueues resolve to the assigned key. Every version-level job
 from CHUNK through the applicable tail records the pair at enqueue and
-uses it at dispatch.
+uses it at dispatch. At same-version repack admission, pin the most
+recently admitted earlier grid of that version with complete occurrences
+as the reuse source.
+[D143 occurrence completion](processing_layers_design.md#51-gaps-and-frontiers).
 
 For a legacy sources-only completion with deferred gaps and no chunk or
 flush rows, bind the original successful work using the proven historical
@@ -140,44 +154,47 @@ Claimify dispatch, windows and barriers. For older chunk-grain E2 work, the
 target chunk identifies the pair. Derive the tail's distinct claim IDs from
 `chunk_claims` in that grid at the pinned extractor generation.
 `embed_claim` fills missing vectors for that set. D56 governs input reuse.
-Reuse normalization and application receipts and vector stamps by claim ID.
+Reuse claim vectors and normalization outputs by claim ID and generation.
 
-- **Facts entered.** Materialize the D90 flush marker and entity units per
-  grid, using the normalized output of that grid's claims. Check its own
-  expected units and application receipts, or record its empty completion.
-  Release `adjudicate_supersession` and `embed_claim` together from that
-  barrier. Supersession chains full `reconcile`, which opens `label_relation`.
+- **Facts entered.** Pin the composed D90 flush generation at facts
+  admission. Use it with the grid to materialize the flush marker and units,
+  match expected application receipts, and close the barrier or record
+  empty completion. Release `adjudicate_supersession` and `embed_claim`
+  together. Supersession chains full `reconcile`, which opens `label_relation`.
+  A distinct admitted flush generation on the same grid gets distinct
+  delivery keys for supersession, full reconcile and labeling under the
+  same key assignment rule.
   [Observation flush](e3_entity_obs_flush_fanout_design.md#51-stored-version-and-entity-membership).
 - **Claims-only tail.** When D143 opens this tail, dispatch `embed_claim`
   and claims-mode `reconcile` for the grid. The base reconcile component
   version identifies the mode even when the ledger key includes the grid.
   [Processing layers](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes).
 
-Readiness and receipts select the expected grid first and check that grid's
-required work and barriers. D143 admits and closes gaps for the selected
-grid under the lineage lock. Both reconcile modes check that selection under
-the same lock before changing currency. Retire claims lost solely to the
-repack as `reextracted`. A verified reuse occurrence on the completed
-selected grid can restore those claims and their support. Late claims
-from a displaced grid are historical. Living supersession checks the
-current version's selected occurrences.
+Readiness and receipts check the expected grid's work and, for facts,
+the flush generation recorded at admission. D143 admits and closes gaps
+for the selected grid under the lineage lock. Both reconcile modes check
+selection under that lock and retire testimony lost from any displaced grid
+of that version according to D54. Verified reuse on the completed selected
+grid can restore packing-only losses. Late claims from a displaced grid are
+historical. Living supersession checks the current version's selected occurrences.
 [Testimony currency](evidence_lifecycle_design.md#3-testimony-currency-d54).
 
 ### Fact-application fence
 
 Before changing selection under the lineage lock, check the old grid's
-memberships for D118 assertions with an admission sequence and no applied
-receipt. If any remain, keep that grid selected and retry the repack
-through the ledger. Release the lock so the entity stream can drain.
+memberships across flush generations for D118 assertions with an
+admission sequence and no applied receipt. If any remain, keep that grid
+selected and retry the repack through the ledger. Release the lock so the
+entity stream can drain.
 A dead-lettered admission blocks the switch until replay applies it or
 hard forget removes it.
 
 Recheck selection under the same lock at D143 facts entry and when D118
 assigns an admission sequence. Each new assertion admission requires a
-materialized membership on a selected grid that entered facts. Acquire
-the identity fence, candidate lineage locks in ID order, then the entity
-stream lock, matching the support-review lock order. Recheck membership
-and selection before committing admissions for those lineages.
+materialized membership on a selected grid at a flush generation admitted
+to facts. Acquire the identity fence, candidate lineage locks in ID order,
+then the entity stream lock, matching the support-review lock order. Recheck
+membership and selection before committing admissions for those lineages.
 Already-admitted assertions finish in D118 order.
 [D118 application](mutable_fact_windows_design.md#4-writes-concurrency-and-retry) ·
 [D143 ordering](processing_layers_design.md#43-the-claims-tail-waits-for-earlier-fact-work-configured-deployments).
@@ -217,8 +234,12 @@ date on rebuilt rows and use it in the date-sensitive Selection key under
 Replace any recut private rows, remove their superseded embedding stamps and
 P1 rows, and reopen only the failed embed row with its attempt count and error
 history. If all cuts fit, commit just the replay transition. Announce pending
-work after commit. E1 writes verify liveness and a running, unexpired attempt
-under the same locks through commit.
+work after commit. On replay, stamp D80 metadata from the final grid on all
+surviving rows that need a refresh, including when only `chunk_count` changes
+in `location_facts_json`. Keep a vector that still matches the rendered input,
+policy and model. E1 verifies final-grid stamps before completion, and its
+writes verify liveness and a running, unexpired attempt under the same locks
+through commit.
 
 ## 4. Rejection and retry
 
@@ -308,8 +329,18 @@ reconcile with facts disabled. The facts-enabled case reuses a subject from
 the old flush and requires a new unit and applied receipt for the new claim.
 Verify that reconcile retires old-only testimony, that prior ledger keys resolve,
 and that readiness and receipts wait for the new grid. Cover immediate and
-deferred claims handoffs and empty completion. Verify zero paid passage
-embeddings for unchanged D80 inputs.
+deferred claims handoffs and empty completion.
+
+On the first version of a lineage, change the budget so only the Appendix
+repacks. An intact chunk with matching D80, Selection and Claimify inputs
+gets a new chunk ID, the same claim IDs with remapped evidence, and zero
+paid calls for all three stages. Change a keyed producer or make a span
+ambiguous and require fresh work for the affected stage.
+
+In snapshot mode, complete grid A, admit B and displace it before it
+reconciles, then complete C. Exercise both reconcile modes. A-only current
+testimony retires as `reextracted` and support is recounted. Claims carried
+by C or another still-current snapshot basis retain currency.
 
 Pause an old grid's fact application with a durable decision waiting to
 apply. Request a repack and verify the old grid stays selected. Resume
@@ -340,7 +371,10 @@ grid exists. Require one recut and one replay allowance, the same succeeded
 CHUNK row, and the same embed row and preserved error history. E2 must use
 the recovered grid even when its configured generation differs. A repeated
 request for the first failure must leave a later dead letter alone. An
-ambiguous legacy failure stays dead-lettered.
+ambiguous legacy failure stays dead-lettered. Increase the chunk count
+by recutting a different chunk while a stamped survivor's D80 input stays
+identical. Check the final count in its stored location facts, the same
+vector and zero additional provider calls for that survivor.
 
 In private recovery, recut a dated grid's neighbor while the intact target's
 recorded origin predates the version. Check that the rebuilt Selection key,

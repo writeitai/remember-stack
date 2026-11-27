@@ -155,8 +155,9 @@ the previous stage, under the layer fence and the lineage lock (§3.3):
 **A deployment without a configuration row** enters every layer directly at its boundary.
 Both boundaries use the completed work's packing grid in configured and unconfigured
 deployments. Immediate and deferred facts entry check selection under the
-lineage lock. On a repack, reevaluate the gaps and admission using the new
-grid's work after the old grid's admitted fact applications settle.
+lineage lock and pin the composed D90 flush generation. On a repack,
+reevaluate gaps and admission using the new grid's work after the old grid's
+admitted fact applications settle.
 [D162 grid binding](split_oversized_chunks_design.md#delivery-and-completion) ·
 [Fact-application fence](split_oversized_chunks_design.md#fact-application-fence).
 
@@ -184,7 +185,8 @@ Stages after admission drain under the layer setting in force at their boundary 
 ### 4.2 The claims tail and the two reconcile modes
 
 The facts path opens `embed_claim` and full `reconcile` after the grid's fact
-adjudication. When the facts boundary does not enter facts, it opens the **claims tail**:
+adjudication at its pinned flush generation. When the facts boundary does not
+enter facts, it opens the **claims tail**:
 
 - `embed_claim` for the grid's distinct claim occurrences;
 - `reconcile` for the same grid, with base component version **`reconcile-2026.07:claims`**.
@@ -297,7 +299,8 @@ the work ledger, never from the mere absence of rows:
   representation and chunker generation (so its chunk grid exists and is final) and either its
   extract barrier is ready — every chunk's Selection and Claimify results are committed, so every
   claim occurrence for that grid is attached — or the completed grid is empty. Readiness
-  and receipts match the exact grid to all required ledger work and barriers.
+  and receipts match required ledger work and barriers to the exact grid
+  and the admitted flush generation for facts.
   A verified legacy empty grid uses its original successful embed row and
   completion time.
   [D162 grid binding](split_oversized_chunks_design.md#delivery-and-completion).
@@ -305,7 +308,7 @@ the work ledger, never from the mere absence of rows:
   later versions:
   - **claims** — that grid's occurrences are complete and its `embed_claim` succeeded, so every
     claim it carries, including claims later versions will reuse by ID, has its vector;
-  - **facts** — that grid's full reconcile succeeded.
+  - **facts** — that grid's full reconcile succeeded at its admitted flush generation.
 
 Under the lineage lock, the selected grid's frontier completion deletes the layer's gap and
 advances the lineage. Readiness and receipts also wait for the other required tail stages,
@@ -317,11 +320,11 @@ claims are not yet embedded.
 
 ### 5.2 One advance procedure
 
-Reuse across versions only looks at earlier versions of a lineage (Selection reuse requires a
-smaller `version_no`; Claimify and claim attachment follow from it). So a configured deployment
-enters a layer **one version of a lineage at a time**, and different lineages run in parallel. One
-procedure, **advance(lineage, layer)**, decides it. It runs under the layer fence and the lineage
-lock, and is invoked by:
+Across document versions, Selection and Claimify reuse results from earlier
+non-deleted versions of the lineage. Same-version repacks follow D162's
+completed-grid reuse rule. A configured deployment enters a layer **one
+version of a lineage at a time**, and different lineages run in parallel.
+**advance(lineage, layer)** runs under the layer fence and lineage lock when:
 
 - a boundary that recorded a gap (§4.1);
 - a version reaching the layer's frontier, and (for facts) a claims-mode reconcile succeeding;
