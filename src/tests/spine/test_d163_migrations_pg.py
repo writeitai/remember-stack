@@ -242,6 +242,7 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
             _provision_query_role_password(connection=connection, engine=engine)
         sandbox = _executor(engine, corpus, qualification.MANIFEST_BY_HEAD[TARGET_HEAD])
         case = corpus.case
+        case_json = case.model_dump(mode="json")
 
         def snapshot(head: str) -> dict[str, Any]:
             record = qualification.capture(engine, case, timeout=20)
@@ -255,12 +256,12 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
                 **record,
                 "schema_head": head,
                 "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[head],
-                "case": case.model_dump(mode="json"),
+                "case": case_json,
                 "sandbox_settings": {"jit": "off"},
                 "sandbox": qualification._sandbox_queries(sampler, samples=0),
-                "beam": qualification._beam_queries(sampler),
-                "beam_ordered_at_case_time": qualification._beam_ordered_rows(
-                    sandbox, evaluated_at=case.evaluated_at, timeout_ms=20_000
+                "beam_evaluated_at": case_json["evaluated_at"],
+                "beam": qualification._beam_queries(
+                    sampler, evaluated_at=case.evaluated_at
                 ),
             }
 
@@ -334,29 +335,37 @@ def test_beam_oracle_uses_the_case_clock_at_exclusive_validity_end() -> None:
             if head == TARGET_HEAD:
                 command.upgrade(config=migration_config(engine), revision=TARGET_HEAD)
             sandbox = _executor(engine, corpus, qualification.MANIFEST_BY_HEAD[head])
-            before = qualification._beam_ordered_rows(
-                sandbox, evaluated_at=before_end, timeout_ms=20_000
-            )
-            at = qualification._beam_ordered_rows(
-                sandbox, evaluated_at=valid_until, timeout_ms=20_000
-            )
+            sampler = qualification._SandboxSampler(sandbox)
+            before = qualification._beam_queries(sampler, evaluated_at=before_end)
+            at = qualification._beam_queries(sampler, evaluated_at=valid_until)
             broad = qualification._broad_view_rows(
                 sandbox, evaluated_at=before_end, timeout_ms=20_000
             )["sandbox/facts_current"]
             assert (
-                sum(count for _, count in before["facts_predicates"]) == len(broad) > 0
+                sum(count for _, count in before["facts_predicates"]["rows"])
+                == len(broad)
+                > 0
             )
-            assert (
+            assert [
                 "relation",
                 str(corpus.facts["relation", "multi_source"]),
                 "works_for",
                 "multi_source",
-            ) in before["facts_sample"]
-            assert at["facts_predicates"] == at["facts_sample"] == []
-            live = qualification._beam_queries(qualification._SandboxSampler(sandbox))
+            ] in before["facts_sample_corrected"]["rows"]
+            assert (
+                at["facts_predicates"]["rows"]
+                == at["facts_sample_corrected"]["rows"]
+                == []
+            )
+            for name in ("facts_predicates", "facts_sample_corrected"):
+                assert at[name]["termination_reason"] == "completed"
+            assert before["facts_sample"]["error_code"] == "execution_error"
+            assert before["facts_sample"]["termination_reason"] == "failed"
+            live = qualification._beam_queries(sampler)
             assert live["facts_predicates"]["rows"] == []
-            assert live["facts_sample"]["error_code"] == "execution_error"
-            ordered.append(before)
+            ordered.append(
+                {name: response["rows"] for name, response in before.items()}
+            )
         assert ordered[0] == ordered[1]
 
 
@@ -391,20 +400,31 @@ def test_beam_oracle_preserves_the_shipped_cutoff_with_tied_predicates() -> None
         counts = Counter(json.loads(row)["predicate"] for row in broad)
         assert sorted(counts.values(), reverse=True)[24:] == [1, 1]
 
-        shipped = dict(qualification._OPEN_QUERY_SQL)["facts_predicates"]
-        with sandbox._transaction(
-            limits_ms=qualification.INTERACTIVE_LIMITS, statement_timeout_ms=20_000
-        ) as cursor:
+        sampler = qualification._SandboxSampler(sandbox)
+        captured = qualification._beam_queries(
+            sampler, evaluated_at=corpus.case.evaluated_at
+        )
+        # Compare against the literal shipped request with the pinned view
+        # installed in this disposable database.
+        with _connect(engine) as connection, connection.cursor() as cursor:
             pinned = qualification._pinned_facts_current(
                 cursor, corpus.case.evaluated_at
-            ).as_string(cursor)
-            cursor.execute(f"WITH facts_current AS ({pinned}) {shipped}".encode())
-            expected = cursor.fetchall()
-        assert len(expected) == 25
-        replay = qualification._beam_ordered_rows(
-            sandbox, evaluated_at=corpus.case.evaluated_at, timeout_ms=20_000
+            )
+            cursor.execute(
+                sql.SQL("CREATE OR REPLACE VIEW memory_v1.facts_current AS {}").format(
+                    pinned
+                )
+            )
+        shipped, _ = sampler.run(
+            dict(qualification._OPEN_QUERY_SQL)["facts_predicates"],
+            max_rows=qualification._OPEN_QUERY_MAX_ROWS,
         )
-        assert replay["facts_predicates"] == expected
+        aggregate = captured["facts_predicates"]
+        assert len(shipped.rows) == 25
+        assert aggregate["rows"] == shipped.model_dump(mode="json")["rows"]
+        assert aggregate["ordered_result"] is True
+        assert aggregate["limits"]["row_cap"] == 40
+        assert aggregate["limits"]["statement_timeout_ms"] == 5000
 
 
 def test_d163_upgrade_and_downgrade_with_previous_readers(

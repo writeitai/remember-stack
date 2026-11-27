@@ -22,11 +22,18 @@ from rememberstack.surfaces.query_sandbox.result import ResultLimits
 
 
 def _capture(*, head: str) -> dict[str, Any]:
+    evaluated_at = "2025-01-01T00:00:00Z"
+    beam_rows = {
+        "facts_predicates": [["first", 2], ["second", 2]],
+        "facts_sample": [],
+        "claims_live_sample": [],
+        "facts_sample_corrected": [["relation", "fact", "first", "label"]],
+    }
     return {
         "schema_head": head,
         "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[head],
         "sandbox_settings": {"jit": "on"},
-        "case": {},
+        "case": {"evaluated_at": evaluated_at},
         "cuts": {
             "contradiction/broad": [],
             "native_final/broad": [],
@@ -46,27 +53,20 @@ def _capture(*, head: str) -> dict[str, Any]:
         "ordered": {
             "final/broad": [("observation", "fact", {"returned": 1, "total": 2})]
         },
-        "beam_ordered_at_case_time": {
-            "facts_predicates": [["first", 2], ["second", 2]],
-            "facts_sample": [["relation", "fact", "first", "label"]],
-            "claims_live_sample": [],
-        },
+        "beam_evaluated_at": evaluated_at,
         "beam": {
-            "facts_predicates": {
-                "rows": [["first", 2], ["second", 2]],
-                "termination_reason": "completed",
-                "error_code": None,
-            },
-            "facts_sample": {
-                "rows": [],
-                "termination_reason": "failed",
-                "error_code": "execution_error",
-            },
-            "claims_live_sample": {
-                "rows": [],
-                "termination_reason": "completed",
-                "error_code": None,
-            },
+            name: {
+                "rows": rows,
+                "columns": [],
+                "ordered_result": name != "facts_sample",
+                "truncation_reason": None,
+                "limits": {"row_cap": 40, "statement_timeout_ms": 5000},
+                "termination_reason": "failed"
+                if name == "facts_sample"
+                else "completed",
+                "error_code": "execution_error" if name == "facts_sample" else None,
+            }
+            for name, rows in beam_rows.items()
         },
     }
 
@@ -89,12 +89,13 @@ def test_compare_detects_beam_order_and_outcome_changes() -> None:
         qualification.compare(connection, baseline, target)["beam_matches"].values()
     )
 
-    target["beam_ordered_at_case_time"]["facts_predicates"].reverse()
+    target["beam"]["facts_predicates"]["rows"].reverse()
     target["beam"]["facts_sample"]["error_code"] = "statement_timeout"
     assert qualification.compare(connection, baseline, target)["beam_matches"] == {
         "facts_predicates": False,
         "facts_sample": False,
         "claims_live_sample": True,
+        "facts_sample_corrected": True,
     }
 
 
@@ -102,24 +103,29 @@ def test_compare_detects_a_different_tied_predicate_at_the_beam_cutoff() -> None
     baseline = _capture(head=qualification.BASELINE_HEAD)
     target = _capture(head=qualification.TARGET_HEAD)
     leaders = [[f"predicate-{rank}", 26 - rank] for rank in range(24)]
-    baseline["beam_ordered_at_case_time"]["facts_predicates"] = [*leaders, ["first", 2]]
-    target["beam_ordered_at_case_time"]["facts_predicates"] = [*leaders, ["second", 2]]
+    for record in (baseline, target):
+        record["beam"]["facts_predicates"]["rows"] = [*leaders, ["first", 2]]
     connection = MagicMock(spec=Connection)
     connection.execute.return_value.one.return_value = (0, 0)
+    assert all(
+        qualification.compare(connection, baseline, target)["beam_matches"].values()
+    )
 
+    target["beam"]["facts_predicates"]["rows"][24] = ["second", 2]
     assert qualification.compare(connection, baseline, target)["beam_matches"] == {
         "facts_predicates": False,
         "facts_sample": True,
         "claims_live_sample": True,
+        "facts_sample_corrected": True,
     }
 
 
-def test_compare_requires_fixed_instant_beam_rows() -> None:
+def test_compare_requires_fixed_instant_beam_sandbox_responses() -> None:
     baseline = _capture(head=qualification.BASELINE_HEAD)
     target = _capture(head=qualification.TARGET_HEAD)
-    target["beam_ordered"] = target.pop("beam_ordered_at_case_time")
+    target.pop("beam_evaluated_at")
     connection = MagicMock(spec=Connection)
-    with pytest.raises(AssertionError, match="fixed-instant BEAM rows"):
+    with pytest.raises(AssertionError, match="fixed-instant BEAM sandbox responses"):
         qualification.compare(connection, baseline, target)
     connection.execute.assert_not_called()
 

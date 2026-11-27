@@ -84,27 +84,31 @@ with ordered co-members and both member counts.
 
 Compare requires the expected runtime manifest at each schema head and matching
 effective sandbox JIT settings. It checks ordered raw batches, ordered final
-facts with their contradiction blocks, the fixed-instant ordered BEAM rows,
-and the typed outcomes of the shipped BEAM statements. It runs `EXCEPT ALL`
-in both directions over the SQL cuts, including native final confirmation,
-contradiction membership and all five broad sandbox views. The comparison
-counts repeated rows and ignores incidental order in those broad reads.
+facts with their contradiction blocks, and the ordered BEAM sandbox responses
+at the case instant. It runs `EXCEPT ALL` in both directions over the SQL cuts,
+including native final confirmation, contradiction membership and all five
+broad sandbox views. The comparison counts repeated rows and ignores
+incidental order in those broad reads.
 
 The broad export runs as the query login and uses the recorded diagnostic
 `--timeout` to read every row before the response caps. It reads the installed
 `facts_current` definition from the catalog and replaces its statement clock
 with the case instant in the diagnostic SQL. This fixes both membership and
-the returned `evaluated_at` value. The BEAM replay uses the same pinned
-definition. The aggregate keeps the shipped `ORDER BY 2 DESC LIMIT 25` so the
-comparison checks the rows in the order BEAM consumes them, including the
-predicate selected when a tie spans the cutoff. The fact sample uses
-`fact_label AS label` at the same instant. Capture also runs the shipped SQL
-under the interactive limits at the live statement clock and records the
-typed outcomes. The broad-view checks record executed plans, including
-planning time and buffer use. A canceled plan reports its typed error.
-Compare checks completion and truncation on both sides and requires a plan
-for each completed broad read. Matching statement timeouts still require
-equal complete exports. Regenerate both captures for the corrected BEAM replay.
+the returned `evaluated_at` value. Capture uses that same pinned definition
+as the fact source in the BEAM queries it submits to the usual sandbox
+validator and executor. The aggregate keeps `ORDER BY 2 DESC LIMIT 25` and
+the 40-row request cap. Compare checks the returned rows in order, including
+the predicate selected when a tie spans the cutoff, along with the columns,
+limits, truncation and typed outcomes. The shipped `label` query must report
+`execution_error`. Capture also records the corrected `fact_label AS label`
+response at the case instant. Regenerate both captures to record
+`beam_evaluated_at` and the sandbox responses.
+
+The broad-view checks record executed plans, including planning time and
+buffer use. A canceled plan reports its typed error. Compare checks
+completion and truncation on both sides and requires a plan for each
+completed broad read. Matching statement timeouts still require equal
+complete exports.
 
 [Oracle and latency harness](../../benchmarks/d163_qualification.py) ·
 [Staged restore](../../benchmarks/d163_staged_restore.py)
@@ -435,6 +439,23 @@ Ruff formatting and lint, Pyright, the import contracts and the test inventory
 passed. The selected suites passed 176 benchmark tests and 101 PostgreSQL
 tests, including the keyed-probe plan checks with sparse and refreshed
 statistics.
+
+### PR #684 round-three verification
+
+The baseline and D163 runtimes returned matching ordered BEAM sandbox
+responses across current, at, overlap and history cases on physical
+PostgreSQL 18.6 copies with inherited `jit=on`. All 112 SQL cuts matched,
+with 1,010 rows per release and zero differences.
+
+The PostgreSQL tie fixture compares the captured aggregate with the literal
+shipped request on a scratch database whose installed fact view uses the
+same case instant. A comparison regression changes only row 25 of the
+captured sandbox response to another predicate with the same count and
+checks that the oracle rejects it.
+
+Ruff formatting and lint, Pyright, the import contracts, and the test
+inventory passed. All 475 benchmark tests and 17 D163 PostgreSQL eligibility
+and migration tests passed.
 
 ### Synthetic latency
 

@@ -104,6 +104,7 @@ LATENCY_BATCH_SIZES = {"observation": 804, "relation": 535}
 _BEAM_SAMPLE_CORRECTED = dict(_OPEN_QUERY_SQL)["facts_sample"].replace(
     "predicate, label", "predicate, fact_label AS label"
 )
+_BEAM_ORACLE_NAMES = (*dict(_OPEN_QUERY_SQL), "facts_sample_corrected")
 
 
 class Case(BaseModel):
@@ -542,7 +543,6 @@ def compare(
         raise AssertionError("the two releases must use identical sandbox JIT settings")
     if "contradiction/broad" not in baseline["cuts"]:
         raise AssertionError("recapture both releases with native contradiction cuts")
-    beam_names = {name for name, _ in _OPEN_QUERY_SQL}
     for record in (baseline, target):
         required = {
             f"native_{name}" for name in record["ordered"] if name.startswith("final/")
@@ -557,8 +557,15 @@ def compare(
             for view in BROAD_VIEWS
         ):
             raise AssertionError("recapture both releases with all broad sandbox cuts")
-        if beam_names != record.get("beam_ordered_at_case_time", {}).keys():
-            raise AssertionError("recapture both releases with fixed-instant BEAM rows")
+        beam_evaluated_at = record.get("beam_evaluated_at")
+        if (
+            beam_evaluated_at is None
+            or beam_evaluated_at != record["case"].get("evaluated_at")
+            or set(_BEAM_ORACLE_NAMES) != record.get("beam", {}).keys()
+        ):
+            raise AssertionError(
+                "recapture both releases with fixed-instant BEAM sandbox responses"
+            )
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
     counts = {}
@@ -584,11 +591,8 @@ def compare(
             for view in BROAD_VIEWS
         },
         "beam_matches": {
-            name: baseline["beam_ordered_at_case_time"][name]
-            == target["beam_ordered_at_case_time"][name]
-            and _beam_completed(name, baseline["beam"][name])
-            and _beam_completed(name, target["beam"][name])
-            for name, _ in _OPEN_QUERY_SQL
+            name: _beam_comparable(name, baseline["beam"][name], target["beam"][name])
+            for name in _BEAM_ORACLE_NAMES
         },
         "ordered_raw": {
             kind: [len(batch) for batch in batches]
@@ -637,8 +641,25 @@ class _SandboxSampler:
         return result, elapsed
 
 
-def _beam_queries(sampler: _SandboxSampler) -> dict[str, Any]:
-    """Record interactive outcomes from the unchanged BEAM requests."""
+def _beam_queries(
+    sampler: _SandboxSampler, *, evaluated_at: datetime | None = None
+) -> dict[str, Any]:
+    """Run BEAM through the interactive sandbox, pinning the fact source for capture."""
+    queries = dict(_OPEN_QUERY_SQL)
+    if evaluated_at is not None:
+        with sampler.sandbox._transaction(
+            limits_ms=INTERACTIVE_LIMITS,
+            statement_timeout_ms=INTERACTIVE_LIMITS.statement_timeout_ms_default,
+        ) as cursor:
+            pinned = _pinned_facts_current(cursor, evaluated_at).as_string(cursor)
+        queries["facts_sample_corrected"] = _BEAM_SAMPLE_CORRECTED
+        source = "FROM facts_current"
+        for name in ("facts_predicates", "facts_sample", "facts_sample_corrected"):
+            query = queries[name]
+            assert query.count(source) == 1, name
+            # Substitute only the clock-pinned view body. The sandbox still
+            # validates the full query and applies its normal response caps.
+            queries[name] = query.replace(source, f"FROM ({pinned}) AS facts_current")
     return {
         name: sampler.run(query, max_rows=_OPEN_QUERY_MAX_ROWS)[0].model_dump(
             mode="json",
@@ -647,6 +668,7 @@ def _beam_queries(sampler: _SandboxSampler) -> dict[str, Any]:
                 "rows",
                 "empty_result",
                 "elapsed_ms",
+                "limits",
                 "ordered_result",
                 "returned_row_count",
                 "termination_reason",
@@ -656,7 +678,7 @@ def _beam_queries(sampler: _SandboxSampler) -> dict[str, Any]:
                 "error_message",
             },
         )
-        for name, query in _OPEN_QUERY_SQL
+        for name, query in queries.items()
     }
 
 
@@ -667,6 +689,17 @@ def _beam_completed(name: str, result: Mapping[str, Any]) -> bool:
             and result["error_code"] == QueryErrorCode.EXECUTION_ERROR
         )
     return result["termination_reason"] == "completed" and result["error_code"] is None
+
+
+def _beam_comparable(
+    name: str, before: Mapping[str, Any], after: Mapping[str, Any]
+) -> bool:
+    fields = ("columns", "rows", "ordered_result", "truncation_reason", "limits")
+    return (
+        _beam_completed(name, before)
+        and _beam_completed(name, after)
+        and all(before[field] == after[field] for field in fields)
+    )
 
 
 def _pinned_facts_current(cursor: psycopg.Cursor, evaluated_at: datetime) -> sql.SQL:
@@ -684,28 +717,6 @@ def _pinned_facts_current(cursor: psycopg.Cursor, evaluated_at: datetime) -> sql
     if substitutions != 1:
         raise AssertionError("expected one statement clock in facts_current")
     return sql.SQL(cast("LiteralString", pinned))
-
-
-def _beam_ordered_rows(
-    sandbox: QuerySandboxExecutor, *, evaluated_at: datetime, timeout_ms: int
-) -> dict[str, list[Any]]:
-    """Replay BEAM's ordering and limits at the paired fact-view instant."""
-    rows = {}
-    with sandbox._transaction(
-        limits_ms=INTERACTIVE_LIMITS, statement_timeout_ms=timeout_ms
-    ) as cursor:
-        pinned = _pinned_facts_current(cursor, evaluated_at)
-        for name, query in _OPEN_QUERY_SQL:
-            if name == "facts_sample":
-                query = _BEAM_SAMPLE_CORRECTED
-            statement = sql.SQL(cast("LiteralString", query))
-            if name in {"facts_predicates", "facts_sample"}:
-                statement = sql.SQL("WITH facts_current AS ({}) {}").format(
-                    pinned, statement
-                )
-            cursor.execute(statement)
-            rows[name] = cursor.fetchall()
-    return rows
 
 
 def _broad_view_rows(
@@ -1311,6 +1322,7 @@ def main() -> None:
             if args.operation in {"capture", "sandbox"} and not args.query_dsn:
                 parser.error(f"{args.operation} requires --query-dsn")
             case = Case.model_validate_json(args.case.read_text())
+            case_json = case.model_dump(mode="json")
             connection = stack.enter_context(engine.connect()).execution_options(
                 isolation_level="AUTOCOMMIT"
             )
@@ -1399,12 +1411,18 @@ def main() -> None:
             if sandbox is not None:
                 sampler = _SandboxSampler(sandbox)
                 result["sandbox_settings"] = sandbox_settings
-                result["beam"] = _beam_queries(sampler)
+                result["beam"] = _beam_queries(
+                    sampler,
+                    evaluated_at=case.evaluated_at
+                    if args.operation == "capture"
+                    else None,
+                )
                 failed |= any(
                     not _beam_completed(name, outcome)
                     for name, outcome in result["beam"].items()
                 )
                 if args.operation == "capture":
+                    result["beam_evaluated_at"] = case_json["evaluated_at"]
                     timeout_ms = int(args.timeout * 1000)
                     result["cuts"].update(
                         _broad_view_rows(
@@ -1414,9 +1432,6 @@ def main() -> None:
                         )
                     )
                     result["sandbox_oracle_timeout_ms"] = timeout_ms
-                    result["beam_ordered_at_case_time"] = _beam_ordered_rows(
-                        sandbox, evaluated_at=case.evaluated_at, timeout_ms=timeout_ms
-                    )
                     result["sandbox"] = _sandbox_queries(sampler, samples=0)
                 else:
                     checks = _sandbox_queries(sampler, samples=args.samples)
@@ -1426,7 +1441,7 @@ def main() -> None:
                         or (name in BROAD_VIEWS and state["work"]["error"] is not None)
                         for name, state in checks.items()
                     )
-            result["case"] = case.model_dump(mode="json")
+            result["case"] = case_json
             result.update(identity)
             result["server_version_num"] = int(server)
         rendered = json.dumps(result, indent=2, default=str, sort_keys=True) + "\n"
