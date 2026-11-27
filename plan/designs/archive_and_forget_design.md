@@ -80,9 +80,9 @@ undo a caller's archive; a changed version does (§2.3).
 
 ### 2.3 Undo and coming back
 
-- **`POST /documents/{doc_id}/unarchive` is the exact undo of the archive.** In one
-  transaction under the lineage row lock it clears `archived_at`, makes current again every
-  claim whose testimony that archive ended (found through the archive reconciliation id), and
+- **`POST /documents/{doc_id}/unarchive` undoes the archive.** In one
+  transaction under the lineage row lock it clears `archived_at`, restores still-carried
+  testimony that archive ended (found through the archive reconciliation id), and
   reopens every fact whose current closure came from an archive (any archive) when the
   returning testimony gives it support again, or when it was held open by a
   `support_withdrawn` review that still applies. Reopening is a new recorded event (`reopened_unarchive`, with its
@@ -103,6 +103,12 @@ undo a caller's archive; a changed version does (§2.3).
 - **A source archive is undone by the source.** When `archived_by = source` and the connector
   sees the file again, identical bytes act as unarchive and changed bytes as a changed version.
   Within one sync cycle a delete-and-recreate never archives at all (D135's cycle barrier).
+
+Under [proposed D162](split_oversized_chunks_design.md#publication), automatic restoration
+uses eligible occurrences in the selected completed claims basis. This also applies when
+an unarchive restores a living lineage whose head was removed during the archive, or when
+a changed version returns with reused claims. A suspended D54 `restore_support` verdict
+resumes when its reviewed source remains eligible.
 
 ### 2.4 Surfaces
 

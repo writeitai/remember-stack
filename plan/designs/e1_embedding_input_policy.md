@@ -262,6 +262,8 @@ explicit unready maintenance operation; it must never claim that a vector was
 produced from different text.
 [Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
 also requires evidence the original binding processed the complete input.
+A split piece covering a complete block run can match its whole-block
+counterpart by verified block hashes and the same rendered input hash.
 
 | Change | Action |
 |---|---|

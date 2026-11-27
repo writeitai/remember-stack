@@ -45,7 +45,7 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
 | --- | --- |
 | One large block | A paragraph, heading, nested list item, table, quote, fence or indented code block retains the parser's full line range. The packer appends it and explicitly flushes it as a singleton even above 400 whitespace tokens. Both ordinary flush and final flush can emit a large span. [core/blockizer.py:128–192](../../src/rememberstack/core/blockizer.py#L128-L192), [core/blockizer.py:205–235](../../src/rememberstack/core/blockizer.py#L205-L235), [core/chunker.py:198–240](../../src/rememberstack/core/chunker.py#L198-L240) |
 | A run of small blocks | The target counts `len(block_text.split())` and sums it per block. Long identifiers, URLs, punctuation, non-space-delimited languages and code can use many model tokens per whitespace token. The actual chunk slice also contains the text *between* its first and last blocks, which the sum excludes. The parser can skip tokens such as an HTML block between mapped blocks. [core/chunker.py:173–175](../../src/rememberstack/core/chunker.py#L173-L175), [core/chunker.py:198–238](../../src/rememberstack/core/chunker.py#L198-L238), [core/blockizer.py:177–193](../../src/rememberstack/core/blockizer.py#L177-L193) |
-| Owners, anchors and sections | The packer starts a fresh run for each contiguous deepest section owner, including a parent's direct material between children. Anchors flush before a hashed block after a minimum gap. Owner and eligibility cuts only shorten runs. Parsed or proposed section boundaries land on whole blocks. A coarse root, large PDF page or merged conversational leaf can still own an arbitrarily large block. [core/chunker.py:93–132](../../src/rememberstack/core/chunker.py#L93-L132), [core/chunker.py:221–238](../../src/rememberstack/core/chunker.py#L221-L238), [core/structure_skeleton.py:97–140](../../src/rememberstack/core/structure_skeleton.py#L97-L140), [core/structure_skeleton.py:294–325](../../src/rememberstack/core/structure_skeleton.py#L294-L325), [core/section_snap.py:191](../../src/rememberstack/core/section_snap.py#L191) |
+| Owners, anchors and sections | The packer starts a fresh run for each contiguous deepest section owner, including a parent's direct material between children. Anchors flush before a hashed block after a minimum gap. Owner and eligibility cuts only shorten runs. Parsed or proposed section boundaries land on whole blocks. A coarse root, large PDF page or merged conversational leaf can still own an arbitrarily large block. [core/chunker.py:93–132](../../src/rememberstack/core/chunker.py#L93-L132), [core/chunker.py:221–238](../../src/rememberstack/core/chunker.py#L221-L238), [core/structure_skeleton.py:97–140](../../src/rememberstack/core/structure_skeleton.py#L97-L140), [core/structure_skeleton.py:294–325](../../src/rememberstack/core/structure_skeleton.py#L294-L325), [core/section_snap.py:191–203](../../src/rememberstack/core/section_snap.py#L191-L203) |
 | Final embedding input | D80 collapses whitespace, strips the body and may add a header and two newlines. It bounds only the header, at 48 code points. The size of a raw YAML span includes indentation that D80 collapses. Its whitespace count still says little about model tokens after rendering. Even a fitting body can overflow when the header is added. [core/embedding_input_policy.py:16–22](../../src/rememberstack/core/embedding_input_policy.py#L16-L22), [core/embedding_input_policy.py:104–116](../../src/rememberstack/core/embedding_input_policy.py#L104-L116), [core/embedding_input_policy.py:188–234](../../src/rememberstack/core/embedding_input_policy.py#L188-L234), [core/embedding_input_policy.py:338–351](../../src/rememberstack/core/embedding_input_policy.py#L338-L351), [workers/e1.py:290–295](../../src/rememberstack/workers/e1.py#L290-L295) |
 
 | Source routes | Inputs to the same paths above |
@@ -53,7 +53,7 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
 | Text, Markdown, logs, source code and YAML/config | `text` returns the full UTF-8 reading up to 1 MB, including long lines and indentation. Its larger-file head/tail profile has fenced regions of up to 50 or 20 lines at 500 characters each. The passthrough route also produces a Markdown reading. Search-only code/config/log ranges select model-free, flat-root E0 structuring. E1 cuts at block eligibility transitions, and E2 records ineligible decisions without model calls. [Text converter](../../src/rememberstack/adapters/converters/text.py#L56-L149), [E0 dispatch](../../src/rememberstack/workers/e0.py#L1429-L1438), [flat root](../../src/rememberstack/workers/e0.py#L1659-L1681), [E1 cuts](../../src/rememberstack/core/chunker.py#L221-L240), [E2 eligibility](../../src/rememberstack/workers/e2.py#L524-L553) |
 | Conversation, email and transcripts | Packaging produces text with message or turn boundaries when the source provides them. A single turn, pasted code block, quoted email or inline image reading can still yield a giant block. D137 merges runs of single-block leaves into the following leaf when available and coalesces them in place otherwise. The block grid stays intact. [benchmarks/locomo/protocol.py:581–629](../../benchmarks/locomo/protocol.py#L581-L629), [adapters/converters/email_message.py:65–110](../../src/rememberstack/adapters/converters/email_message.py#L65-L110), [core/structure_skeleton.py:665–703](../../src/rememberstack/core/structure_skeleton.py#L665-L703) |
 | PDF, OCR, image, Office, HTML/EPUB and notebooks | PDF verifies the OCR pages and retains their Markdown and locators. OCR paragraphs and tables can be large. The other converters can emit the same large block shapes, including notebook code cells and image readings. Page, slide and cell bounds govern conversion or source coordinates. They are independent of a chunk's embedding size. [adapters/converters/pdf.py:112–152](../../src/rememberstack/adapters/converters/pdf.py#L112-L152), [adapters/converters/mistral_ocr.py:478–535](../../src/rememberstack/adapters/converters/mistral_ocr.py#L478-L535), [adapters/converters/office.py:143–158](../../src/rememberstack/adapters/converters/office.py#L143-L158), [adapters/converters/notebook.py:63–95](../../src/rememberstack/adapters/converters/notebook.py#L63-L95), [adapters/converters/__init__.py:147–187](../../src/rememberstack/adapters/converters/__init__.py#L147-L187) |
-| Data profiles, cards, media and custom converters | Spreadsheet, delimited and dataset profiles and archive/binary/media cards still yield Markdown. Profile samples and metadata can be lexically dense. Current converter limits reduce exposure without proving a provider input bound. Custom routes installed via the provider port also flow through E0 and E1. [core/format_registry.py:166–229](../../src/rememberstack/core/format_registry.py#L166-L229), [adapters/converters/profile.py:248](../../src/rememberstack/adapters/converters/profile.py#L248), [profiles/selfhost.py:1646–1652](../../src/rememberstack/profiles/selfhost.py#L1646-L1652) |
+| Data profiles, cards, media and custom converters | Spreadsheet, delimited and dataset profiles and archive/binary/media cards still yield Markdown. Profile samples and metadata can be lexically dense. Current converter limits reduce exposure without proving a provider input bound. Custom routes installed via the provider port also flow through E0 and E1. [core/format_registry.py:166–229](../../src/rememberstack/core/format_registry.py#L166-L229), [adapters/converters/profile.py:248–276](../../src/rememberstack/adapters/converters/profile.py#L248-L276), [profiles/selfhost.py:1646–1652](../../src/rememberstack/profiles/selfhost.py#L1646-L1652) |
 
 ## Which size measure and repair point
 
@@ -83,6 +83,15 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
   pass keeps both the E0 substrate and existing good cuts. A fixed probe order
   makes the whitespace target and structural preferences reproducible even
   when extending a prefix changes its tokenization or D80 header.
+- I ran an HTML gap with CRLF separators through the legacy blockizer,
+  eligibility check and packer. The parser omitted the `code`-labelled `<div>`
+  between two eligible paragraphs. The packer emitted one eligible candidate
+  whose source span included the entire gap. Starting the split with the
+  labelled eligibility runs preserves those bytes and keeps caps and anchors
+  from crossing a label change.
+  [Blockizer](../../src/rememberstack/core/blockizer.py#L177-L193),
+  [validation](../../src/rememberstack/workers/e0.py#L969-L977),
+  [packer](../../src/rememberstack/core/chunker.py#L198-L238).
 - E1 currently batches by item count. A per-item proof says nothing about a
   gateway's request byte limit or an endpoint's total token budget. Qualifying
   whole requests before sending avoids using provider retries to discover
@@ -131,6 +140,15 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
   [E1 recovery](../../src/rememberstack/workers/e1.py#L319-L368),
   [commit order](../../src/rememberstack/workers/e1.py#L569-L572),
   [P1 nomination](../../src/rememberstack/adapters/postgres_p1.py#L891-L930).
+- Appending a dense paragraph to a short root paragraph produced a single
+  legacy candidate. I verified that cutting at the seam gives the original
+  whole block and the same D80 hash, even with trailing CRLF and the final
+  multi-chunk count. The current carry-forward query keys on the stored
+  content and input hashes. A fragment tag would miss the old row.
+  Deriving the complete block run's key for vector lookup avoids that cost
+  while retaining delivery proof and the original fragment identity.
+  [Vector lookup](../../src/rememberstack/spine/chunk_catalog.py#L422-L440),
+  [D80 input](../../src/rememberstack/core/embedding_input_policy.py#L188-L234).
 - The ledger's route predicate ignores component versions, so a new identity
   alone cannot fence old workers. Re-extraction also checks carriage only in
   the completing basis. E0 can serve B before its extraction finishes. D143
@@ -145,6 +163,27 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
   [occurrence view](../../src/rememberstack/spine/migrations/versions/p9_31_0052_multi_span_claim_evidence.py#L22-L59),
   [scoped hydration](../../src/rememberstack/surfaces/query_engine.py#L6674-L6697),
   [re-extraction query](../../src/rememberstack/spine/lifecycle.py#L1449-L1475).
+- Fresh claims default to current and E3 admission uses a matching entity
+  unit. Applying that path to a repair of A after living version B settles
+  would let a new A-only claim contribute fact support. Version deletion and
+  archive recovery also accept origins or attachments on any grid. One
+  completed publication predicate can govern automatic currency in both
+  directions and keep the E3 tail from acting on historical repair outputs.
+  [Claim default](../../src/rememberstack/spine/migrations/versions/p0_02_0004_claims_facts_evidence.py#L40-L46),
+  [fact admission](../../src/rememberstack/spine/fact_applications.py#L345-L375),
+  [removal and regain](../../src/rememberstack/spine/lifecycle.py#L1476-L1521),
+  [archive recovery](../../src/rememberstack/spine/lifecycle.py#L1913-L1955).
+- D140's interval union, fact fingerprint and validation watch join
+  occurrences by representation. If A's repair drops a claim still carried
+  by B, the old attachment can hold A's interval in the fact inputs even
+  though the claim remains current and the support count stays the same.
+  Queue the existing fenced review when edition carriage changes and use
+  published claims for the period inputs. The fan-out can still use retired
+  links to find the affected facts.
+  [Intervals](../../src/rememberstack/spine/period_adjudication.py#L47-L85),
+  [fingerprint](../../src/rememberstack/spine/period_adjudication.py#L129-L183),
+  [validation](../../src/rememberstack/spine/period_adjudication.py#L426-L455),
+  [review queue and scan](../../src/rememberstack/spine/period_adjudication.py#L561-L612).
 - D90 stops at an existing fan-out row for the version and normalizer. D118
   uses the same scope to match staging with entity units. Basis-local
   membership lets a replacement finish its own tail with reused claim-level

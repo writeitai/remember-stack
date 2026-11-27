@@ -215,9 +215,10 @@ the split, identity, selective migration and recovery rules.
 - **One deepest owner per chunk.** Section boundaries stay on the block grid (§3).
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
-  tables). A chunk boundary is forced wherever eligibility changes between blocks, so every
-  chunk is wholly eligible or wholly ineligible; `chunks.extraction_eligible` records it and
-  E2 schedules Selection only for eligible chunks (`format_conversion_design.md` §4.5).
+  tables). The whole-block pack cuts at block eligibility changes. When D162 splits a
+  candidate, it also cuts at eligibility changes in labelled text between blocks.
+  `chunks.extraction_eligible` records the piece's eligibility and E2 schedules Selection
+  only for eligible chunks (`format_conversion_design.md` §4.5).
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost
@@ -381,8 +382,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   creates fresh work without changing packing or the embedding model/policy.
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
-  D162 repair also requires evidence of full delivery by the original
-  binding. Recover an interrupted or retained attestation by exact ID.
+  D162 also requires evidence of full delivery by the original binding.
+  For a split piece covering complete blocks, verify the corresponding
+  block-hash key for carry-forward across whole and fragment identities.
+  Recover an interrupted or retained attestation by exact ID.
   See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.

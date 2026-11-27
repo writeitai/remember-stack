@@ -147,7 +147,9 @@ In particular:
   with its **in-force intervals** — the union of those versions' intervals — as
   another dated input, beside the claim's own dates. It can justify or bound a
   window ("the allowance was 45 per day from 2024-01-01 until 2026-01-01") like any
-  other date; it is not a second window authority. A later change to those periods
+  other date; it is not a second window authority. A later change to the union of
+  those periods, including a [proposed D162](split_oversized_chunks_design.md#publication)
+  repair that removes a published occurrence,
   queues a **window review** of the facts the affected claims support: a keep-or-replace
   window decision grounded in supplied claims, recorded like any other adjudication
   ([effective time design §8.2](effective_time_and_section_references_design.md#82-adjudication-input-and-window-review)).

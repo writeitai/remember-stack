@@ -125,11 +125,15 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    D39) → **crossref** (citations). Bodies live in GCS (raw + artifacts buckets); Postgres holds only
    metadata + the queryable section index (D37).
 2. **E1** (design: `e1_chunks_design.md`, D57–D58): the **blockizer** derives the deterministic
-   block sequence from document.md. PageIndex sections snap to the block grid. The chunker
-   packs non-overlapping, section-bounded passages at stable anchors. [Proposed D162](split_oversized_chunks_design.md)
-   partitions passages that exceed the embedding input ceiling → context
-   (the E1 prefix — exists under the D63 default conventional embedder; a contextual-embedder port config deletes it, D63) → embed
-   → P1. Unchanged blocks reuse prior claims/embeddings across document versions (D56).
+   block sequence from `document.md`. PageIndex sections snap to the block grid. E1 packs
+   non-overlapping, section-bounded candidates at stable anchors and renders the full D80
+   input with any location header. [Proposed D162](split_oversized_chunks_design.md) checks
+   that input against the qualified ceiling, splits offending candidates and checks the
+   final rendered pieces before embedding for P1. D56 vector reuse requires matching
+   content, rendered input, policy and model, with full-delivery proof under D162.
+   Extraction reuse depends on the consumed target and same-owner neighbours, their
+   provenance, stable source facts and processing generations. Claimify also checks its
+   ordered D122 context, and reused evidence must remap to the source.
 3. **E2 → E3** (every chunked document — there is no pre-extraction value gate, D25): coreference
    (D19: in the E2 extraction call, all languages) → **Claimify extraction with in-call Selection**
    (proposition-level verifiability KEEP/REWRITE/DROP — the value filter that replaces any

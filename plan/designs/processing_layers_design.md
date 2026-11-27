@@ -215,8 +215,8 @@ step. The current version's own reconcile computes supersession lineage-wide whe
 deployment without a configuration row the step runs exactly as today.
 For [proposed D162 repairs](split_oversized_chunks_design.md#publication), the
 guard also applies with both layers enabled by default. Supersession uses
-completed published occurrences of the new version. Until then repair checks
-carriage on the last completed testimony basis.
+completed published occurrences of the new version. While it is pending,
+repair checks carriage on the standing testimony basis.
 
 ### 4.3 The claims tail waits for earlier fact work (configured deployments)
 
@@ -242,6 +242,12 @@ and closes exactly as always-on processing would, with the same history. No fact
 retired testimony and no suppression state exists. Snapshot lineages never retire testimony by
 succession, so for them the wait only orders work. A deployment without a configuration row keeps
 today's chain unchanged.
+
+For [proposed D162 repairs](split_oversized_chunks_design.md#publication),
+admit and apply current fact work only for claims carried by an eligible
+published basis. A historical repair can replace that version's previously
+published claims for history and discharge its facts gap. Repointing can
+reopen that gap under §5.3.
 
 ### 4.4 Switching off drains; it never holds
 
@@ -394,7 +400,8 @@ predecessor's frontier, a deletion, or `setup` — with no polling job and no ne
   gaps (step 1, even while its layers are disabled), so it is processed like any current version. Its claims are extracted as ordinary
   ingestion of that version would extract them: reuse comes from earlier live versions only, and
   testimony of the deleted version is never reused (D135). Its chunks and their embeddings, which
-  exist from the sources layer, are untouched.
+  exist from the sources layer, are untouched. Under [proposed D162](split_oversized_chunks_design.md#publication),
+  immediate currency restoration uses the repointed version's selected completed claims basis.
 
 ### 5.4 Seeding and coverage
 

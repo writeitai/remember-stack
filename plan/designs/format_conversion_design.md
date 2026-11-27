@@ -222,8 +222,9 @@ The mechanism:
    that no eligibility change falls inside a block and fails the conversion if one does.
 2. **E1 forces a chunk boundary** at every block where eligibility changes and stores
    `chunks.extraction_eligible`, computed from the labelled ranges and the policy version.
-   Under [proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities),
-   within-block slices inherit their block's eligibility.
+   Under [proposed D162](split_oversized_chunks_design.md#1-size-contract-and-split-points),
+   splitting also cuts at eligibility changes in labelled text between blocks.
+   Unlabelled text inherits the parent candidate's eligibility.
 3. **E2 schedules Selection only for eligible chunks.** An ineligible chunk completes
    deterministically with zero propositions and publishes no D122 reference cards; the Selection
    barrier counts it complete.

@@ -980,6 +980,11 @@ text is in force) and when they are not (an event the text merely reports keeps 
 date); a later version stating a different value ends the earlier fact at that version's
 in-force start, never at publication time.
 
+Under [proposed D162](split_oversized_chunks_design.md#publication), use the
+selected completed claims basis for the interval union, fact period basis,
+watched digest and final validation. A passage-only cutover leaves these inputs
+on the selected claims basis.
+
 **The first fact is adjudicated too.** Ordinary adjudication skips the model when an entity
 has no candidate fact (the D118 novelty gate records a new, undated fact). That shortcut is
 kept only for attempts with no periodised claim: an attempt whose claims carry
@@ -1030,11 +1035,10 @@ application would ever reach the adjudicator again. A **window review** closes t
      fence below makes the writer's fan-out wait for the certifying transaction to commit, so
      the fan-out sees the stale basis and reviews the fact.
 
-  Period writers take no lock. This is deliberate. In-force intervals change not only through
-  declarations, clears and deletions, which all pass through the scope projection's deferred
-  refresh, but also whenever extraction writes `chunk_claims` for a version, since a version's
-  representation becomes current before it is extracted. Freezing periods for the length of
-  a decision would need one of two things:
+  Period inputs can change during a decision. Declarations, clears and deletions update
+  the scope projection. Claim publication can also change the versions that carry a claim.
+  With D162 the completed claims basis swap makes this change visible. Freezing periods
+  for the length of a decision would need one of two things:
   - an exclusive per-deployment lock in every extraction write of a periodised deployment,
     which would serialise extraction deployment-wide; or
   - a shared lock per lineage for every lineage a decision's evidence touches, which is
@@ -1086,14 +1090,16 @@ application would ever reach the adjudicator again. A **window review** closes t
   processing completes (the reconcile stage), not at ingest: until then its reused claims have
   no occurrences in it, so the predecessor's facts would look closed and be reviewed twice. A
   version whose processing never completes (no route, dead letter) is reviewed when it is
-  reprocessed or deleted. A request is a `review_fact_windows` job targeting a request id that
-  is fresh per change, or derived from the reconcile run or deletion episode so a retry does not
-  duplicate it. While a deployment's facts layer is switched off (D143), these jobs are queued but
+  reprocessed or deleted. Under D162, a repair that changes an edition's claim membership
+  queues the review in the claims cutover transaction, even when a claim is still current
+  and support counts stay the same. The `review_fact_windows` request id identifies the
+  change, including a reconcile, deletion or cutover, so retries are idempotent.
+  While a deployment's facts layer is switched off (D143), these jobs are queued but
   not claimed; they run when facts are switched back on
   ([processing layers design §4.4](processing_layers_design.md#44-switching-off-drains-it-never-holds)).
-- **Fan-out.** The lineage job walks the live facts with evidence in any version of the
-  lineage (deleted versions included, since deleting one changes the intervals) in pages of a
-  bounded size (500, a starting value to tune), each page one bounded transaction; a full page
+- **Fan-out.** The lineage job walks live facts with evidence in any version of the lineage,
+  including evidence attached through a deleted version or a retired claims basis. Each page
+  is one bounded transaction (500 facts, a starting value to tune). A full page
   queues a continuation job carrying its cursor. It queues one review job per fact whose
   current basis differs from the stored one, skipping a fact left with neither periodised nor
   live evidence (its only source was deleted; the lifecycle cascade settled it). It makes no

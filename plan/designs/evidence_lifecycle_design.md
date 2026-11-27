@@ -216,8 +216,8 @@ lineage's current extraction basis *under the lineage's mode*:
   basis-coordinate change: an extractor bump, a **converter bump** (a new representation — a
   better ASR/VLM re-reading unchanged media bytes, the common media event, D65), a blockizer
   bump, or a structurer bump). For [proposed D162 grid repair](split_oversized_chunks_design.md#publication),
-  use the completed claim occurrences and count carriage on other eligible
-  published bases before withdrawing support.
+  use eligible published occurrences to determine gains and losses of currency.
+  Fresh claims from superseded living versions enter history at publication.
 - **`living` version supersession**: claims whose chunks are absent from the new current
   version flip non-current (`version_superseded`);
 - **`snapshot`**: version succession flips nothing.
@@ -316,13 +316,11 @@ self-healing gap (a named spike, not papered over):
    — fact IDs and outcomes, never raw claim IDs (the K stale-storm guard).
 
 **Packing repair (proposed D162).** At the completed extraction barrier, diff
-the predecessor and successor `chunk_claims` under the lineage fence. In a
-living lineage, the last completed published testimony basis governs this
-check even if a newer source version is already serving. Only the loss of the
-last eligible published occurrence withdraws current testimony. Publish the
-new occurrences, D54 ledger/cache updates and fact recount together. Apply
-the transcription review policy to zero support. Preserve each claim's
-immutable origin. [Repair contract](split_oversized_chunks_design.md#publication).
+the predecessor and successor `chunk_claims` under the lineage fence. Commit
+the selected basis, first currency events for fresh claims, transitions for
+existing claims and the fact recount together. Apply the transcription review
+policy when loss of eligible carriage takes support to zero.
+[Repair contract](split_oversized_chunks_design.md#publication).
 
 **Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
 not reached a version yet, the version's reconcile runs at component version
@@ -454,7 +452,9 @@ survive its source's reorganization.)
 
 - **Remove a version** (operator, internal): that version's testimony ends
   (`version_archived`); the lineage continues; bytes purge if no other version references the
-  content object.
+  content object. Under [proposed D162](split_oversized_chunks_design.md#publication),
+  compare selected completed claims bases before removal and after any repointing.
+  Restore currency using the repointed version's eligible published occurrences.
 - **Archive a lineage**: the §13 document cascade at lineage grain over **every one of its
   versions**, recorded on the lineage as `documents.archived_at` and `archived_by` (`caller`
   or `source`).
@@ -527,7 +527,7 @@ meets it:
   archive's first cascade closes every such fact left without support; a later sweep of a
   settled archive closes only a fact whose last support it retired itself, or one no other
   lineage ever evidenced — a shared fact is closed by whichever run drops its other support.
-- **Coming back.** `unarchive` is the exact undo: it makes current again the testimony that
+- **Coming back.** `unarchive` makes current again the still-carried testimony that
   archive ended and reopens the facts it closed whose closure is still in force, when they have
   support again, as a new recorded event (`reopened_unarchive`); belief-as-of reads take a fact's
   belief intervals from these close and reopen events. Identical bytes re-sent leave the

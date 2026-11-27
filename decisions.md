@@ -1780,9 +1780,9 @@ config choice.
 
 > **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
 > A repaired packing grid publishes its completed claim occurrences and currency
-> together. The same-version re-extraction check uses the predecessor and successor
-> occurrences. A living lineage uses its last completed published testimony basis
-> even when E0 serves a newer version. Counting still uses distinct lineages.
+> together. Eligible published carriage governs additions, withdrawals and automatic
+> restoration. A living lineage keeps its standing testimony while a newer source
+> version's claims are pending. Counting still uses distinct lineages.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
@@ -7258,7 +7258,8 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
 > A new fragment can inherit the date of a verified unchanged span in an
 > earlier original grid. Same-version repair copies the parent occurrence's
-> date. D140's date eligibility across versions continues to apply.
+> date. Fact periods use selected completed occurrences. A repair that changes
+> an edition's carriage queues the existing fact-window review at cutover.
 
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
@@ -7625,6 +7626,7 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
 > Repair tracks gaps and completion by packing basis. A sources-only passage
 > cutover keeps completed claim occurrences serving until successor extraction.
+> Current fact applications require eligible published carriage.
 
 > **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
 > sources-only document tree with no entities, fact metadata or K links, identical
@@ -8670,6 +8672,10 @@ every failure; a central code registry.
 
 ## D159. Archive and forget replace delete; forget hides at once and sweeps until clean
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Archive recovery uses eligible carriage on selected completed claims bases,
+> including after a version removal repoints the lineage during the archive.
+
 **Decision (2026-11-24, owner).** A caller has exactly two ways to remove a document's
 contribution, on the API, SDK, CLI and MCP; the public delete is removed outright (pre-launch,
 no deprecation).
@@ -8780,16 +8786,18 @@ generations, retrieval and rendering use their existing code and identities.
 **Decision.** E1 keeps the anchored whole-block pack for fitting inputs.
 When the full prepared input exceeds a qualified endpoint ceiling, the
 chunker partitions that span at deterministic structural or Unicode scalar
-boundaries. Each piece is embedded in full and keeps exact source
-coordinates. Every nonempty input needs a verified vector for completion.
+boundaries, with required cuts at labelled eligibility changes. Each piece
+keeps exact source coordinates. Every nonempty input needs a verified vector.
 Batches fit the qualified request limits.
 
 **Reuse boundary.** Only representations with an offending chunk receive
 the split packing and delivery generation. Fitting grids retain IDs,
-hashes and qualifying paid products. Repair replaces a failed pending
-basis when the qualified envelope changes. Claims publication and tail
-completion follow their own packing basis. Living currency follows the
-last completed testimony basis, even across a sources-only cutover.
+hashes and qualifying paid products. A fragment covering complete blocks
+can reuse an attested whole-block vector for the same D80 input in either
+direction. Repair replaces a failed pending basis when the qualified
+envelope changes. Claims publication and tail
+completion follow their own packing basis. The selected completed claims
+basis governs currency, automatic restoration and fact period inputs.
 LoCoMo and BEAM keep pinned readers and schema until the exact candidate
 passes frozen input, grid and complete tool-response parity.
 
