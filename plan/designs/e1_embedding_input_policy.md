@@ -173,6 +173,12 @@ membership is still **token-in-union** (existing D32 token rule).
 
 Changing any of the above is a **new policy version**.
 
+[D162](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
+qualifies provider size limits independently of this renderer. CHUNK and
+EMBED_CHUNK measure the full rendered input plus framing with the pinned
+provider tokenizer. The policy's own length counter still chooses the
+header mode.
+
 ### 4.2 Modes
 
 | Mode | Embedding text |
@@ -261,9 +267,6 @@ attestation match exactly. The worker may then restamp the same row inside an
 explicit unready maintenance operation; it must never claim that a vector was
 produced from different text.
 
-[D162 replacement pieces](split_oversized_chunks_design.md#2-refine-only-failing-candidates)
-get fresh vectors. Reuse candidates are intact chunks with matching inputs.
-
 | Change | Action |
 |---|---|
 | Body bytes change | Re-render; new hash ⇒ provider embed under the configured current state |
@@ -328,18 +331,15 @@ justify a narrow index; it does not pre-authorize denormalized search columns.
 ### 6.1 Stages (logical)
 
 ```text
-pack chunks + check the full D80 input under D162
+pack chunks
   → prepare location facts + render embedding text   # pure, durable stamps on chunk
   → embed in bounded batches                         # provider boundary, durable
-  → readiness barrier for that representation and packing generation
+  → document/representation readiness barrier
   → E2 extract …
 ```
 
 ### 6.2 Durability boundaries
 
-- **Input size:** CHUNK checks the rendered body, header and separators
-  with the qualified binding's pinned tokenizer and framing. EMBED_CHUNK
-  checks the exact input at dispatch. [D162 fit and recovery](split_oversized_chunks_design.md).
 - **Pure prepare** (resolve facts + render): may run inside a document/representation
   transaction writing per-chunk stamps (`location_facts` snapshot ref, mode,
   optional bounded header, `embedding_text_hash`, policy version, location
@@ -348,14 +348,9 @@ pack chunks + check the full D80 input under D162
   (size from embedder capabilities; starting hypothesis 64–128 texts). Normative
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
-- **Readiness** requires the exact grid's successful embed work. Each nonblank
-  chunk has prepare and embed stamps matching its final grid facts, policy
-  and model. After private recovery, refresh stale prepare metadata on
-  surviving rows and retain vectors with matching attestations. An
-  `empty_body` skip satisfies the per-chunk check. A confirmed rejection
-  of a nonblank input fails the stage.
-  [D162 delivery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished) ·
-  [D162 provider errors](split_oversized_chunks_design.md#4-rejection-and-retry).
+- **Document readiness.** All in-scope chunks have prepare stamps and embeddings
+  matching the configured policy and model, or valid skips. A confirmed
+  per-input rejection fails the stage under [D162](split_oversized_chunks_design.md#4-rejection-and-retry).
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.
@@ -433,7 +428,7 @@ A deployment may swap conventional embedders when:
    cost keys unique.  
 5. **Reuse locality** — edit that moves a chunk’s section/channel changes
    embedding_text_hash; content-only body edit without location change reuses
-   vector when hash matches.
+   vector when hash matches.  
 6. **Two conventional embedders** — exercise unready/rebuild/verify/publish.
 7. **D159** — forget purges derived search state and location facts.
 

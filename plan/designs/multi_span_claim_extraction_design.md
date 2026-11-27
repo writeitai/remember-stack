@@ -21,8 +21,8 @@ D31's separate Selection and Claimify calls remain. No extraction/normalization
 fusion, adjudication batching, new fact categories, second date window, per-claim
 checker model or query-time processing is introduced by this decision.
 
-The context consists of the target chunk and the closest previous and next chunks
-in the same section, source-derived header/location metadata and bounded
+The context consists of the target chunk and the existing immediately previous
+and next same-section chunks, source-derived header/location metadata and bounded
 target/ancestor summaries for orientation. Summaries are never evidence. This
 contract does not expand the context to whole documents or cross-section search.
 
@@ -110,8 +110,8 @@ tenant/deployment and representation ownership.
 
 ## 5. D56 version reuse remains mandatory
 
-The extraction-input fingerprint uses stable content inputs:
-own chunk, keyed neighboring context, source-derived header facts and
+The existing extraction-input fingerprint retains its stable content inputs:
+own chunk, consumed neighboring context, source-derived header facts and
 extractor/structurer generations. It excludes absolute positions, document
 version IDs, request-local labels and generated summary text. Existing
 carried-forward structure/summary replay rules remain binding.
@@ -122,13 +122,12 @@ resolved against the new representation. Remapping must account for repeated
 identical passages using unambiguous source/block alignment. Do not use an
 unqualified first substring match or copy old offsets.
 
-Changed context can change a referent even if the cited text still occurs.
-D162 compares the actual E2 neighbor windows and relative passage ranges
-before re-keying an intact target across a split. If support cannot
-be resolved safely, run the ordinary accounted extraction path. Do not
-disable reuse for multi-span claims as a general fallback or ship a
-full-document re-extraction policy to avoid implementing occurrence remapping.
-[E1 key rules](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
+Checking only the origin or selected quotes is insufficient: changed allowed
+context can change a referent even if the cited text still occurs. Fingerprints
+must cover the actual source context allowed by extraction. If support cannot be
+resolved safely, run the ordinary accounted extraction path. Do not disable reuse
+for multi-span claims as a general fallback or ship a full-document re-extraction
+policy to avoid implementing occurrence remapping.
 
 Reuse remains chunk-grained; an edited neighbor can invalidate otherwise unchanged
 claims. Version occurrences and legitimate historical claim changes may grow;
@@ -169,7 +168,7 @@ D122 card fitting measures the same
 origin-aware rendering actually sent to Claimify, so provenance cannot silently
 exceed the reference-context bound.
 
-The identities of the target and keyed same-section neighbors include their
+The identities of the target and consumed same-section neighbors include their
 canonical converter labels in relative source coordinates. Equivalent adjacent
 label ranges normalize together; unrelated sections, absolute offsets and
 pixel/source-map coordinates do not enter this model-input identity. A changed

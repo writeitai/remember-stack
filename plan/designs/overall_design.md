@@ -24,8 +24,8 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
             ┌── registries: entities, predicates ──┐
             ▼                  ▼                    ▼
  inputs ─► E0 files ─► E1 chunks ─► E2 claims ─► E3 relations
-           (raw+md+         (anchored    (claimify,    (normalization,
-            PageIndex,      pack, fit)   coref)        evidence, supersession)
+           (raw+md+         (semchunk,   (claimify,    (normalization,
+            PageIndex,      ctx prefix)  coref)        evidence, supersession)
             placement)      │            │   │
                  │          │            │   │      PLANE K — KNOWLEDGE (debounced,
                  │          │            │   │      LLM-compiled; git is truth)
@@ -124,15 +124,11 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    **structure** (PageIndex tree + roles + spans + summaries + a **placement hint**,
    D39) → **crossref** (citations). Bodies live in GCS (raw + artifacts buckets); Postgres holds only
    metadata + the queryable section index (D37).
-2. **E1** starts with deterministic Markdown blocks and PageIndex sections snapped
-   to the block grid (D57). The packer groups whole blocks within each section,
-   restarting at content anchors to limit how far an edit moves boundaries (D58).
-   E1 checks the full D80 embedding input, including its optional deterministic
-   location header, against the qualified provider ceiling. It splits only the
-   candidates that fail the check, then embeds the final chunks and writes P1.
-   Matching inputs carry forward claims and embeddings across versions (D56).
-   [E1 packing](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58) ·
-   [D162 fit check](split_oversized_chunks_design.md#1-measure-the-actual-input).
+2. **E1** (design: `e1_chunks_design.md`, D57–D58): the **blockizer** derives the deterministic
+   block sequence from document.md; PageIndex sections snap to the block grid; semchunk packs
+   whole blocks into non-overlapping, section-bounded, anchor-stabilized chunks → context
+   (the E1 prefix — exists under the D63 default conventional embedder; a contextual-embedder port config deletes it, D63) → embed
+   → P1. Unchanged blocks reuse prior claims/embeddings across document versions (D56).
 3. **E2 → E3** (every chunked document — there is no pre-extraction value gate, D25): coreference
    (D19: in the E2 extraction call, all languages) → **Claimify extraction with in-call Selection**
    (proposition-level verifiability KEEP/REWRITE/DROP — the value filter that replaces any

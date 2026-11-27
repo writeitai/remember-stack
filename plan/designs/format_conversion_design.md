@@ -216,7 +216,7 @@ text, every profile section, cards). Those ranges are chunked, embedded and sear
 
 The mechanism:
 
-1. **Block alignment.** E1 packs whole blocks before the [D162 size check](split_oversized_chunks_design.md).
+1. **Eligibility changes only at block boundaries.** E1 chunks are runs of whole blocks (D57/D58).
    Converters start every differently labelled section with a Markdown heading on its own line
    after a blank line, which the blockizer treats as a block start; the convert stage validates
    that no eligibility change falls inside a block and fails the conversion if one does.

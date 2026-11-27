@@ -59,12 +59,13 @@ precise model:
   several representation generations; one is current (`current_representation_id`, swapped
   only on completion of the downstream chain);
 - the **extraction basis** = **`(representation_id, blockizer_version, structurer_version,
-  chunker_version, extractor_version)`**. A change re-derives the same source version's
-  testimony. `chunk_claims` identifies the chunk of each occurrence, including its
-  full packing generation. The reconcile work records the completing grid.
+  extractor_version)`** — everything whose change means "same testimony, re-derived". The
+  basis coordinate is persisted on the occurrence records (`chunk_claims` via the chunk's
+  representation, schema §7) and on currency transitions, so "which basis produced this
+  claim occurrence" is a stored fact, never an inference.
 
-Problem A changes a *toolchain* coordinate (converter, blockizer, structurer, chunker or
-extractor). Problem B changes the *source* coordinate (new version).
+Problem A changes a *toolchain* coordinate (converter → new representation; blockizer,
+structurer, or extractor version); problem B changes the *source* coordinate (new version).
 In both cases, claims from the *old* basis stand in an altered relation to claims from the
 new basis — and the system needs (1) vocabulary for that relation, (2) a counting rule
 invariant under basis changes, and (3) reconciliation machinery that runs when a basis
@@ -72,7 +73,7 @@ changes. But the *semantics* differ, and the design keeps them distinct — "the
 changed" (same testimony, re-derived) and "the source changed" (new testimony) are formally
 distinct events:
 
-| | Re-derivation (converter / blockizer / repack / extractor bump) | New version (content change) |
+| | Re-derivation (converter / blockizer / extractor bump) | New version (content change) |
 |---|---|---|
 | the new claims are | a **re-transcription** of the *same* testimony | **new testimony** — the source's statement changed |
 | the old claims become | redundant copies (mechanically non-current) | still-valid *historical* testimony, dated by their version |
@@ -210,34 +211,14 @@ no-op before any bytes move; unchanged bytes are a `content_hash` no-op as today
 One new, deliberately narrow notion: a claim is **current testimony** iff it belongs to its
 lineage's current extraction basis *under the lineage's mode*:
 
-- **Re-derivation.** When the selected basis completes, use `chunk_claims` to
-  collect current claims from every displaced grid of that version. Retire
-  each claim once as `reextracted` if it has no occurrence on the completing
-  grid or on another basis current under the lineage's mode. For example,
-  if A reconciles, B is selected and displaced before reconcile, and C
-  completes, C retires the claims supported only by A.
-- **Living version supersession.** Claims absent from the selected grid of the new
-  current version flip non-current (`version_superseded`).
+- **re-derivation**: when extraction-basis generation v2 completes for a (version, chunk),
+  that chunk's v1 claims flip non-current (`reextracted` — the reason covers any
+  basis-coordinate change: an extractor bump, a **converter bump** (a new representation — a
+  better ASR/VLM re-reading unchanged media bytes, the common media event, D65), a blockizer
+  bump, or a structurer bump) — wholesale, by coordinates; no content matching;
+- **`living` version supersession**: claims whose chunks are absent from the new current
+  version flip non-current (`version_superseded`);
 - **`snapshot`**: version succession flips nothing.
-
-Both reconcile modes verify selection under the lineage lock before
-changing currency. Classify loss from a same-version repack as `reextracted`
-before evaluating living supersession. Record the displaced bases that carried
-each retired claim and its completing basis on the reconciliation receipt.
-For packing-only retirement, those bases share the representation and
-extractor and differ in packing generation. Late writes from a displaced
-grid record historical claims.
-
-When a completed selected grid carries a verified D56 reuse occurrence,
-restore a non-current claim whose last currency transition was such a
-packing-only retirement. The occurrence must pass Selection and Claimify
-matching and D119 evidence remapping. Apply this to live versions and, in
-living mode, only to the current version. Append an idempotent
-`became_current = true` event with reason `reextracted` and update the cached
-flag. Recount affected facts and reuse the claim ID and its paid products.
-If support returns, auto-resolve the open `support_withdrawn` review for
-that withdrawal. D118 governs fact-window changes.
-[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 **What currency is not.** Not supersession, not invalidation, not a validity judgment — no
 adjudicator is involved, no `invalidated_at` exists, and nothing about the claim itself
@@ -276,9 +257,9 @@ they always assumed.
   exception: it closes by `invalidated_at` only and leaves world time untouched, because an
   unarchive can reopen the fact. Loud, attributed, reversible —
   **no flag, no queue, no limbo.**
-- **Only our transcription changed** — a new toolchain generation, such as a repack,
-  extractor bump or converter upgrade, re-read the *unchanged* file and did not
-  re-derive a claim. The file still says what it always said; the event carries no
+- **Only our transcription changed** — a new toolchain generation (an extractor bump, or for
+  media the common case: a converter — ASR/VLM — upgrade) re-read the *unchanged* file and
+  did not re-derive a claim. The file still says what it always said; the event carries no
   information about the world, and its two possible explanations demand **opposite** actions
   (the old claim was an extraction artifact → the fact should be marked wrong; the new
   extractor regressed → the fact is fine and the extractor needs fixing). No mechanical
@@ -322,29 +303,30 @@ retract-then-reassert; a lineage still extracting at finalization defers its ret
 to the next finalization (recorded grace). A cross-cycle move leaves a short, visible,
 self-healing gap (a named spike, not papered over):
 
-1. **Diff** the lineage's evidence links using all displaced and surviving bases under §3.
-2. **Transition currency** per §3, appending ledger rows and updating the cache.
-3. **Recount** affected facts using the lineage's evidence links. On retry, include
-   transitions already written by this reconciliation so the recount can finish.
-4. **Apply the zero-support policy** (§4) for loss transitions where counts hit zero.
+1. **Diff** the lineage's evidence links: facts evidenced under the old basis vs the new.
+2. **Transition currency** per the §3 rules (append ledger rows; update the cache).
+3. **Recount** affected facts — bounded and indexed: the touched set is exactly the lineage's
+   evidence links.
+4. **Apply the zero-support policy** (§4) where counts hit zero.
 5. **Emit `evidence_changed`** (the D45 trigger queue) carrying the *fact-level* delta — the
    affected fact IDs with what happened to each, e.g.
    `{relations_closed: [r1], observations_closed: [], facts_recounted: [{id: r2, evidence_count: 3→2}], flags_raised: []}`
    — fact IDs and outcomes, never raw claim IDs (the K stale-storm guard).
 
 **Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
-not reached a version yet, the grid's reconcile uses base component version
+not reached a version yet, the version's reconcile runs at component version
 `reconcile-2026.07:claims`. It performs steps 1–5 above (and the archived-testimony path of §8)
-so existing facts keep exact counts and closures, including connector-cycle finalization.
-Full reconcile opens fact labeling and window review when the facts layer reaches the grid.
-
-**Living supersession guard (configured deployments).** Under the lineage lock, apply
-`version_superseded` transitions when the current version's selected grid has complete
-claim occurrences. This requires its successful `embed_chunk` and committed Selection and
-Claimify results for all of its chunks. An empty grid needs only its successful embed row.
-When a successor is still processing, its own reconcile settles the lineage. Deployments
-without a layer configuration also match occurrence links to the selected grid.
-[Processing layers §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes).
+exactly as the full reconcile does — so facts that already exist keep exact counts and closures,
+and connector-cycle closure still defers to finalization — but opens no fact label and no window
+review. When the facts layer later reaches the version, the full reconcile runs under its own
+key and opens them. **Living supersession guard (configured deployments):** a reconcile computes
+and applies step 2's `version_superseded` transitions in one transaction under the lineage lock,
+and only when the lineage's current version is its own version or its claim occurrences are
+complete — its `embed_chunk` succeeded for its representation and chunk grid, and every chunk's
+Selection and Claimify results are committed or the grid is empty (processing layers design §5.1);
+otherwise the current version's occurrences may not exist yet and the step is skipped — the current version's own reconcile computes it
+lineage-wide. Deployments without a layer configuration run step 2 exactly as before
+([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
 
 **Worked example, end to end.** Living document A; version 1 was extracted by extractor v1;
 chunk with block `b2` yielded claim `c1` ("Alice works at Acme") → relation `r1
@@ -380,8 +362,9 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
 4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
    **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
-   content hash + keyed neighbor hashes + window-relative converter origins + stable header facts
-   (title, file name, source kind, the chunk's **text origin time**, language) + the extractor version + the
+   block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
+   metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
+   extractor version + the
    structurer version (a stable config string — a deliberate structurer bump is a
    re-extraction boundary, since section roles feed Selection).
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
@@ -389,20 +372,17 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
    discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
    origin time of the earliest chunk of a non-deleted version of the lineage with the same
-   date-free reuse identity whose date is not later than this version's own date. A chunk
-   in a new version without a match takes its `source_modified_at` or `published_at`. Private CHUNK
-   recovery carries the same-version date under [D162](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
-   The reuse key, E2 header, and the `asserted_at` of freshly extracted claims use this
-   per-chunk date. Keying on the version's own date would change every key whenever the source stamps a new
+   date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
+   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
+   E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
+   version's own date instead would change every key whenever the source stamps a new
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
-   Intact chunks **reuse the same claim IDs** when their Selection and Claimify
-   keys match and their evidence remaps, including from the preceding completed
-   grid on a same-version repack. A keyed neighbor can re-key a target
-   whose own text is intact. Embedding reuse checks the full D80 input. Split
-   pieces get fresh work under D162's piece-specific identity and date rules.
-   **The mechanics — block-hash diff alignment,
+   A chunk whose key is already extracted for this lineage **reuses its claims**
+   (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
+   re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
+   embedding version) the same way. **The mechanics — block-hash diff alignment,
    anchor-stabilized boundaries, the carry-forward rules — are bound in
    `e1_chunks_design.md` §7 (D57–D58)**; this design owns the contract.
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,

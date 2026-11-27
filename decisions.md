@@ -1778,12 +1778,6 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Both reconcile modes compare the completed selected grid with every
-> displaced grid of that version still carrying current testimony. Preserve
-> claims carried by another current basis. A packing-only loss follows the
-> `reextracted` rule. Verified reuse can restore the claim and its support.
-
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
 > claims-mode component version that applies the same currency and counting logic but opens no
@@ -1951,13 +1945,7 @@ identity rules per source kind are a named spike.
 > toolchain versions), else the new version's source time. It replaces both date header
 > facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
-> this decision's cost promise did not hold.
->
-> **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Split pieces get fresh E1 and E2 work. Intact targets retain the legacy
-> keys for unchanged windows and can carry both keys across a split when
-> their consumed extraction inputs match. On a same-version repack, intact
-> chunks can reuse verified E2 results from the preceding completed grid.
+> this decision's cost promise did not hold. Everything else here remains binding.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -2046,15 +2034,10 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
-> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
-> The anchored E1 packer emits whole-block candidates. A provider-qualified D80
-> fit check replaces the oversized-unit rules and permits cuts within blocks.
-> Intact chunks retain the ordered-block content hash. Split pieces use D162's
-> tagged digest of the exact source slice. Sections, anchor restarts and
-> non-overlap still govern packing.
->
-> D80 supersedes the context-prefix branch in the original decision below.
-> [Embedding-input policy](plan/designs/e1_embedding_input_policy.md).
+> **Proposed D162 amendment.** The whole-block rule applies to base candidates.
+> Provider-qualified cuts supersede the oversized exceptions below.
+> Section boundaries, anchoring and non-overlap still govern packing.
+> [D162](#d162-split-oversized-chunks-before-embedding).
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2223,10 +2206,6 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
 > (since the D98 RC 1 amendment, a relational one-hop join instead of SQL/PGQ).
-
-> **Proposed D162 amendment.** The fixed chunking rule is the engine's anchored
-> packer followed by the D80 fit check.
-> [D162](#d162-split-oversized-chunks-before-embedding).
 
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
@@ -4020,10 +3999,6 @@ changes either child still must pass the ordinary evidence gate.
 
 ## D88. E3 normalize work is leased per claim so large documents can normalize in parallel
 
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> The expected claim set is per packing grid. Each claim ID and normalizer
-> generation still identify one normalization result.
-
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The claim normalize fan-out is opened only when the facts layer is entered for the version.
 
@@ -4124,12 +4099,6 @@ for an unused benchmark harness.
 **Analysis.** `plan/analysis/fact_context_authority_performance.md`.
 
 ## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
-
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Flush units and completion state key on the representation, full packing
-> generation and pinned composed flush generation as well as the version.
-> Match application receipts at the pinned adjudicator versions. Entity-global
-> apply order governs assertions admitted by those units.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The empty path opens `adjudicate_supersession` and `embed_claim` only when the facts layer is
@@ -6258,10 +6227,6 @@ absence-based closures indefinitely.
 > Processing amendments D120–D123 clarify assertion identity, project concise
 > model inputs and add source-backed context nomination. D118's one world window,
 > ordered application and validation/forget authority remain in force.
->
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> A repack waits for already-admitted assertions, and selected grid
-> membership governs new admissions.
 
 **Status:** accepted when merged; replacement runtime is not implemented by this
 amendment. **Date:** 2026-09-07.
@@ -7270,13 +7235,6 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 ## D140. Declared effective periods, section keys, and version-aware references
 
-> **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
-> An intact repack match can inherit the preceding completed grid's date.
-> New split pieces use their version date or unknown. Private CHUNK recovery
-> retains each intact row's effective date and passes the parent's date to each
-> replacement piece. For unstamped pre-D140 rows this is the version's source
-> modification date or publication date, when known.
-
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
 > nominate–confirm–continue loop, before the `k` cut, in one ranked-read snapshot. Scope,
@@ -7638,10 +7596,6 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 
 
 ## D143. Processing layers can be switched off per deployment and per request
-
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Admission, dispatch, frontiers, readiness and receipts use the exact
-> packing grid through the claims-only or full facts tail.
 
 > **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
 > sources-only document tree with no entities, fact metadata or K links, identical
@@ -8797,32 +8751,15 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27.
 
-Check each full D80 embedding input against a provider-qualified ceiling
-using a pinned tokenizer. Refine only failing candidates into lossless,
-section-bounded pieces with exact offsets, provenance and deterministic IDs.
-Fitting grids with legacy reuse inputs keep every stored field. Each split
-piece gets a generation-specific ID, a fresh vector and a fresh E2 completion.
-Ineligible pieces have stable Selection keys for their Claimify consumers.
-Intact chunks keep their Selection key, date-free key and date when the
-consumed E2 inputs match across a split. A same-version repack can reuse
-intact E2 results from the preceding completed grid after key checks and
-D119 remapping. Claimify still checks D122's producers.
-Each additional grid gets delivery and barrier keys through its applicable
-tail. Facts also pin the composed flush generation. Existing keys stay with
-their grids, including verified empty legacy completions. A repack drains
-admitted fact applications before switching grids. Both reconcile modes
-account for all displaced grids still carrying current testimony. Verified
-reuse restores testimony retired solely by repacking.
-E1-complete and exposed grids keep their cuts. Size recovery uses CHUNK's
-shared fit-and-refine routine for the exact failed attempt and commits the
-private recut and replay together. Replay refreshes the final-grid D80
-metadata and retains matching vectors. Recovery carries the effective date,
-using E2's version-date fallback for unstamped pre-D140 rows. Confirmed
-input rejection is terminal and capacity retries remain bounded.
-
-Require offline full-row equality on frozen LoCoMo v45 and BEAM inputs at
-their qualified benchmark ceiling of at least 22,528 tokens, including the
-rendered inputs, derived Claimify stamps and ordered D122 producer windows.
+Use a pinned tokenizer and provider-qualified ceiling over the complete
+D80 input. Split only failing candidates, preserving exact slices and
+provenance. Use the legacy chunker version, ID allocator and work keys.
+READY versions retain their grids permanently. New versions use the fix.
+A typed size dead letter is eligible for atomic CHUNK replay while the
+version has never published and has no downstream evidence or started
+work. Confirmed input rejections are terminal. Throttling retries are bounded.
+Require offline full-row equality on frozen LoCoMo v45 and BEAM with a
+benchmark ceiling of at least 22,528 tokens.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

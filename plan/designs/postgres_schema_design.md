@@ -1634,15 +1634,15 @@ CREATE INDEX ix_crossrefs_pending  ON document_crossrefs (deployment_id, to_sour
 
 Retrieval-sized units that preserve context and trace back to position. Chunk
 **search text and embedding live in the private PostgreSQL `chunk_search`
-sidecar**. Authority tables hold metadata, source offsets, section links and
-the D80 embedding-input stamps, including the optional deterministic header.
-[E1 packing and fit check](split_oversized_chunks_design.md).
-[Text-origin creation and replay](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
+sidecar**; authority
+tables hold metadata, offsets, the section link, and the **generated
+context prefix** (LLM-derived, so it is *replayed* on rebuild, not regenerated — D7 — and therefore
+stored as derived metadata, not body text).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
--- chunks — section-bounded E1 units (D58/D162). Body = markdown_uri sliced
--- by [char_start,char_end) (NOT stored in the authority row, D37). P1 is keyed by chunk_id. Large
+-- chunks — semchunk units, section-aware (never split mid-section, D39). Body = markdown_uri sliced
+-- by [char_start,char_end] (NOT stored in the authority row, D37). P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (
@@ -1653,15 +1653,15 @@ CREATE TABLE chunks (
   representation_id uuid NOT NULL,             -- LOGICAL FK → document_representations (D65): the reading whose block grid + document.md offsets this chunk is cut from — the basis coordinate on every occurrence
   section_id      uuid,                        -- LOGICAL FK → document_sections; section (role/path signal for E2)
   ordinal         integer NOT NULL,            -- position within the document
-  block_start     integer NOT NULL,            -- first intersected block ordinal (preceding block for a D162 gap-only piece)
+  block_start     integer NOT NULL,            -- first block ordinal packed into this chunk (D57/D58: a chunk = a run of whole blocks)
   block_end       integer NOT NULL,            -- last block ordinal (inclusive)
-  chunk_content_hash text NOT NULL,            -- ordered block-hash digest or D162 tagged digest of the exact source slice
-  extraction_input_hash text NOT NULL,         -- Selection input key (E1 §7, D162 §2)
+  chunk_content_hash text NOT NULL,            -- hash of the chunk's ORDERED BLOCK HASHES (D58) — embedding-reuse + occurrence identity
+  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, the chunk's text_origin_at (D140 — not the version's own date), language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
-  text_origin_at  timestamptz,                 -- D140/D162: immutable date for the E2 header, Selection key and fresh claims' asserted_at
-  reuse_identity_hash text,                    -- D140 date-free input identity for intact chunks
+  text_origin_at  timestamptz,                 -- D140: recorded once at creation: the text origin time of the earliest matching chunk (same reuse_identity_hash) in a non-deleted version of the lineage, else this version's source_modified_at or published_at; the E2 header date, the reuse-key date, and fresh claims' asserted_at
+  reuse_identity_hash text,                    -- D140: date-free identity (own + neighbour block hashes, non-date header facts, blockizer/structurer/extractor versions) for the text-origin lookup
   extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
@@ -1670,16 +1670,16 @@ CREATE TABLE chunks (
   location_header text,                        -- optional bounded deterministic header only (not body); null in body_only mode
   embedding_text_hash text,                    -- hash of canonical embedding text under the policy
   embedding_input_policy_version text,         -- LOGICAL FK → pipeline_component_versions (embedding_input_policy)
-  context_prefix  text,                        -- pre-D80 LLM location prose. D80 stamps its rendered location_header, including NULL.
-  prefixer_version text,                       -- pre-D80 context_prefixer component version. D80 stamps the embedding input policy generation.
-  chunker_version text,                        -- full packing generation (algorithm and parameter values)
+  context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
+  prefixer_version text,                       -- LEGACY context_prefixer component version
+  chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (semchunk config)
   embedding_version text,                      -- configured embedder/model attestation for the current chunk vector
   policy_generation text,                      -- configured embedding_input_policy_version
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'Section-bounded E1 retrieval units after anchored packing and the D162 fit check. Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
+  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup
@@ -1911,28 +1911,23 @@ CREATE INDEX ix_grounding_claim ON grounding_audits (claim_id);
 -- transaction-time reconstructions exact (fact-as-of-T still sees old generations).
 -- Written by the reconciliation step of the lifecycle flow (evidence_lifecycle_design §5),
 -- which runs only on COMPLETED basis changes and then recounts affected facts.
--- Serialize on the claim row and deduplicate transitions by run, claim, reason
--- and direction. A D162 packing-only retirement records the displaced bases
--- that carried the claim and its completing basis on the reconcile receipt.
--- A verified reuse occurrence can restore currency
--- with reason reextracted and became_current=true (lifecycle §3).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE testimony_currency_events (
   event_id        uuid NOT NULL,
   deployment_id   uuid NOT NULL,               -- LOGICAL FK → deployments
   claim_id        uuid NOT NULL,               -- LOGICAL FK → claims
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the lineage; the recount scope)
-  reconciliation_id uuid NOT NULL,             -- stable run ID for a completed basis change, reused on retry
-  became_current  boolean NOT NULL,            -- false = lost currency, true = regained
-  reason          currency_reason NOT NULL,    -- reextracted | version_superseded | version_archived | review_restored
-  from_extractor_version text,                 -- the superseded generation on a reextracted loss
+  reconciliation_id uuid NOT NULL,             -- identifies ONE reconciliation run = one completed basis change per lineage (a new version's extraction completing, or a version-bump re-extraction completing). Minted when the run starts and stored in processing_state, so a RETRIED run reuses it — its re-emitted events hit the UNIQUE below as no-ops
+  became_current  boolean NOT NULL,            -- false = lost currency; true = regained (unarchive, mode change)
+  reason          currency_reason NOT NULL,    -- reextracted | version_superseded | version_archived
+  from_extractor_version text,                 -- the superseded generation (reason=reextracted)
   from_version_id uuid,                        -- the superseded/deleted document version (reason=version_*)
   occurred_at     timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (event_id, occurred_at),
-  UNIQUE (claim_id, reconciliation_id, reason, became_current, occurred_at)  -- includes the partition key
+  UNIQUE (claim_id, reconciliation_id, reason, became_current, occurred_at)  -- a retried reconciliation re-emits as a no-op, never a duplicate (F11)
 ) PARTITION BY RANGE (occurred_at);
 COMMENT ON TABLE testimony_currency_events IS
-  'Append-only D54 testimony-currency transitions. Truth for claims.is_current_testimony (cache); replayable (D7). Reasons: reextracted (basis change or verified reuse after a packing-only retirement), version_superseded (living-mode lineage moved past the claim''s version), version_archived, review_restored. Never validity, never supersession — D3 untouched.';
+  'Append-only D54 testimony-currency transitions. Truth for claims.is_current_testimony (cache); replayable (D7). Reasons: reextracted (a newer extraction generation covers the chunk), version_superseded (living-mode lineage moved past the claim''s version), version_archived. Never validity, never supersession — D3 untouched.';
 CREATE INDEX ix_currency_claim ON testimony_currency_events (claim_id);
 CREATE INDEX ix_currency_doc   ON testimony_currency_events (deployment_id, doc_id, occurred_at);
 ```
@@ -3033,7 +3028,7 @@ Labs."*
 | D119 coherent multi-span claims | `chunk_claims.evidence_spans` — complete occurrence body ranges; `claims.char_start`/`char_end` remain origin only |
 | D57 block substrate + blockizer; sections on the grid | `document_representations.blocks_uri` + `blockizer_version`; `document_sections.block_start/end`; `pipeline_component = 'blockizer'`; blocks live in `blocks.json` (sidecar), never as rows |
 | D65 media: immutable representations + occurrence provenance | `document_representations` (immutable conversion outputs; route + component graph + output hashes; representation-addressed artifact paths) + `document_versions.current_representation_id` (swap-on-completion); `representation_id` on `document_sections`/`chunks` (the basis coordinate); `chunk_claims.derivation_kind`/`evidence_mode`/`source_locators` (occurrence-grain disclosure + locators, media_design §4–§6) |
-| D58/D162 chunk packing + multi-granularity retrieval | `chunks.block_start/end`, exact offsets and `chunk_content_hash`; role filter joins chunk/section authority; E1 ensures non-overlap |
+| D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D145 claim leases and the reaper | `processing_state.lease_until` + running-requires-lease CHECK; `ix_procstate_running_lease`; attempt-conditional renew/complete/fail |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |

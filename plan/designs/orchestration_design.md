@@ -186,32 +186,31 @@ Tasks header cannot choose the attribution.
 E1 passage embed is **not** one document-level “all strings then one provider call.” Normative
 input policy: `e1_embedding_input_policy.md` §6. Operational rules for implementers:
 
-1. **Claiming row** — One `processing_state` row per document version, representation
-   and full packing generation owns `embed_chunk` attempts. Existing ledger keys
-   stay with their grids. Additional grids include the pair in the component version.
-   The same job can prepare location facts and render the input before calling the provider.
-   [D162 delivery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
+1. **Claiming row.** One `processing_state` row owns an embed attempt for a **document
+   version / representation** at stage `embed_chunk` (or an equivalent representation-scoped
+   stage). Pure prepare (location facts + render) may run in that job before provider calls;
+   it does not require separate ledger rows.
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
    configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
-   (hypothesis 64–128). Each batch stays within one document, representation, packing
-   generation, lane and embedder generation.
+   (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
+   generation.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
-4. **Input rejection.** Bisect a confirmed input rejection to identify the failing input.
-   A confirmed singleton rejection is a typed terminal stage failure. Capacity
-   failures retain bounded retries. [D162 provider errors](split_oversized_chunks_design.md#4-rejection-and-retry).
+4. **Provider failures.** Bisect an input-specific batch failure to isolate
+   the input. A confirmed rejection fails the stage with a terminal code.
+   Other isolated poison inputs follow their typed fail or skip outcome.
+   Capacity errors use bounded retries. A typed size dead letter can restart
+   at CHUNK under the [D162 recovery preconditions](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
    vector/hash/current attestation and stamps the chunk authority row. There is
    no cross-store gap. A crash after provider response but before commit may
    repeat a billable call; the design does not claim exactly-once provider spend.
-6. **Readiness** — The grid is embed-ready when its embed row succeeds and every
-   nonblank chunk has a successful stamp matching the final grid's location
-   facts, input hash and configured `(policy_generation, embedder_generation)`.
-   An `empty_body` skip
-   satisfies the per-chunk check. Claims and facts handoffs and their barriers
-   use that same grid through the applicable tail. [D162 delivery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
+6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
+   stamp matching the **configured** `(policy_generation, embedder_generation)`
+   and input hash (or a closed typed skip: at minimum `empty_body`). Mixed or
+   stale attestation is not ready.
 
 K/P and other stages are unchanged by this subsection.
 
@@ -252,14 +251,10 @@ infrastructure). The operational surface over it is thin and deterministic:
 - **Replay** — reset the row to `pending`, clear its retry defer reason, choose `not_before`, raise
   `max_attempts` above the current `attempts` by the approved replay allowance, and re-announce
   its `processing_id`. Attempts never reset, so cost-ledger deduplication remains stable.
-  Ordinary replay resumes from durable checkpoints under the original key. Bulk replay is the
-  same operation scoped by version or error class. An explicit operator
+  Unconditionally safe: the idempotency key is unchanged, so a partially-succeeded earlier attempt
+  no-ops. Bulk replay is the same operation scoped by version or error class; an explicit operator
   transition may reroute it through the backfill lane when large. `payload` remains handler input
   for inspection, never the source of route, schedule, or retry state.
-  [D162 size recovery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished)
-  invokes CHUNK's shared fit-and-refine routine directly for the failed embed
-  attempt. Grid replacement and replay of that embed row commit together under
-  the lineage and work-row locks.
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.

@@ -27,10 +27,10 @@ D12, D17–D19. Full research + evidence: `plan/analysis/claimify_research/SYNTH
 ```
 E0 ─────────► E1 ──────────► E2 ───────────────► E3
 files         chunks         claims              relations
-(Markdown,    (anchored      (Claimify-staged:   ( (subject,predicate,object) facts;
- PageIndex     pack, D80      Selection →         entity resolution T0–T4;
- hierarchy +   fit check,     decontextualize →   supersession; evidence_count )
- summaries)    embed)         decompose; coref
+(Markdown,    (semchunk +    (Claimify-staged:   ( (subject,predicate,object) facts;
+ PageIndex     a context      Selection →         entity resolution T0–T4;
+ hierarchy +   prefix per     decontextualize →   supersession; evidence_count )
+ summaries)    chunk; embed)  decompose; coref
                               in-call)
 ```
 
@@ -71,7 +71,7 @@ The extractor never sees a bare chunk. For each target chunk it receives a small
 | **Document header** — title, date, source, language | resolves "this report", "the company", and absolute time for "last year" |
 | **PageIndex section path + summary** | orientation only — *Results* vs *References*; summaries are **not** grounding sources (D79/D80) |
 | **Typed location elements** (D80) | closed `LocationElement` list from E1 prepare (titles, channel/author/time when present); **not** a free-form E1 embedding header |
-| **Closest previous and next chunks in the same section** | antecedents for pronouns and partial names, including across nested sections |
+| **±1 (then ±2) neighbour chunks**, same section | antecedents for pronouns / partial names — section-parent + offsets, **same scope only** |
 | **Known entity hints** | canonical names already on the chunk, as *hints* (permission to resolve, not to invent) |
 
 **Not in the bundle:** free-form `location_header` / legacy `context_prefix` prose (D80). Location

@@ -78,18 +78,14 @@ results, its generation and stable source-input basis. Normalize temporary label
 to validated source descriptors before persistence; preserve exact text and
 range/origin information needed for occurrence remapping.
 
-Intact chunks with matching inputs reuse frozen Selection from the preceding
-completed grid of the same version or an earlier non-deleted version.
-Retries replay the committed response.
-[D162 donor and remapping rules](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
+Matching prior-version inputs reuse the frozen Selection output; retries never
+regenerate a committed response. Uncommitted concurrent calls may race, but only
+one accepted result becomes authoritative through existing transaction/CAS
+patterns. Do not add a second queue or distributed cache. Associate results with
+each consuming chunk occurrence so position changes do not corrupt evidence.
 
-Existing transaction/CAS patterns make one accepted result authoritative
-when uncommitted calls race. Do not add a second queue or distributed cache.
-Associate results with each consuming chunk occurrence so position changes
-do not corrupt evidence.
-
-The Selection barrier uses the expected chunks of the pinned packing grid
-and extractor generation. Create Claimify work idempotently and transactionally
+The Selection barrier uses the expected chunks of the immutable representation
+and pinned generations. Create Claimify work idempotently and transactionally
 once all results exist. Reused results count as complete. A terminal missing or
 invalid Selection result cannot be silently treated as zero references. Existing
 failure/retry policy remains visible. Claim normalization begins only after the
@@ -100,26 +96,23 @@ call. Empty representations follow the existing empty completion path.
 
 ## Reuse, including negative dependencies
 
-Each producer supplies its E1 Selection key. D162 keeps the key of an intact
-producer whose consumed extraction inputs match across layouts.
-[E1 key inputs and split-piece keys](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
-
-Claimify's effective basis adds the ordered stable
+Selection's stable reuse basis is its existing own/neighbor source context,
+header and generation. Claimify's effective basis adds the ordered stable
 Selection-input bases of every owning unit in its eligible preceding region,
 including units that emitted no cards, and the reference-policy generation.
-Reuse Claimify only from an eligible donor with a matching full key and a
-committed completion.
+Those Selection bases include any neighbor source used to define their cards.
 
 Hashing only cited/admitted cards is incorrect: an edited chunk may introduce a
 competing referent even though the old cited card is unchanged. Hashing the entire
 document is unnecessarily broad. A fixed source region captures both positive
 and negative dependencies while bounding the spread of invalidation.
 
-Content-based keys exclude absolute offsets, document-version IDs, temporary
-labels and freshly generated summaries. For each new occurrence remap all
-selected evidence into its allowed source units, including reference-card
-passages. Reject ambiguous repeated-text remapping; never take the first
-global substring match. Existing D56 same-claim-ID reuse and D119 occurrence
+Do not include absolute offsets, document-version IDs, temporary labels or freshly
+generated summaries in content identity. Identical stable inputs must reuse the
+same frozen Selection decision, not call the model to obtain new cards. For each
+new occurrence remap all selected evidence into its allowed source units, including
+reference-card passages. Reject ambiguous repeated-text remapping; never take the
+first global substring match. Existing D56 same-claim-ID reuse and D119 occurrence
 evidence stay mandatory. Header timestamp changes retain their documented broader
 invalidation; shifting chunk boundaries can also change actual input context.
 
