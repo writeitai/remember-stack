@@ -1,0 +1,342 @@
+"""D160/D161 handoff at the D163 revisions, with the actual reader roles."""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+import logging
+import logging.config
+from threading import Event
+from time import monotonic
+from typing import Any
+from unittest.mock import MagicMock
+
+from alembic import command
+from benchmarks.d163_qualification import BASELINE_HEAD
+from benchmarks.d163_qualification import TARGET_HEAD
+from fastapi.testclient import TestClient
+import psycopg
+import pytest
+from sqlalchemy.engine import Engine
+
+from rememberstack.profiles.selfhost import _provision_query_role_password
+from rememberstack.profiles.selfhost import _SelfHostSavedQueryReads
+from rememberstack.spine.query_space import load_manifest
+from rememberstack.surfaces.graph_queries import GraphQueries
+from rememberstack.surfaces.http_api import build_api
+from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
+from rememberstack.surfaces.query_sandbox.saved_queries import OperatorFixture
+from rememberstack.surfaces.query_sandbox.saved_queries import publish_surface_hash
+from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryRegistry
+from rememberstack.surfaces.query_sandbox.saved_queries import seed_shipped_examples
+from tests.spine.test_d163_eligibility_pg import Corpus
+from tests.spine.test_d163_eligibility_pg import migration_config
+from tests.spine.test_d163_eligibility_pg import scratch_database
+from tests.spine.test_d163_eligibility_pg import seed_corpus
+
+_PREVIOUS_HASH = "8e526b54aca2bbac954a0b008156ff1ccb7bf498a9e1b384bd450ccd81b6301d"
+_MEMORY_WALK = "p9_56_0077"
+_GRAPH_PROJECTION = "p9_57_0078"
+_SQL = "SELECT fact_id::text AS fact_id FROM facts_visible_history WHERE $1::boolean ORDER BY fact_id"
+_ROUTE = "/query/saved/team/d163_survivors/run"
+
+
+def _connect(engine: Engine, *, role: str | None = None) -> psycopg.Connection:
+    url = engine.url.set(drivername="postgresql", username=role or engine.url.username)
+    return psycopg.connect(
+        url.render_as_string(hide_password=False), options="-c jit=off"
+    )
+
+
+def _executor(
+    engine: Engine, corpus: Corpus, manifest_hash: str
+) -> QuerySandboxExecutor:
+    executor = QuerySandboxExecutor(
+        deployment_id=corpus.case.deployment_id,
+        connect=lambda: _connect(
+            engine, role=f"rememberstack_query_{engine.url.database}"
+        ),
+    )
+    executor._manifest_hash = manifest_hash
+    return executor
+
+
+def _client(engine: Engine, corpus: Corpus, manifest_hash: str) -> TestClient:
+    deployment_id = corpus.case.deployment_id
+    return TestClient(
+        build_api(
+            engine=MagicMock(),
+            deployment_id=deployment_id,
+            open_query=OpenQueryFacade(
+                deployment_id=deployment_id,
+                sql=_executor(engine, corpus, manifest_hash),
+                saved_queries=_SelfHostSavedQueryReads(
+                    engine=engine,
+                    deployment_id=deployment_id,
+                    manifest_hash=manifest_hash,
+                ),
+            ),
+        )
+    )
+
+
+def _registry(
+    connection: psycopg.Connection,
+    corpus: Corpus,
+    manifest: str,
+    *,
+    actor: str = "operator",
+) -> SavedQueryRegistry:
+    return SavedQueryRegistry(
+        connection=connection,
+        deployment_id=corpus.case.deployment_id,
+        actor=actor,
+        manifest_hash=manifest,
+        can_activate=lambda actor: actor == "operator",
+    )
+
+
+def _fixtures() -> dict[str, OperatorFixture]:
+    return {
+        "positive": OperatorFixture(kind="positive", parameters=(True,)),
+        "empty": OperatorFixture(kind="empty", parameters=(False,)),
+        "tombstone": OperatorFixture(kind="tombstone", parameters=(False,)),
+        "cap": OperatorFixture(kind="cap", parameters=(True,), max_rows=1),
+    }
+
+
+def _publish(
+    engine: Engine, corpus: Corpus, manifest: str, *, still_visible: Any = None
+) -> None:
+    # Execute the release setup's registry transaction. External buckets and
+    # unrelated setup work are already provisioned by the disposable fixture.
+    with _connect(engine) as connection:
+        publish_surface_hash(
+            connection=connection,
+            deployment_id=corpus.case.deployment_id,
+            manifest_hash=manifest,
+            actor="selfhost-setup",
+        )
+        seed_shipped_examples(
+            connection=connection,
+            deployment_id=corpus.case.deployment_id,
+            manifest_hash=manifest,
+        )
+        _provision_query_role_password(connection=connection, engine=engine)
+        if still_visible is not None:
+            still_visible()
+
+
+def _catalog(engine: Engine) -> dict[str, Any]:
+    with engine.connect() as connection:
+        rows = connection.exec_driver_sql("""
+            SELECT c.relname, pg_get_viewdef(c.oid), pg_get_userbyid(c.relowner),
+                   c.relacl, obj_description(c.oid, 'pg_class'),
+                   ARRAY(SELECT a.attacl::text FROM pg_attribute a
+                         WHERE a.attrelid=c.oid AND a.attnum>0 ORDER BY a.attnum)
+            FROM pg_class c
+            WHERE c.oid IN (to_regclass('public.v_memory_entity_survivor'),
+                            to_regclass('public.v_graph_survivor'),
+                            to_regclass('public.v_memory_claim_history_by_id'))
+        """)
+        return {row[0]: tuple(row[1:]) for row in rows}
+
+
+def test_d163_upgrade_and_downgrade_with_previous_readers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with scratch_database(BASELINE_HEAD) as engine:
+        corpus = seed_corpus(engine)
+        _publish(engine, corpus, _PREVIOUS_HASH)
+        version, query_id = _activate(engine, corpus)
+        old_api = _client(engine, corpus, _PREVIOUS_HASH)
+        new_hash = str(load_manifest()["surface_manifest_hash"])
+        new_api = _client(engine, corpus, new_hash)
+        graph = GraphQueries(engine=engine, deployment_id=corpus.case.deployment_id)
+        request = {"version": version, "parameters": [True]}
+
+        def read(client: TestClient, expected_hash: str) -> list[Any]:
+            response = client.post(_ROUTE, json=request)
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["termination_reason"] == "completed", body
+            assert body["surface_manifest_hash"] == expected_hash
+            assert body["saved_query"]["query_id"] == str(query_id)
+            assert body["saved_query"]["version"] == str(version)
+            return body["rows"]
+
+        expected_rows = read(old_api, _PREVIOUS_HASH)
+        assert [str(corpus.facts["relation", "mixed"])] in expected_rows
+
+        def graph_rows() -> tuple[str, ...]:
+            result = graph.neighborhood(entity_id=corpus.survivor, hops=1)
+            return tuple(sorted(str(node.entity_id) for node in result.nodes))
+
+        expected_graph = graph_rows()
+        assert corpus.case.entity_ids[1] in expected_graph
+        baseline = _catalog(engine)
+        commits: set[str] = set()
+
+        def smoke() -> None:
+            with engine.connect() as connection:
+                revision = connection.exec_driver_sql(
+                    "SELECT version_num FROM alembic_version"
+                ).scalar_one()
+            assert read(old_api, _PREVIOUS_HASH) == expected_rows
+            assert graph_rows() == expected_graph
+            commits.add(revision)
+            observed = _catalog(engine)
+            for name, definition in baseline.items():
+                # CREATE OR REPLACE preserves ownership and table and column ACLs.
+                assert observed[name][1:3] == definition[1:3]
+                assert observed[name][4] == definition[4]
+
+        def migrate(*, up: bool) -> None:
+            retry, resume = Event(), Event()
+            logger = logging.getLogger("alembic.runtime.migration")
+            start = monotonic()
+            retry_times: list[float] = []
+            original_config = logging.config.fileConfig
+
+            class Observe(logging.Handler):
+                def emit(self, record: logging.LogRecord) -> None:
+                    message = record.getMessage()
+                    if "40P01" in message:
+                        raise AssertionError(message)
+                    if "SQLSTATE 55P03" in message:
+                        retry_times.append(monotonic() - start)
+                        retry.set()
+                        assert resume.wait(timeout=15)
+                    if message.startswith(("Running upgrade", "Running downgrade")):
+                        smoke()  # preceding revision has committed on the migration session
+
+            observer = Observe()
+
+            def configure(*args: Any, **kwargs: Any) -> None:
+                original_config(*args, **kwargs)
+                logger.addHandler(observer)
+
+            try:
+                with (
+                    monkeypatch.context() as replacement,
+                    ThreadPoolExecutor(max_workers=1) as executor,
+                ):
+                    replacement.setattr(logging.config, "fileConfig", configure)
+                    with engine.connect() as reader:
+                        reader.exec_driver_sql(
+                            "SELECT entity_id FROM v_memory_entity_survivor LIMIT 1"
+                        )
+                        future = executor.submit(
+                            command.upgrade if up else command.downgrade,
+                            config=migration_config(engine),
+                            revision="head" if up else BASELINE_HEAD,
+                        )
+                        try:
+                            assert retry.wait(timeout=12), (
+                                future.exception() if future.done() else "missing 55P03"
+                            )
+                            # The exclusive lock waiter closed; this read uses the normal
+                            # sandbox 250 ms lock limit while the first reader still holds.
+                            smoke()
+                        finally:
+                            reader.rollback()
+                            resume.set()
+                        future.result(timeout=15)
+                assert len(retry_times) == 1 and 2.9 <= retry_times[0] < 12
+                smoke()
+            finally:
+                logger.removeHandler(observer)
+
+        migrate(up=True)
+        assert commits == {BASELINE_HEAD, _MEMORY_WALK, _GRAPH_PROJECTION, TARGET_HEAD}
+        incoming = _catalog(engine)
+        assert "v_memory_entity_survivor" in incoming["v_graph_survivor"][0]
+        assert (
+            "Private deployment-scoped merge walk"
+            in incoming["v_memory_entity_survivor"][3]
+        )
+        assert incoming["v_memory_claim_history_by_id"][1] == "rememberstack_view_owner"
+        with _connect(
+            engine, role=f"rememberstack_query_{engine.url.database}"
+        ) as reader:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                reader.execute("SELECT * FROM public.v_memory_claim_history_by_id")
+        commits.clear()
+        migrate(up=False)
+        assert commits == {BASELINE_HEAD, _MEMORY_WALK, _GRAPH_PROJECTION, TARGET_HEAD}
+        assert _catalog(engine) == baseline
+
+        command.upgrade(config=migration_config(engine), revision="head")
+        _assert_cutover(
+            engine, corpus, new_api, new_hash, _PREVIOUS_HASH, query_id, version
+        )
+        assert read(new_api, new_hash) == expected_rows
+        # All D163 readers have finished before the reverse revisions.
+        command.downgrade(config=migration_config(engine), revision=BASELINE_HEAD)
+        assert _state(engine, corpus, query_id, version) == (new_hash, "active")
+        _assert_cutover(
+            engine, corpus, old_api, _PREVIOUS_HASH, new_hash, query_id, version
+        )
+        assert read(old_api, _PREVIOUS_HASH) == expected_rows
+
+
+def _activate(engine: Engine, corpus: Corpus) -> tuple[int, Any]:
+    with _connect(engine) as connection:
+        author = _registry(connection, corpus, _PREVIOUS_HASH, actor="author")
+        saved = author.draft(namespace="team", name="d163_survivors", sql=_SQL)
+        report = author.validate_version(
+            query_id=saved.query_id,
+            version=saved.version,
+            executor=_executor(engine, corpus, _PREVIOUS_HASH),
+            fixtures=_fixtures(),
+        )
+        assert report.passed, report.diagnostics
+        _registry(connection, corpus, _PREVIOUS_HASH).activate(
+            query_id=saved.query_id, version=saved.version
+        )
+        return saved.version, saved.query_id
+
+
+def _state(
+    engine: Engine, corpus: Corpus, query_id: Any, version: int
+) -> tuple[Any, ...]:
+    with _connect(engine) as connection:
+        row = connection.execute(
+            b"SELECT r.surface_manifest_hash, v.status::text FROM saved_query_registry_state r "
+            b"JOIN saved_query_versions v USING (deployment_id) "
+            b"WHERE deployment_id=%s AND query_id=%s AND version=%s",
+            (corpus.case.deployment_id, query_id, version),
+        ).fetchone()
+        assert row is not None
+        return row
+
+
+def _assert_cutover(
+    engine: Engine,
+    corpus: Corpus,
+    api: TestClient,
+    new: str,
+    old: str,
+    query_id: Any,
+    version: int,
+) -> None:
+    def old_state() -> None:
+        assert _state(engine, corpus, query_id, version) == (old, "active")
+
+    _publish(engine, corpus, new, still_visible=old_state)
+    assert _state(engine, corpus, query_id, version) == (new, "pending_revalidation")
+    refused = api.post(_ROUTE, json={"version": version, "parameters": [True]})
+    assert refused.json()["detail"]["code"] == "saved_query_revalidation_pending", (
+        refused.text
+    )
+    with _connect(engine) as connection:
+        status = _registry(connection, corpus, new).revalidate(
+            query_id=query_id,
+            version=version,
+            started_against=new,
+            executor=_executor(engine, corpus, new),
+            fixtures=_fixtures(),
+            minor_compatible=True,
+        )
+    assert status == "active"
+    assert _state(engine, corpus, query_id, version) == (new, "active")

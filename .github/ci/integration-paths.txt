@@ -102,3 +102,5 @@ src/tests/workers/test_forget_reingest_pg.py
 src/tests/spine/test_forget_k_acceptance.py
 src/tests/spine/test_forget_no_global_stop.py
 src/tests/adapters/test_minio_forget_acceptance.py
+src/tests/spine/test_d163_eligibility_pg.py
+src/tests/spine/test_d163_migrations_pg.py

@@ -8744,7 +8744,7 @@ generations, retrieval and rendering use their existing code and identities.
 
 ## D163. Drive fact eligibility from its own evidence
 
-**Status:** accepted; implementation on this branch. **Date:** 2026-11-27.
+**Status:** accepted; implemented. **Date:** 2026-11-27.
 **Amends:** D153's physical fact path.
 
 Bind each candidate's raw evidence before source qualification and the D140
