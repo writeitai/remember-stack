@@ -45,9 +45,7 @@ truth, and rebuild semantics. L-numbers from earlier drafts survive as shorthand
   recorded and reversibly, while facts other documents also support live on. Re-ingesting an
   edited document must cost **proportional to the edit, not the document**.
 - **E1 — Chunks** *(formerly L1)*: retrieval-sized units that preserve their surrounding
-  context and trace back to the exact source document and position. Under
-  [proposed D162](../designs/split_oversized_chunks_design.md), CHUNK fits the full
-  prepared input to the qualified limit using lossless, deterministic splits.
+  context and trace back to the exact source document and position.
 - **E2 — Claims** *(formerly L2)*: atomic, **verifiable** natural-language assertions,
   temporally classified; immutable and append-only; provenance always attached; entity
   mentions resolved to canonical entities. Non-verifiable material (unattributed opinion,
@@ -233,9 +231,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   views (SQL/PGQ until the D98 RC 1 amendment); bounded recursive SQL
   supplies depth-two, variable, and shortest traversal. There is no Ladybug/P2 graph
   data snapshot (D98).
-- Document structure uses **PageIndex**. The engine's deterministic packer
-  groups blocks within section-owner runs and restarts at content anchors (D58).
-  Claim extraction follows the **Claimify** principle.
+- Document structure: **PageIndex**. Chunking: **semchunk**. Claim extraction: **Claimify**
+  principle.
 - Plane K compilation: **Codex / OpenCode** as the planner/writer agents over a **single git
   repo**, orchestrated by the manifest-driven compile driver — one automated committer,
   dependency-ordered compiles; no concurrent sessions editing shared files (D45).

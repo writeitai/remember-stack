@@ -468,10 +468,7 @@ non-null `deployment_id`; every identifier join uses `(deployment_id, id)`;
 UUIDs use `uuid`, instants use `timestamptz`, counts use non-negative `bigint`,
 structured open fields use `jsonb`, and finite vocabularies use manifest-bound
 text enums. Summaries, profiles, location headers, and page summaries are
-labeled orientation text, never evidence. Under
-[proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk),
-both chunk views and the functions that nominate or fetch chunks require first
-E1 publication for D162 grids, including queries scoped to historical versions.
+labeled orientation text, never evidence.
 
 | View | Row grain and key | Required semantics |
 |---|---|---|
@@ -811,13 +808,12 @@ reports the same current search-configuration attestation and freshness.
 `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` share one body
 path. It obtains bytes only after PG confirms the current ready
 document/version/representation/section coordinate, then verifies the
-embedding-text hash using the normalized P1 body and any D80 location header.
-The returned `chunk_content_hash` identifies source content. Whole-block
-runs hash ordered block hashes. D162 partial blocks and gaps use a tagged
-digest of exact source bytes. Reproducing either source-content hash requires
-the corresponding E0 blocks or Markdown slice. The path returns the normalized
-body and the deterministic location header in separate columns. Source evidence
-comes from the E0 representation. `fetch_chunk_bodies` is this exact path
+reproducible embedding-text hash and header separation. The source-content
+hash is a returned coordinate derived from ordered block hashes or, for D162
+pieces, exact source-slice bytes. P1 holds the normalized body, so confirmation
+uses the embedding-text hash. The path returns source body and D80 location
+header in separate columns. The header is never asserted evidence.
+`fetch_chunk_bodies` is this exact path
 minus nomination: `input_ordinal` records first input position, duplicate IDs
 collapse to that first position, and more than 50 IDs fails
 `invalid_parameter` before any store read. An outer query requires

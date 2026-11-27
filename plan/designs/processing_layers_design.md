@@ -152,9 +152,9 @@ the previous stage, under the layer fence and the lineage lock (§3.3):
   version is grounded) and the D90 empty path (today: the E3 normalisation fan-out, or the empty
   observation flush).
 
-**A deployment without a configuration row** admits both downstream layers
-directly at their boundaries and skips gap writes. D162 grid selection applies
-with or without a layer configuration (§5.1).
+**A deployment without a configuration row** enters every layer exactly as today. No gap is
+written and no check runs beyond reading that the row is absent, so the chain, its work rows
+and its component versions are unchanged.
 
 **A configured deployment** decides by one procedure:
 
@@ -179,18 +179,13 @@ Stages after a boundary need no check: their work exists only if the boundary op
 
 ### 4.2 The claims tail and the two reconcile modes
 
-The full pipeline opens `embed_claim` through its fact chain. When the facts
-boundary skips facts, it opens the **claims tail** with `embed_claim` for the
-version and `reconcile` at component version **`reconcile-2026.07:claims`**.
+Today `embed_claim` is opened only after fact adjudication, and `reconcile` performs testimony
+currency (a claims job: claims of content that a living document dropped stop being current
+testimony, evidence lifecycle §3) together with the fact steps of evidence lifecycle §5 and two
+paid follow-ups. When the facts boundary does not enter facts, it opens the **claims tail**:
 
-For D162-enrolled representations, both the claims-only and the full tail
-carry and verify the selected published E1 delivery and packing stamp for the
-version and representation being processed, including the D90 empty path and
-backfills. `embed_claim` uses the stamp to find chunks and their claims.
-`reconcile` uses the representation, stamp and extractor generation as the
-completing basis for its `reextracted` test. Fail the grid-scoped stage if the
-basis is missing or mismatched.
-[D162 publication](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk).
+- `embed_claim` for the version (unchanged handler);
+- `reconcile` at component version **`reconcile-2026.07:claims`**.
 
 The claims-mode reconcile runs **the same handler logic as the full reconcile** — currency
 transitions, recount, the zero-support policy (including the connector-cycle deferral to
@@ -213,7 +208,8 @@ would retire claims the current version will reuse; reuse does not restore curre
 supersession step reads the current version, checks that it is this reconcile's own version or that
 its occurrences are complete, computes the stale set and
 applies the transitions **in one transaction under the lineage lock**; otherwise it skips the
-step. The current version's own reconcile computes supersession lineage-wide when it runs.
+step. The current version's own reconcile computes supersession lineage-wide when it runs. In a
+deployment without a configuration row the step runs exactly as today.
 
 ### 4.3 The claims tail waits for earlier fact work (configured deployments)
 
@@ -237,7 +233,8 @@ Consequences: an older version's fact work — including work draining after fac
 (§4.4) — always runs while its claims are still current; the later version's reconcile then retires
 and closes exactly as always-on processing would, with the same history. No fact is created from
 retired testimony and no suppression state exists. Snapshot lineages never retire testimony by
-succession, so for them the wait only orders work.
+succession, so for them the wait only orders work. A deployment without a configuration row keeps
+today's chain unchanged.
 
 ### 4.4 Switching off drains; it never holds
 
@@ -296,15 +293,11 @@ the work ledger, never from the mere absence of rows:
   representation and chunker generation (so its chunk grid exists and is final) and either its
   extract barrier is ready — every chunk's Selection and Claimify results are committed, so every
   claim occurrence of the version is attached — or that grid is empty. A version that has not run
-  `embed_chunk` is never "complete with zero chunks". For
-  [proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk),
-  source completion, claims entry and backfill resolve the selected embed
-  delivery and packing stamp for that representation, including on a zero-split recovery.
-  Check grid-scoped stage success for that basis when computing readiness and receipts.
+  `embed_chunk` is never "complete with zero chunks".
 - A version reaches a layer's **frontier** when its products are reusable by later versions:
-  - **claims** — its occurrences are complete and its `embed_claim` succeeded for that basis, so
-    every claim it carries, including claims later versions will reuse by id, has its vector;
-  - **facts** — its full reconcile succeeded for that basis.
+  - **claims** — its occurrences are complete and its `embed_claim` succeeded, so every claim it
+    carries, including claims later versions will reuse by id, has its vector;
+  - **facts** — its full reconcile succeeded.
 
 Reaching the frontier deletes the version's gap of that layer. The frontier is only the ordering
 point: readiness and receipts additionally wait for `label_relation` and the other tail stages

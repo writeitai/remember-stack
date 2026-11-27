@@ -116,13 +116,6 @@ first global substring match. Existing D56 same-claim-ID reuse and D119 occurren
 evidence stay mandatory. Header timestamp changes retain their documented broader
 invalidation; shifting chunk boundaries can also change actual input context.
 
-When either grid is split, require equivalent ordered catalogue ranges
-relative to the consumed slots and equivalent typed D80 pairs for the target
-and each preceding Selection producer, including producers with empty results.
-The check applies even with the same packing stamp. The remap follows the
-same-owner slots and admitted card supports across intervening child chunks.
-[D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
-
 ## Relationship to E3 and entity resolution
 
 The grounded, self-contained claim carries the referent into normalization. E3

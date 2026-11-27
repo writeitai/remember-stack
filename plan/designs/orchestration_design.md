@@ -189,31 +189,25 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 1. **Claiming row.** One `processing_state` row owns an embed attempt for a **document
    version / representation** at stage `embed_chunk` (or an equivalent representation-scoped
    stage). Pure prepare (location facts + render) may run in that job before provider calls;
-   it does not require separate ledger rows. A D162 CHUNK restart selects a distinct
-   embed delivery even when it keeps the existing cuts and IDs.
+   it does not require separate ledger rows.
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
    configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
    (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
-   generation. Qualified D162 batches also fit request token and byte caps.
+   generation.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
-4. **Batch errors.** The legacy path bisects non-outage failures to isolate a singleton for a typed skip.
-   [Proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry)
-   bisects deterministic rejections and requires a valid vector for each nonempty input.
-5. **Batch persistence.** The legacy path commits the `chunk_search` upsert by
-   `(deployment_id, chunk_id)` first, then commits the chunk authority stamp in
-   a separate transaction.
-   D162 checkpoints batches off-index and writes final projection rows with first E1
-   readiness. Both writes lock the claiming `processing_state` row through commit to
-   serialize with lease reclaim. A crash after the provider response and before a
-   checkpoint may repeat a billable call.
-   [D162 write fence](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk).
-6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
+4. **Input rejection.** Bisect a confirmed input rejection to identify the failing input.
+   A confirmed singleton rejection is a typed terminal stage failure. Capacity
+   failures retain bounded retries. [D162 provider errors](split_oversized_chunks_design.md#4-rejection-and-retry).
+5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
+   transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
+   vector/hash/current attestation and stamps the chunk authority row. There is
+   no cross-store gap. A crash after provider response but before commit may
+   repeat a billable call; the design does not claim exactly-once provider spend.
+6. **Readiness.** Representation is embed-ready when every nonblank chunk has a successful
    stamp matching the **configured** `(policy_generation, embedder_generation)`
-   and input hash (or a closed typed skip such as `empty_body`). D162 readiness
-   and publication use the exact selected embed delivery and packing stamp.
-   Mixed or stale attestation is not ready.
+   and input hash. The existing `empty_body` case requires no vector.
 
 K/P and other stages are unchanged by this subsection.
 
@@ -258,10 +252,8 @@ infrastructure). The operational surface over it is thin and deterministic:
   no-ops. Bulk replay is the same operation scoped by version or error class; an explicit operator
   transition may reroute it through the backfill lane when large. `payload` remains handler input
   for inspection, never the source of route, schedule, or retry state.
-  [Proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
-  links a CHUNK restart to a confirmed oversize embed dead letter only for a
-  verified-private grid before first E1 completion. Other grids use same-grid
-  embed replay on a capable binding.
+  [D162 size recovery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished)
+  re-runs CHUNK before reopening a confirmed size failure on a never-published grid.
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.

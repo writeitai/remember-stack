@@ -342,9 +342,7 @@ and every handle it carries opens that version:
   non-deleted ready version whose representation is that version's current representation (the
   D65 rule), and never mix versions. `memory_v1.chunks_live` keeps its meaning (served-version
   chunks); the new `memory_v1.chunks_all_versions_live` exposes the current-representation
-  chunks of every non-deleted ready version for scoped reads. The
-  [D162 publication gate](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
-  also requires the selected grid to be published for chunk reads.
+  chunks of every non-deleted ready version for scoped reads.
 - **Source handles** use `source_open(version_id, representation_id)` (D115 already takes a
   version). Under D155 a **P3 path** is the movable, applied corpus folder for
   that selected version/representation. Return it only if the selection is served
@@ -439,7 +437,7 @@ batch exactly filled the cap; an empty or short page may otherwise continue.
 
 - Every chunk, passage, claim occurrence and document result from a periodised lineage
   includes `effective: [{from, until, until_declared}]` for its version.
-- Scoped responses report lineages whose in-force version is pending for the requested read in a new
+- Scoped responses report lineages whose in-force version for the scope is not ready in a new
   envelope field `Freshness.scope_pending`: `{doc_ids: [...] (at most 50), count, complete}`, so an agent
   can tell "nothing is in force" from "the in-force text is still processing". A lineage is
   reported when the request touched it: it was named by a document filter, it is in the
@@ -457,18 +455,6 @@ batch exactly filled the cap; an empty or short page may otherwise continue.
   The probe runs in the request's ranked-read context (D142); `complete` is false when any
   replayed nomination stopped on a work, deadline or ANN-scan bound instead of filling `k`
   or exhausting its stream, and `count` is then a lower bound.
-
-For ranked reads with an admitted passage channel, an in-force version also
-counts as pending when its current representation has pending D162 passage
-enrollment. New D162 representations enroll at E0 readiness, before CHUNK is
-enqueued. The enrollment remains pending through failures, even without a
-packing stamp or chunk rows, until the selected delivery publishes. The
-bounded candidate probe and touched-lineage check use the same indexed
-predicate in the nomination and confirmation snapshot. Apply
-D140's visibility and touch rules and the D162 publication gate when probing
-readable editions. An empty response with a touched pending representation
-returns `boundary` with `Freshness.scope_pending` and explains that E1 publication
-is pending. An exhausted search can return `known_empty` for a published empty grid.
 
 ## 4. Section keys
 
@@ -532,9 +518,12 @@ readers treat it as unknown (`changed = null`, and `section_history` reports `no
 
 ## 5. Reuse across versions: text origin time
 
-D56 keys extraction reuse on stable inputs. Before D140, the reuse key
-included the version's dates. A new modification time therefore broke
-extraction reuse even when the text and its context matched.
+D56 keys extraction reuse on stable inputs. On `main`, the "stable header facts" in
+`extraction_input_hash` include both `source_modified_at` and `published_at` of the version
+(`e1.py:629-635`), the E2 header shows `source_modified_at or published_at` (`e2.py:1741-1749`)
+and claims take the same value as `asserted_at` (`e2.py:1293-1296`). Since nearly every new
+version has a new modification time, no chunk of a new version matches the previous version,
+and D56's "cost proportional to the edit" does not hold.
 
 **One per-chunk date.** Each chunk gets `text_origin_at`, and it replaces the version date in
 all three places: the reuse key (replacing *both* `source_modified_at` and `published_at`
@@ -542,54 +531,48 @@ header facts), the E2 header, and the `asserted_at` of claims freshly extracted 
 The version's own date remains on the version for everything else.
 
 **Reuse identity.** Each chunk also stores `reuse_identity_hash` — the date-free identity:
-target and neighbour content, the header facts other than dates (title, file name,
+own block hashes, neighbour block hashes, the header facts other than dates (title, file name,
 source kind, language, the extraction-eligibility policy marker), `blockizer_version`,
 `structurer_version`, `extractor_version`, and canonical converter-origin hashes
-of the target and consumed same-section neighbors. Legacy identity uses the block
-hashes. Proposed D162 uses exact, role-tagged slot byte digests with explicit
-absence for split grids. Origins use window-relative coordinates. Index the key
-on `(deployment_id, doc_id, reuse_identity_hash)`.
+of the target and consumed same-section neighbors. Coordinates are relative to
+each window; absolute document offsets are excluded. Indexed on `(deployment_id, doc_id,
+reuse_identity_hash)`.
 
-**Rule, at chunk creation.** E1 assigns a date to each new chunk of lineage `L`.
+**Rule, at chunk creation.** When E1 creates the chunks of a new version of lineage `L`:
 
-1. Compute `reuse_identity_hash`.
-2. Let `d` be the new version's own date, `source_modified_at or published_at`.
-   A date donor must be in a non-deleted version of `L` and have a known
-   `text_origin_at` no later than `d`. Match on `reuse_identity_hash`. Under
-   proposed D162, look in earlier versions and also accept a uniquely verified
-   slice match. If either grid is split, require the exact bytes of each
-   consumed slot to match by role, including gaps and separators. For a recut
-   version, both matches use the first grid's retained origin evidence, even
-   after publication. An unknown `d` has no eligible donor.
-   [D162 slice verification](split_oversized_chunks_design.md#2-coordinates-and-reuse).
-3. Record the smallest eligible `text_origin_at` (ties by `version_no`, then
-   `ordinal`), or `d` if none qualifies. This records `NULL` when the date is
-   unknown.
-
-Use the recorded date when checking extraction reuse. D162 verifies paid
-outputs separately, including the full embedding inputs and the Selection
-and Claimify contexts. A fragment can inherit a date even if the donor has
-different paid inputs or no extraction result.
+1. compute `reuse_identity_hash`;
+2. let `d` be the new version's own date, `source_modified_at or published_at` (the value E2
+   uses today). A chunk of `L` is an **eligible match** when it has the same
+   `reuse_identity_hash`, belongs to a version that is non-deleted at this moment, and has a
+   known `text_origin_at` that is **not later than `d`**. If `d` is unknown there is no
+   eligible match;
+3. with eligible matches, the new chunk's `text_origin_at` is the smallest of their
+   `text_origin_at` (ties broken by `version_no`, then `ordinal`), and the chunk reuses that
+   match's extraction; otherwise `text_origin_at = d` (possibly `NULL`, today's "date
+   unknown") and the chunk is extracted or reused under today's key rules.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the
 origin version later does not change it on descendant chunks or on reused claims — those
 claims were already stamped with it and D135 retires testimony, not timestamps. Chunks created
 *after* a deletion never draw from deleted versions (step 2), so reuse never draws on retired
-testimony (D55's refinement). [Proposed D162 recovery](split_oversized_chunks_design.md#2-coordinates-and-reuse)
-copies the recorded date from each verified same-version parent to its pieces.
+testimony (D55's refinement).
 
 Because the parser, blockizer, structurer and extractor versions are part of the identity, a
 toolchain change is a reuse boundary exactly as D56/D65 define: a chunk under a new toolchain
 matches nothing and takes its own version's date.
 
-The earliest eligible date keeps relative expressions in matching text
-resolved against a conservative estimate of when the words were written. If
-a 2026 edition is ingested before an identical 2024 edition, the cutoff
-excludes 2026 as a donor for the 2024 chunks. They take 2024, and the 2026
-edition keeps its recorded date. A change to the target or its consumed
-context takes the new version's date when no eligible match remains.
-Effective periods stay out of all reuse keys.
+**Why this is correct.** An unchanged chunk has the same key as before, so Selection, Claimify,
+claims and embeddings are reused, and its relative expressions stay resolved against a date no
+later than the version's own — the date of the earliest known version, among those not dated
+after it, that carried the text. That is a conservative estimate of when the words were
+written, not proof of it. The "not later than" condition makes back-filling safe: when a 2026
+edition is ingested first and an identical 2024 edition later, the 2024 chunks have no
+eligible match (2026 > 2024), take 2024, and are extracted afresh; the 2026 edition's claims
+keep the 2026 date they were stamped with (claims are immutable; nothing is re-dated after the
+fact). A changed
+chunk, or one whose neighbours changed, matches nothing and takes the new version's date —
+today's behaviour. Effective periods are never part of any key.
 
 This refines D55's rule that claims' `asserted_at` comes from the version's source time: a
 freshly extracted claim's `asserted_at` is its chunk's `text_origin_at`, which is the version's
@@ -792,11 +775,6 @@ indexed version lacks the key (a removed or repealed section), or `status = not_
 the version's sections have not been backfilled yet (§4.2) — never `absent` for an unindexed
 version. A version still processing is `status = processing`. Incoming `amends` references that
 target the section are listed with their `change_effective_from` and `change_date_known`.
-
-For both reads, [proposed D162](split_oversized_chunks_design.md#2-coordinates-and-reuse)
-gates chunk links on first E1 publication. On a split grid, `first_chunk_ids`
-holds at most the first published piece in document order that intersects the
-section's first block.
 
 The existing directed `graph_citation_path` keeps lineage grain (§7).
 

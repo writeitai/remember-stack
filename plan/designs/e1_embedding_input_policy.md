@@ -153,10 +153,6 @@ synthetic ordinals, no free-form “prefix” kind.
 `added_context[]` tags point at `element_id` / `kind` (advisory attribution may remain);
 membership is still **token-in-union** (existing D32 token rule).
 
-When either grid is split, reuse of Selection or Claimify checks the ordered
-`(kind, text)` pairs admitted by E2. The embedding renderer can omit a title
-that E2 still uses. [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
-
 ---
 
 ## 4. Embedding input policy
@@ -263,17 +259,14 @@ A prior vector may be reused without a provider call only when its
 `embedding_text_hash`, embedder model/dimension, and all policy-relevant
 attestation match exactly. The worker may then restamp the same row inside an
 explicit unready maintenance operation; it must never claim that a vector was
-produced from different text. D162 requires proof of full delivery and of
-which original request input produced the stored vector, including P1-only
-checkpoints. Complete block runs exposed by a split keep their original
-content key. A match across whole-block and fragment hashes also requires
-the exact E0 source slice to match.
-[D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
+produced from different text.
+
+[D162 replacement pieces](split_oversized_chunks_design.md#2-refine-only-failing-candidates)
+get fresh vectors. Reuse candidates are intact chunks with matching inputs.
 
 | Change | Action |
 |---|---|
 | Body bytes change | Re-render; new hash ⇒ provider embed under the configured current state |
-| D162 envelope changes | Qualify the new binding for new CHUNK work and verified-private recovery. Recovery selects a new embed delivery even when the current cuts fit. |
 | Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
 | Policy version changes | Mark semantic channel unready; re-render all in-scope chunks; reuse an exactly attested vector or re-embed; verify and publish |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
@@ -335,8 +328,8 @@ justify a narrow index; it does not pre-authorize denormalized search columns.
 ### 6.1 Stages (logical)
 
 ```text
-pack chunks + render D80 input for the D162 size check
-  → prepare final input from the same location facts
+pack chunks + check the full D80 input under D162
+  → prepare location facts + render embedding text   # pure, durable stamps on chunk
   → embed in bounded batches                         # provider boundary, durable
   → document/representation readiness barrier
   → E2 extract …
@@ -344,6 +337,9 @@ pack chunks + render D80 input for the D162 size check
 
 ### 6.2 Durability boundaries
 
+- **Input size:** CHUNK checks the rendered body, header and separators
+  with the qualified binding's pinned tokenizer and framing. EMBED_CHUNK
+  checks the exact input at dispatch. [D162 fit and recovery](split_oversized_chunks_design.md).
 - **Pure prepare** (resolve facts + render): may run inside a document/representation
   transaction writing per-chunk stamps (`location_facts` snapshot ref, mode,
   optional bounded header, `embedding_text_hash`, policy version, location
@@ -352,8 +348,10 @@ pack chunks + render D80 input for the D162 size check
   (size from embedder capabilities; starting hypothesis 64–128 texts). Normative
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
-- **Document readiness:** all in-scope chunks have prepare stamps and successful
-  embed matching the configured current state (or typed skips).
+- **Document readiness:** all nonblank chunks have prepare stamps and successful
+  embed matching the configured current state. The existing `empty_body` case
+  requires no vector. [D162 provider errors](split_oversized_chunks_design.md#4-rejection-and-retry)
+  keep a rejected nonblank input terminally failed.
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.
@@ -408,7 +406,7 @@ A deployment may swap conventional embedders when:
 | Decision / design | Effect |
 |---|---|
 | D63 | Default remains conventional hosted/self-host embedders; **product path drops contextual alternate**; input policy replaces “per-chunk LLM prefix stage” |
-| D56 / A3 | Stable extraction identities and paid reuse checks (§3.3). Vector reuse checks input, policy, embedder and proof (§4.5). |
+| D56 / A3 | Extraction reuse unchanged (no LLM in identity keys). **Vector** reuse requires embedding_text_hash + policy + embedder generation |
 | D58 | Claims = needles; chunks = passages; normalized joins apply role filters |
 | D79 | Summaries orientation-only; **not** default embedding text; **not** grounding |
 | D32 / E2 | Typed groundable location elements; free-form header out of union |
@@ -430,8 +428,8 @@ A deployment may swap conventional embedders when:
 4. **Fault injection** — kill mid-embed batch; no re-embed of completed chunks;
    cost keys unique.  
 5. **Reuse locality** — edit that moves a chunk’s section/channel changes
-   embedding_text_hash; a matching passage reuses a verified vector when
-   its rendered input matches.
+   embedding_text_hash; content-only body edit without location change reuses
+   vector when hash matches.
 6. **Two conventional embedders** — exercise unready/rebuild/verify/publish.
 7. **D159** — forget purges derived search state and location facts.
 

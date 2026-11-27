@@ -151,10 +151,6 @@ are dealt with by the tombstone itself: claiming or renewing work checks it (D14
 queued work is never claimed and running work cannot renew its lease and stops; the sweep then
 marks those work items `skipped`. Nothing waits for them.
 
-[D162 checkpoint and publication transactions](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
-use the same lineage lock and require a live lineage and version, fencing
-replies that return after the hide.
-
 Answer: 202 `Forget` (`forget_id`, `doc_id`, `status`, `requested_at`). A repeat answers 200
 with the same record; an unknown `doc_id` is 404 `document_not_found`. Forget is not
 spend-gated; its provider calls (profile refresh, compiled K page rebuilds) are metered as
@@ -183,9 +179,6 @@ success, so a sweep can be interrupted and run again at any point.
      review payloads, sections, representations, D134 metadata rows, D156 tag assignments,
      D118 §7 mutable-fact payloads, versions and the document row. Children are deleted before
      parents; the foreign-key cascades that already exist inside the subtree do part of it.
-   - Delete D162 staged vectors, prepared data and retained text-origin records
-     by `(deployment_id, doc_id)`. Include published representations and dead-lettered
-     or superseded deliveries whose chunk rows are gone.
    - Facts and entities: a relation or observation whose only evidence (current or archived)
      came from this document is deleted with its adjudication rows, and a source-generated
      `other:` predicate that no remaining relation uses is deleted from the registry (E3 records

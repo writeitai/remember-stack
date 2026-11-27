@@ -18,7 +18,7 @@ Numbers are starting points to measure, not committed constants (CLAUDE.md).
 > **Reading this cold (CLAUDE.md Rule 1).** E0 converts every input to a clean Markdown
 > rendering (`document.md`) plus sidecars; **PageIndex** is the LLM-based structurer that
 > builds a per-document section tree (titles, roles like `results`/`references`, summaries);
-> the **packer** combines blocks into deterministic, section-bounded passages;
+> the E1 packer groups source blocks under a whitespace-token target;
 > **E2** extracts claims from chunks; a claim's `source_span` must trace back through
 > `document.md` to the source (grounding, D32); **D56 reuse** requires that when a watched
 > document is edited, unchanged content is *not* re-extracted or re-embedded. "**Embedding
@@ -43,11 +43,14 @@ chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  CHU
 | produced by | the **blockizer** (deterministic, ours — §2) | PageIndex (**LLM** — may redraw on re-run) | the packer (deterministic — §4) |
 | carry | **identity**: hashes, offsets, source back-pointers | **meaning**: hierarchy, roles, summaries, placement | **the unit**: embedding, extraction, claim anchoring |
 | used for | reuse diff (D56), the grounding chain, edit locality | chunk boundaries, E2 role signal, P1 role filter, P3 placement | P1 index rows, E2 bundles, `claims.chunk_id` |
-| content identity | ordered block hashes | section coordinates excluded | block-hash sequence or exact fragment bytes (§4) |
+| in identity/reuse keys? | **yes** | **never** (non-deterministic) | ordered block hashes for intact candidates, exact slice hash for split pieces (§4) |
 
-Editing paragraph `b5` changes only `c2`'s block sequence in this example.
-Other chunks carry vectors where their D80 inputs match. Extraction also
-checks the neighbours and ordered Claimify context consumed by each chunk (§7).
+In motion: someone edits paragraph `b5`. Only `b5`'s hash changes; the block diff aligns
+everything else; chunk `c2` (b4–b5) is the only chunk whose block sequence changed → it alone
+re-extracts and re-embeds; `c1/c3/c4/c5` carry forward with their claims, embeddings, and
+stored context untouched; reconciliation (D54) touches only the facts `c2` evidenced. A
+structurer re-run may redraw sections without threatening any of that — sections never
+participate in identity; they only decide where *future* packing may cut.
 
 ## 2. Blocks and the blockizer (D57)
 
@@ -149,13 +152,13 @@ split as D37.
 
 PageIndex **creates meaning independently** — it reads `document.md` and emits the section
 tree; it neither needs nor sees blocks. Being an LLM tool, its proposed boundaries can land
-anywhere, including mid-paragraph. Packing needs a stable section owner per
-block, so its output is **normalized onto the block grid**:
+anywhere — including mid-paragraph — and the base packer groups whole blocks within sections.
+Its output is therefore **normalized onto the block grid**:
 a deterministic post-step snaps every section boundary to a block boundary, and sections are
 *persisted as block ranges* (`blocks 14–31`), never raw char spans. Four reasons:
 
-1. **One owner per block.** A whole-block passage and any size-driven
-   pieces use the same deepest owner.
+1. **Unambiguous packing.** Snapping gives each whole block one deepest section
+   owner, which its D162 pieces share.
 2. **LLM output needs a deterministic normalization target.** PageIndex spans can overlap,
    gap, or drift; snapping is where they are sanitized into a well-formed partition (cover,
    nesting, no mid-block cuts). LLM proposes, a deterministic layer disposes — the system's
@@ -198,20 +201,21 @@ section structure unconditionally — a paper gets a rich tree doing real work (
 `references` role for Selection, placement); an email degrades to the synthetic root with
 blocks ≈ paragraphs, and the machinery is uniform.
 
-## 4. Chunks: non-overlapping, section-bounded passages (D58)
+## 4. Non-overlapping chunks within sections (D58)
 
-Pack whole blocks within one deepest-owner run to a whitespace-token
-target. A larger block becomes its own candidate. [Proposed D162](split_oversized_chunks_design.md)
-checks the full rendered embedding input for new versions and recovery of
-verified-private grids. It cuts only over-ceiling candidates into contiguous
-source slices, trying fitting whole-block runs before internal anchors.
-Every piece keeps its original section owner (§3).
+**Packing rules.** The existing packer groups whole blocks within one section
+to a whitespace-token target. A block above the target is its own candidate.
+[D162](split_oversized_chunks_design.md) checks the full rendered embedding
+input and refines failing candidates into exact slices. A fitting document
+uses the original row assembly and identities.
 
+- **Never cross a section boundary** (§3 makes this well-defined).
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
-  tables). The packer cuts at block eligibility changes. D162 splits also
-  respect eligibility changes in labelled gaps. E2 schedules Selection
-  only when `chunks.extraction_eligible` is true (`format_conversion_design.md` §4.5).
+  tables). A chunk boundary is forced wherever eligibility changes between blocks, so every
+  chunk is wholly eligible or wholly ineligible. D162 also respects labelled gaps
+  in a failing candidate. E2 schedules Selection only when `chunks.extraction_eligible`
+  is true (`format_conversion_design.md` §4.5).
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost
@@ -224,15 +228,18 @@ Every piece keeps its original section owner (§3).
   are spikes (Codex review F15). **Anchor predicate**: block `b` is an anchor iff
   `uint64(block_hash) mod M == 0` *and* ≥ `min_gap` tokens accumulated since the last anchor
   (suppresses clusters); `M` targets a mean spacing of a few chunk budgets. **Packing**:
-  packing restarts before every accepted anchor. An edit can move cuts up
-  to the next unchanged accepted anchor or owner-run boundary. Parameters
-  (`M`, `min_gap`, budget) live in `chunker_version`. D162 preserves these
-  restarts and stamps split grids with the additional rules and envelope.
+  a chunk boundary is forced before every accepted anchor. Packing then restarts,
+  so an early edit can shift boundaries up to the next accepted anchor. Where
+  anchors are sparse, packing follows the budget. Parameters (`M`, `min_gap`, budget)
+  live in `chunker_version`. D162 refines inside the resulting candidate bounds.
+- **Determinism:** chunks = f(blocks, sections, budget, anchors, `chunker_version`) — a
+  chunker bump is a cheap repack of existing atoms (no re-conversion, no re-blockize), though
+  it does re-key reuse (a deliberate version boundary, like any D7 version bump).
 - The **token budget** is an eval number, not an argument: recall@k per size class on the
   golden set (spike 1). Starting point: mid-hundreds of tokens.
 
-**Chunk identity.** `chunk_content_hash` hashes ordered block hashes for
-complete runs, or tagged exact source bytes for partial pieces under D162.
+**Chunk identity.** Intact candidates keep `chunk_content_hash = hash(ordered block hashes)`.
+D162 pieces use the tagged digest of their exact source slice and deterministic span IDs.
 
 ## 5. Embedding granularity — multi-granularity by architecture, not tiny chunks (D58)
 
@@ -310,43 +317,48 @@ change.
 
 The lifecycle design owns the *contract* (cost ∝ the edit); this section owns the mechanism:
 
-- **A1 — content alignment.** Compare block-hash sequences and exact fragment
-  content across versions. Offsets stay out of content identity. Check
-  rendered inputs or consumed extraction context before reusing work.
+These reuse rules apply to intact chunks. [D162 split pieces](split_oversized_chunks_design.md#2-refine-only-failing-candidates)
+get fresh embedding, Selection, Claimify and grounding, with the usual
+eligibility rules.
+
+- **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
+  new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain). A chunk
+  is **reusable iff its constituent block-hash sequence is unchanged**, regardless of where
+  it moved — offsets never participate.
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
-- **A3 — Carry forward derived context when inputs match.** Selection uses
-  `extraction_input_hash` within the same layout. Claimify also checks its D122
-  reference window. Unchanged regions keep the prior version's structure under
-  `structurer_version`. LLM output stays out of identity keys (D7).
-  The **extraction reuse key contains only stable components**.
-  `extraction_input_hash = hash(own and neighbour content identities + stable header
-  facts + consumed converter-origin hashes + extractor_version + structurer_version)`.
-  Legacy keys use block content identities. Proposed D162 keys split grids on
-  exact consumed slot bytes, including gaps and separators. If either grid is
-  split, verify each slot's bytes by role for D140 and paid extraction.
-  For paid reuse across layouts, find donors by those slots. Try donors in
-  order until verification and remapping pass, including the checks for
-  equivalent ordered passage ranges and typed D80 inputs on split grids.
-  [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
-
-  **Stable header facts** come from the deterministic document metadata the E2
-  bundle feeds the extractor. They include title, **file name**
+- **A3 — Derived context is carried forward under replay discipline, not regenerated when
+  inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
+  when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
+  under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
+  Consequently the **extraction reuse key contains only stable components**:
+  `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
+  facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
+  deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
   the old one), source kind, the chunk's **text origin time**, language (from
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
-  LLM-derived). The recorded text origin time replaces `source_modified_at`
-  and `published_at` in the E2 header and reuse key, and supplies `asserted_at`
-  for fresh claims. D140 takes the earliest eligible date from a hash match
-  or, under D162, a verified slice match for the target and its consumed
-  context. It falls back to the version's own date or unknown. Each paid
-  result must independently pass its reuse checks.
-  [D140 date rule](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
-
-  Including `structurer_version` ties reuse to the structure whose section roles
-  guide Selection. A deliberate structurer bump can reclassify a `body` section
-  as `references` and change what Selection keeps. The version in the key makes
-  that bump a re-extraction boundary (Codex review F10).
+  LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
+  `published_at` header facts. It is recorded once when the chunk is created: the
+  smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
+  versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
+  and **not later than this version's own date** (so a back-filled older edition never inherits
+  a later date) — own and neighbour
+  block hashes, non-date header facts, consumed converter-origin hashes,
+  blockizer/structurer/extractor versions, indexed per
+  lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
+  and replayed, never recomputed; deleting the origin version later does not change it. The
+  E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
+  in unchanged text stay resolved against the time the text was written, and a dated new
+  version reuses its unchanged chunks (with the version's own date in the key, nearly every
+  new version would miss every key) — **no LLM *output* participates in the
+  key** (refines D56's original sketch, which had let the section path and prefix in — a key
+  no re-run would ever match, the ~0 %-reuse hazard named in the stress test). Including
+  `structurer_version` — a stable config string, not LLM output — closes the context-drift
+  gap (Codex review F10): within a lineage, carried-forward structure *is* the binding context
+  of reused claims, so section roles cannot drift under them silently; and a **deliberate
+  structurer bump** (which may reclassify sections — a `body` → `references` role change
+  alters what Selection keeps) is a re-extraction boundary by key construction.
 - **Passage embedding reuse (D80 refinement).** Passage identity is the composite
   `(embedding_input_policy_version, embedding_text_hash, embedder_generation)`. Provider
   re-embed is required when the hash or embedder generation changes; a policy-only bump that
@@ -358,15 +370,9 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   version, including a previous processing generation of that same version, but
   exclude deleted versions. Keep each distinct `(chunk_content_hash,
   embedding_text_hash)` pair under the requested policy/model so identical body
-  text at one location cannot hide the matching vector from another. When
-  D162 makes a whole block into a fragment or vice versa, find matching D80
-  inputs across the two hash forms and verify exact source slice equality.
-  Both D162 reuse paths require full-delivery and request-to-vector proof.
-  The first fitting edit after activation can re-embed an unchanged passage
-  when none of its matching donors has both proofs.
-  [D162 vector reuse](split_oversized_chunks_design.md#2-coordinates-and-reuse).
-  Advancing the chunk-row and embed-delivery generations for converter-origin
-  input hashes creates fresh work without changing packing or the model/policy.
+  text at one location cannot hide the matching vector from another. Advancing
+  the chunk-row and embed-delivery generations for converter-origin input hashes
+  creates fresh work without changing packing or the embedding model/policy.
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
@@ -414,13 +420,15 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
    corpus; the number that validates the whole D56 economy.
 5. **Structurer snap distortion** — how often PageIndex boundaries land mid-block (conversion
    quality signal); structurer re-run stability across versions.
-6. **Oversized inputs** — qualify route ceilings and split quality under [D162](split_oversized_chunks_design.md).
+6. **Oversized inputs** — qualify ceilings and verify lossless packing under
+   [D162](split_oversized_chunks_design.md).
 7. **E2 batch size** — quality vs cost of multi-chunk extraction calls (attention dilution in
    very long calls vs bundle-overhead savings).
 8. **Embedding-input-policy quality (D63/D80/D94)** — model default remains
    `qwen3-embedding-8b` (conventional) and the reference dimension is fixed at
    1,536. The existing golden set may still compare body-only vs compact/full
-   location-header contribution and message-atom filtering. See
+   location-header contribution and message-atom filtering; engine migration
+   does not introduce a new benchmark gate. See
    `e1_embedding_input_policy.md` §10.
 
 ## References
@@ -432,4 +440,4 @@ D33, D37, D38, D39, D51, D54–D56, D63. Discussion record:
 `e1_embedding_input_policy.md` (normative embedding input), `e0_files_design.md` (conversion,
 artifacts), `evidence_lifecycle_design.md` (the reuse contract, currency, counting),
 `e2_e3_claims_relations_design.md` (bundles, grounding), `retrieval_design.md` (channels),
-`postgres_schema_design.md` §6–§8. Requirements: §Plane E (E1) and §Fixed choices.
+`postgres_schema_design.md` §6–§8. Requirements: §Plane E (E1).

@@ -1945,11 +1945,10 @@ identity rules per source kind are a named spike.
 > toolchain versions), else the new version's source time. It replaces both date header
 > facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
-> this decision's cost promise did not hold. Proposed
-> [D162](#d162-split-oversized-chunks-before-embedding) keys split grids on exact
-> consumed slot bytes, admits a verified slice match for the date and checks
-> paid reuse separately. It finds extraction donors across layouts by their
-> consumed slots and tries eligible donors until verification succeeds.
+> this decision's cost promise did not hold.
+>
+> **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Split pieces get fresh E1 and E2 work. Intact chunks follow D56.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -2038,11 +2037,9 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
-> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).** The anchored engine packer
-> replaces semchunk. The hard E1 size ceiling supersedes the whole-block
-> and oversized-unit rules below. The ordered block-hash identity applies
-> to complete runs. Partial pieces hash exact source bytes. Section
-> ownership, anchor restarts and non-overlap continue to apply.
+> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
+> The provider ceiling replaces the oversized-unit rules and allows cuts
+> within blocks. Sections, anchor restarts and non-overlap still govern packing.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2187,9 +2184,6 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 ---
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
-
-> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).** The anchored packer replaces
-> semchunk in the fixed engine choices below.
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -7243,14 +7237,9 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 ## D140. Declared effective periods, section keys, and version-aware references
 
-> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).** An exact, uniquely verified
-> fragment and context can inherit the earlier source span's D140 date.
-> A date match involving a split grid requires exact consumed slot bytes.
-> The date cutoff applies. Verify paid reuse separately. Same-version
-> recovery copies the verified parent's recorded date to its pieces and
-> preserves the original date evidence through publication.
-> Scoped passage reads count a D162 representation as pending from E0-ready
-> enrollment through first E1 publication.
+> **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
+> New split pieces use their version date or unknown. Private CHUNK recovery
+> retains the recorded same-version parent date.
 
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
@@ -8768,33 +8757,17 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27.
 
-Check the full D80 input at each proposed cut with a pinned tokenizer and
-qualified provider limits. Split oversized candidates losslessly at
-structural or scalar boundaries with exact provenance. Split grids add a
-packing and delivery generation. Fitting grids retain their packing and paid
-input identities.
-Split grids key extraction and D140 reuse on exact consumed slot bytes. Use
-those slots to find extraction donors across layouts and try eligible donors in
-order until one passes. Paid extraction reuse also compares relative passage
-catalogues and the typed D80 location pairs used by E2, including for the
-preceding D122 producers. Vector donors require full-delivery and
-request-to-vector proof. Matching D80 inputs can reuse a vector across
-whole-block and fragment hashes when the exact source slices match.
-The first fitting edit after activation can re-embed unchanged passages
-that lack a verified donor.
-Every CHUNK recovery has a distinct embed delivery.
+Check each full D80 embedding input against a provider-qualified ceiling
+using a pinned tokenizer. Refine only failing candidates into lossless,
+section-bounded pieces with exact offsets, provenance and deterministic IDs.
+Fitting grids keep every stored field. Each split piece gets fresh E1 and E2
+work. READY and exposed grids keep their cuts. Confirmed size dead letters
+on never-published versions recover from CHUNK. Confirmed input rejection is
+terminal and capacity retries remain bounded.
 
-Refine the grid at CHUNK for new versions and explicit recovery of oversize
-`embed_chunk` dead letters with verified privacy before first E1 completion.
-Enroll new representations as pending for passages at E0 readiness. The
-selected E1 delivery publishes passages and supplies the packing stamp for
-claim embedding and reconciliation. Grids that could already serve retain
-their cuts and handles. Confirmed per-input rejection is terminal, and
-capacity retries stay bounded. Qualify the hosted route and require
-matching deterministic grid and projection fields and effective E2 location
-pairs on frozen LoCoMo v45 and BEAM fixtures at the benchmark binding's
-qualified ceiling of at least 22,528 Qwen tokens. The offline check requires
-zero splits and zero model calls.
+Require offline full-row equality on frozen LoCoMo v45 and BEAM inputs at
+their qualified benchmark ceiling of at least 22,528 tokens, including the
+rendered inputs and derived D122 producer windows.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

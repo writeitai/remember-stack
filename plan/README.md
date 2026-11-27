@@ -11,10 +11,6 @@ and [D160](../decisions.md#d160-keep-the-previous-release-working-through-migrat
 [D161](../decisions.md#d161-release-corpus-read-transactions-before-object-io-and-retry-contended-migrations)
 covers lock timeouts, migration retries and the corpus worker's connection lifetime.
 
-For the proposed E1 embedding ceiling, lossless splits and unpublished replay,
-see [D162's design](designs/split_oversized_chunks_design.md)
-and its [incident and benchmark audit](analysis/split_oversized_chunks_analysis.md).
-
 For package and release identity, start with [D108's unified distribution
 design](designs/unified_remember_distribution_design.md). The
 [release-identity analysis](analysis/remember_release_identity_and_pypi_retirement.md)

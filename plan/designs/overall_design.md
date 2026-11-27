@@ -24,8 +24,8 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
             ┌── registries: entities, predicates ──┐
             ▼                  ▼                    ▼
  inputs ─► E0 files ─► E1 chunks ─► E2 claims ─► E3 relations
-           (raw+md+         (anchored    (claimify,    (normalization,
-            PageIndex,      packing)    coref)        evidence, supersession)
+           (raw+md+         (semchunk,   (claimify,    (normalization,
+            PageIndex,      ctx prefix)  coref)        evidence, supersession)
             placement)      │            │   │
                  │          │            │   │      PLANE K — KNOWLEDGE (debounced,
                  │          │            │   │      LLM-compiled; git is truth)
@@ -125,18 +125,10 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    D39) → **crossref** (citations). Bodies live in GCS (raw + artifacts buckets); Postgres holds only
    metadata + the queryable section index (D37).
 2. **E1** (design: `e1_chunks_design.md`, D57–D58): the **blockizer** derives the deterministic
-   block sequence from `document.md`. PageIndex sections snap to the block grid. E1 packs
-   non-overlapping, section-bounded candidates at stable anchors and renders the full D80
-   input with any location header. [Proposed D162](split_oversized_chunks_design.md) checks
-   that input against the qualified ceiling, splits offending candidates and checks the
-   final rendered pieces before embedding for P1. D56 vector reuse requires matching
-   content, rendered input, policy and model. D162 also verifies full delivery
-   and the original request-to-vector mapping.
-   Extraction reuse depends on the consumed target and same-owner neighbours, their
-   provenance, stable source facts and processing generations. For split grids, D162
-   keys reuse on the exact bytes of those slots and compares ordered passage ranges
-   before extraction reuse. Claimify also checks its ordered D122 context, and reused
-   evidence must remap to the source.
+   block sequence from document.md; PageIndex sections snap to the block grid; semchunk packs
+   whole blocks into non-overlapping, section-bounded, anchor-stabilized chunks → context
+   (the E1 prefix — exists under the D63 default conventional embedder; a contextual-embedder port config deletes it, D63) → embed
+   → P1. Unchanged blocks reuse prior claims/embeddings across document versions (D56).
 3. **E2 → E3** (every chunked document — there is no pre-extraction value gate, D25): coreference
    (D19: in the E2 extraction call, all languages) → **Claimify extraction with in-call Selection**
    (proposition-level verifiability KEEP/REWRITE/DROP — the value filter that replaces any

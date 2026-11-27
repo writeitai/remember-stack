@@ -27,10 +27,10 @@ D12, D17–D19. Full research + evidence: `plan/analysis/claimify_research/SYNTH
 ```
 E0 ─────────► E1 ──────────► E2 ───────────────► E3
 files         chunks         claims              relations
-(Markdown,    (anchored      (Claimify-staged:   ( (subject,predicate,object) facts;
- PageIndex     packing +      Selection →         entity resolution T0–T4;
- hierarchy +   D80 input;     decontextualize →   supersession; evidence_count )
- summaries)    embed)         decompose; coref
+(Markdown,    (semchunk +    (Claimify-staged:   ( (subject,predicate,object) facts;
+ PageIndex     a context      Selection →         entity resolution T0–T4;
+ hierarchy +   prefix per     decontextualize →   supersession; evidence_count )
+ summaries)    chunk; embed)  decompose; coref
                               in-call)
 ```
 

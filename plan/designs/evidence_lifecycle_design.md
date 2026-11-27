@@ -211,12 +211,11 @@ no-op before any bytes move; unchanged bytes are a `content_hash` no-op as today
 One new, deliberately narrow notion: a claim is **current testimony** iff it belongs to its
 lineage's current extraction basis *under the lineage's mode*:
 
-- **re-derivation** retires claims minted on the version whose representation,
-  packing stamp or extractor generation differs from the completing basis
-  (`reextracted`). A same-extractor occurrence in the completing basis keeps
-  a reused claim current for this check. With proposed D162, both reconcile
-  modes take the packing stamp from the selected published E1 delivery.
-  [Tail basis](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes).
+- **re-derivation**: when extraction-basis generation v2 completes for a (version, chunk),
+  that chunk's v1 claims flip non-current (`reextracted` — the reason covers any
+  basis-coordinate change: an extractor bump, a **converter bump** (a new representation — a
+  better ASR/VLM re-reading unchanged media bytes, the common media event, D65), a blockizer
+  bump, or a structurer bump) — wholesale, by coordinates; no content matching;
 - **`living` version supersession**: claims whose chunks are absent from the new current
   version flip non-current (`version_superseded`);
 - **`snapshot`**: version succession flips nothing.
@@ -362,39 +361,38 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    reused (and `UNIQUE` dedup means a copy in another folder reuses conversion too).
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
 4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
-   **`extraction_input_hash`**. It covers the target and consumed neighbours'
-   content and converter origins, stable header facts (title, file name,
-   source kind, **text origin time**, language), and the extractor and
-   structurer versions. Proposed D162 uses exact slot bytes for split grids.
+   **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
+   block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
+   metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
+   extractor version + the
+   structurer version (a stable config string — a deliberate structurer bump is a
+   re-extraction boundary, since section roles feed Selection).
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
-   discipline). At chunk creation, record the earliest eligible **text origin
-   time** from a non-deleted lineage version. Match by date-free identity or,
-   under D162, by a uniquely verified slice match for the target and its
-   consumed neighbours. A donor's date must be at or before the new version's
-   date. A chunk with no eligible donor takes its own version's
-   `source_modified_at` or `published_at`, leaving the date unknown if both
-   are absent.
-   [D140 date rule](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
-   The per-chunk date feeds the reuse key, the E2 header, and the `asserted_at`
-   of claims freshly extracted from the chunk. Keying on the
+   discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
+   origin time of the earliest chunk of a non-deleted version of the lineage with the same
+   date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
+   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
+   E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
    version's own date instead would change every key whenever the source stamps a new
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
-   A matching extraction in the lineage **reuses its claim IDs** when the
-   evidence remaps and the consumed context matches, including ordered
-   passage ranges and typed D80 pairs under D162. Embedding reuse checks the
-   full D80 input and D162's vector proof.
-   [E1 reuse mechanics](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
+   A chunk whose key is already extracted for this lineage **reuses its claims**
+   (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
+   re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
+   embedding version) the same way. **The mechanics — block-hash diff alignment,
+   anchor-stabilized boundaries, the carry-forward rules — are bound in
+   `e1_chunks_design.md` §7 (D57–D58)**; this design owns the contract.
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,
    stale no K pages.
 
-In a 50-page Drive document with a two-paragraph edit, conversion produces new
-Markdown, and about two changed chunks trigger E2 and reconciliation. With
-matching context and verified vectors, the other roughly 148 chunks carry
-forward their claims, embeddings, evidence links and K pages.
+Walkthrough: a 50-page Drive document gets a two-paragraph edit. The watcher fetches once;
+conversion produces the new Markdown; chunk hashing shows ~2 changed chunks; E2 runs on ~2
+chunks; reconciliation diffs and finds the handful of affected facts; everything else — ~148
+chunks' claims, embeddings, evidence links, K pages — carries forward untouched. **Cost ∝
+the edit, not the document.**
 
 Honest boundary: chunk-boundary shift. An edit that changes section structure can re-align
 chunk boundaries so unchanged text lands in differently-hashed chunks. Section-aware chunking
