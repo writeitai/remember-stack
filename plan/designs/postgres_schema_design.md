@@ -1653,15 +1653,17 @@ CREATE TABLE chunks (
   representation_id uuid NOT NULL,             -- LOGICAL FK → document_representations (D65): the reading whose block grid + document.md offsets this chunk is cut from — the basis coordinate on every occurrence
   section_id      uuid,                        -- LOGICAL FK → document_sections; section (role/path signal for E2)
   ordinal         integer NOT NULL,            -- position within the document
-  block_start     integer NOT NULL,            -- first block ordinal packed into this chunk (D57/D58: a chunk = a run of whole blocks)
-  block_end       integer NOT NULL,            -- last block ordinal (inclusive)
-  chunk_content_hash text NOT NULL,            -- hash of the chunk's ORDERED BLOCK HASHES (D58) — embedding-reuse + occurrence identity
-  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, the chunk's text_origin_at (D140 — not the version's own date), language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
-  char_start      integer NOT NULL,            -- chunk span start, offset into document.md
-  char_end        integer NOT NULL,            -- chunk span end
+  -- D58 packs whole-block candidates. D162 slices can intersect partial blocks.
+  -- A slice entirely within a gap uses the preceding block ordinal in both fields.
+  block_start     integer NOT NULL,            -- first intersected block ordinal (inclusive)
+  block_end       integer NOT NULL,            -- last intersected block ordinal (inclusive)
+  chunk_content_hash text NOT NULL,            -- ordered block hashes, or ordered fragment hashes including nonblank gap text for D162 split pieces
+  extraction_input_hash text NOT NULL,         -- own and neighbor block or fragment hashes + consumed converter-origin hashes + stable header facts (title, file name, source kind, text_origin_at, language) + extractor and structurer versions (D56/D140)
+  char_start      integer NOT NULL,            -- inclusive code-point offset into document.md
+  char_end        integer NOT NULL,            -- exclusive code-point offset into document.md
   token_count     integer,                     -- token length (sizing/budget)
   text_origin_at  timestamptz,                 -- D140: recorded once at creation: the text origin time of the earliest matching chunk (same reuse_identity_hash) in a non-deleted version of the lineage, else this version's source_modified_at or published_at; the E2 header date, the reuse-key date, and fresh claims' asserted_at
-  reuse_identity_hash text,                    -- D140: date-free identity (own + neighbour block hashes, non-date header facts, blockizer/structurer/extractor versions) for the text-origin lookup
+  reuse_identity_hash text,                    -- D140: date-free own and neighbour identity including converter origins, non-date header facts and blockizer/structurer/extractor versions for the text-origin lookup
   extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
@@ -3028,7 +3030,7 @@ Labs."*
 | D119 coherent multi-span claims | `chunk_claims.evidence_spans` — complete occurrence body ranges; `claims.char_start`/`char_end` remain origin only |
 | D57 block substrate + blockizer; sections on the grid | `document_representations.blocks_uri` + `blockizer_version`; `document_sections.block_start/end`; `pipeline_component = 'blockizer'`; blocks live in `blocks.json` (sidecar), never as rows |
 | D65 media: immutable representations + occurrence provenance | `document_representations` (immutable conversion outputs; route + component graph + output hashes; representation-addressed artifact paths) + `document_versions.current_representation_id` (swap-on-completion); `representation_id` on `document_sections`/`chunks` (the basis coordinate); `chunk_claims.derivation_kind`/`evidence_mode`/`source_locators` (occurrence-grain disclosure + locators, media_design §4–§6) |
-| D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |
+| D58/D162 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` over ordered blocks or split fragments; role filter joins chunk/section authority; workers enforce non-overlap |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D145 claim leases and the reaper | `processing_state.lease_until` + running-requires-lease CHECK; `ix_procstate_running_lease`; attempt-conditional renew/complete/fail |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |

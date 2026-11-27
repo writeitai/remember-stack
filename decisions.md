@@ -6379,6 +6379,9 @@ promising billed tokens or a fixed saving.
 
 ## D122. Share frozen source reference context between extraction chunks
 
+> **Proposed D162 amendment.** Before reusing a Claimify completion, confirm
+> that its frozen Selection inputs match the current occurrence after remapping.
+> [Reuse contract](plan/designs/document_reference_context_design.md#reuse-including-negative-dependencies).
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -8755,9 +8758,13 @@ Use a pinned tokenizer and provider-qualified ceiling over the complete
 D80 input. Split only failing candidates, preserving exact slices and
 provenance. Use the legacy chunker version, ID allocator and work keys.
 READY versions retain their grids permanently. New versions use the fix.
-A typed size dead letter is eligible for atomic CHUNK replay while the
-version has never published and has no downstream evidence or started
-work. Confirmed input rejections are terminal. Throttling retries are bounded.
+A typed size dead letter can restart at CHUNK if the stored input fails the
+qualified fit check, the version has never published, and there is no embed
+success or downstream work or evidence. CHUNK and EMBED_CHUNK verify the
+current attempt in their write transactions.
+Repeat replay requires a changed fit decision. Claimify reuse checks frozen
+Selection inputs. Confirmed input rejections are terminal and throttling
+retries are bounded.
 Require offline full-row equality on frozen LoCoMo v45 and BEAM with a
 benchmark ceiling of at least 22,528 tokens.
 

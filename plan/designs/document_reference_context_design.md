@@ -78,8 +78,8 @@ results, its generation and stable source-input basis. Normalize temporary label
 to validated source descriptors before persistence; preserve exact text and
 range/origin information needed for occurrence remapping.
 
-Matching prior-version inputs reuse the frozen Selection output; retries never
-regenerate a committed response. Uncommitted concurrent calls may race, but only
+Reuse a matching prior-version Selection result when its evidence remaps.
+Retries replay the committed response. Uncommitted concurrent calls may race, but only
 one accepted result becomes authoritative through existing transaction/CAS
 patterns. Do not add a second queue or distributed cache. Associate results with
 each consuming chunk occurrence so position changes do not corrupt evidence.
@@ -97,7 +97,7 @@ call. Empty representations follow the existing empty completion path.
 ## Reuse, including negative dependencies
 
 Selection's stable reuse basis is its existing own/neighbor source context,
-header and generation. Claimify's effective basis adds the ordered stable
+header and generation. Claimify's lookup adds the ordered stable
 Selection-input bases of every owning unit in its eligible preceding region,
 including units that emitted no cards, and the reference-policy generation.
 Those Selection bases include any neighbor source used to define their cards.
@@ -107,14 +107,21 @@ competing referent even though the old cited card is unchanged. Hashing the enti
 document is unnecessarily broad. A fixed source region captures both positive
 and negative dependencies while bounding the spread of invalidation.
 
-Do not include absolute offsets, document-version IDs, temporary labels or freshly
-generated summaries in content identity. Identical stable inputs must reuse the
-same frozen Selection decision, not call the model to obtain new cards. For each
-new occurrence remap all selected evidence into its allowed source units, including
-reference-card passages. Reject ambiguous repeated-text remapping; never take the
-first global substring match. Existing D56 same-claim-ID reuse and D119 occurrence
-evidence stay mandatory. Header timestamp changes retain their documented broader
-invalidation; shifting chunk boundaries can also change actual input context.
+The hash finds a reuse candidate. Before attaching its Claimify completion,
+compare the frozen target's ordered Selection decisions and each preceding
+producer's ordered published cards in the two occurrences. Compare cards
+before ranking or capping them for Claimify. Match names, aliases, order,
+and exact supporting text, relative ranges and converter origins after D119
+remapping. Use relative source slots so document movement and temporary labels
+do not affect the result. Two committed empty results match. A missing prior
+result, a difference or failed remap makes the candidate ineligible for reuse.
+Missing current results keep Claimify at the Selection barrier. The same check
+applies when a split piece ran Selection fresh. [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+
+Keep `claimify_input_hash` on its stable input basis. A successful check
+still requires D119 to remap every claim span into the new occurrence before
+reattaching the same claim IDs under D56. Header date changes and changed
+chunk boundaries can change the inputs themselves.
 
 ## Relationship to E3 and entity resolution
 

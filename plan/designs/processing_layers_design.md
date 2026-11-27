@@ -626,7 +626,8 @@ database-level, with recorded or fake model providers:
    off; claims are switched on. The backfill does no `chunk` or `embed_chunk` work and makes no
    chunk-embedding call; v1's Selection runs for every chunk; v2's Selection runs only for the edited
    chunk and its same-section neighbours; every v2 chunk with unchanged Selection and text-origin
-   identity keeps them; every v2 chunk with an unchanged Claimify identity reuses v1's claim ids;
+   identity keeps them; each v2 chunk with matching Claimify hashes and equivalent frozen Selection
+   inputs reuses v1's claim IDs after remapping;
    per-stage provider call counts equal those of an always-on run of the same versions. The D122
    window and packing-boundary cases are covered by expected-failure tests naming the known gap. The
    existing Rule 4 tests (`test_reuse_lifecycle.py`, `test_d140_text_origin_pg.py`) pass unchanged.

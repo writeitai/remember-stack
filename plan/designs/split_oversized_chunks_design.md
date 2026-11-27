@@ -41,11 +41,12 @@ Render and recursively split failing pieces, then verify each final input
 with the final chunk count. Every cut shortens the remaining range.
 
 Assign consecutive document ordinals in source order. Store each piece's
-half-open code-point offsets into immutable E0 Markdown and its first and
-last intersected block ordinals. Use the preceding block ordinal for a
-gap-only piece. Clip the source map and converter-origin ranges to the
-exact slice. D119 passage labels use these clipped ranges, including a
-label for a nonblank gap-only window.
+half-open code-point offsets into immutable E0 Markdown and the ordinals of
+the first and last intersected blocks, inclusive. Use the preceding block
+ordinal for both fields if the slice lies entirely between blocks. Pieces
+can share a block ordinal. The character spans determine coverage. Clip the
+source map and converter-origin ranges to the exact slice. D119 passage
+labels use these ranges, including a label for a nonblank gap-only window.
 
 Use the existing chunk ID allocation with each piece's own span and
 ordinal in the row. The current allocator is UUIDv4.
@@ -54,8 +55,10 @@ Build a piece's content key from its covered block fragments in source
 order, including any nonblank gap text. Use the existing block hash and
 content-key functions. Intact chunks retain their block hashes and legacy
 key inputs wherever their extraction windows are unchanged. Use the final
-consumed neighbour text and clipped provenance where a window changes. D140 dates,
-D119 remapping and D122 ordered producer keys govern ordinary reuse.
+consumed neighbour text and clipped provenance where a window changes. Use
+D140 text origins and D119 evidence remapping. For Claimify reuse, compare the
+frozen Selection inputs as well as the D122 hash, including when a split
+piece ran Selection fresh. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 An input past the provider's real limit could never embed. D162 writes
 one chunk grid per version under the existing chunker version and work
@@ -65,38 +68,54 @@ permanently. Every newly ingested version uses the fixed packer.
 ## 3. Recover an unpublished version
 
 Successful `embed_chunk` is the prerequisite for `extract_claims` and
-the claims and facts that follow it. For an affected version readiness
-shows `embed_chunk` dead-lettered and subsequent stages missing with
-blocker diagnostics enabled.
+the claims and facts that follow it. After a size dead letter on the normal
+path, readiness shows `embed_chunk` dead-lettered and expected downstream
+stages missing with blocker diagnostics enabled.
 [Claims handoff](../../src/rememberstack/spine/work_ledger.py#L266-L329) ·
-[Readiness prerequisites](../../src/rememberstack/spine/readiness.py#L42-L87).
+[Readiness layers](../../src/rememberstack/spine/readiness.py#L113-L134) ·
+[Readiness blockers](../../src/rememberstack/spine/readiness.py#L42-L87).
 
-An operator or automatic replay targets the exact `embed_chunk` dead
-letter and attempt with error code `embedding.input_too_large`. In one
-PostgreSQL transaction, lock the version and relevant ledger rows and:
+CHUNK inserts and EMBED_CHUNK vector and stamp writes, including skips,
+lock their `processing_state` row in the data transaction. Require the
+same running `(processing_id, attempt)` and hold the lock through commit.
+Write each vector batch and its chunk stamps together. Recovery locks the
+same work rows. A write from an older attempt either commits before cleanup
+or finds that its attempt no longer owns the row. Enable replay after all
+workers that can write the grid use these checks and older attempts have drained.
 
-1. Verify the failed attempt, the live version and the absence of any
-   prior embed success, publication, started downstream work or downstream
-   claims, occurrences, observations, relations or facts attributable to
-   the version. Require evidence of privacy from ingestion through commit,
-   such as an import isolated from readers and publication.
+Operator and automatic replay target the `embed_chunk` dead letter by
+processing ID and observed attempt. The generic dead-letter replay entry
+point routes `embedding.input_too_large` here. In one PostgreSQL transaction,
+lock the version and relevant work rows and perform these checks and writes.
+
+1. Verify the size error and failed attempt for a live version with no prior
+   embed success, publication, started downstream work or downstream claims,
+   occurrences, observations, relations or facts attributable to the version.
+   Require evidence of privacy from ingestion through commit, such as an
+   import isolated from readers and publication.
    E0's `ready` status can expose stored chunk IDs before embedding.
    Refuse on evidence of publication or uncertainty.
    [E0 status](../../src/rememberstack/spine/document_catalog.py#L827-L852) ·
    [SQL visibility](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719).
-2. Delete partial `chunk_search` rows by the version's chunk IDs. Delete
+2. Require the active qualified fit check to fail for the rejected nonblank
+   input on the stored grid. For a rebuilt grid, require a revised
+   qualification that changes that input's fit decision from pass to fail.
+   A provider rejection that still passes local fit stays terminal.
+3. Delete partial `chunk_search` rows by the version's chunk IDs. Delete
    the chunk grid and any downstream ledger rows still pending with zero
    attempts. Reschedule the succeeded CHUNK row under its existing key.
-   Carry the failed embed attempt reference in its payload. A plain enqueue would deduplicate.
-   Announce CHUNK after commit.
-   [Ledger enqueue](../../src/rememberstack/spine/work_ledger.py#L1851-L1908).
+   Grant the normal CHUNK attempt allowance above the consumed count, even
+   if CHUNK succeeded on its last attempt. Store the failed embed attempt
+   and selected qualification in the CHUNK payload. Announce CHUNK after
+   commit. [Work key](../../src/rememberstack/spine/work_ledger.py#L1996-L2023).
 
-CHUNK packs from E0 as on a fresh ingestion. When it completes, reopen the
-matched embed dead letter in the normal handoff transaction, preserving
-spend and attempt history and granting the normal bounded attempt allowance.
-The typed size replay always goes through CHUNK, so embed stays unclaimable
-until that handoff. Repeated requests for the same failed attempt schedule
-one replay. Subsequent work follows the ordinary ingestion path.
+CHUNK packs from E0 under the selected qualification. Its successful
+attempt reopens the matched embed dead letter under the same qualification
+in the handoff transaction. Preserve work IDs, attempt counts and spend.
+Grant EMBED_CHUNK its normal bounded allowance of fresh attempts.
+That handoff makes EMBED_CHUNK claimable. Repeated requests for the same
+failed attempt schedule one replay. Subsequent work follows the ordinary
+ingestion path.
 
 ## 4. Rejection and retry
 
@@ -104,9 +123,11 @@ A confirmed deterministic per-input rejection is a terminal typed error.
 Store `embedding.input_too_large` for size and `embedding.input_rejected`
 for another confirmed input rejection. Establish the cause from a local
 fit check or a provider-specific error that identifies the input failure.
-Isolate the rejected input from a batch when needed. A rejected nonblank
-input fails EMBED_CHUNK. Genuine throttling, ambiguous 429s and transient
-outages use bounded retries. [Embed durability](orchestration_design.md#embed_chunk-durability-d80--minimum-contract).
+Isolate the rejected input from a batch when needed. For a size rejection,
+record the rejected chunk ID, D80 input hash and fit qualification in the
+dead-letter diagnostic. A rejected nonblank input fails EMBED_CHUNK.
+Genuine throttling, ambiguous 429s and transient outages use bounded retries.
+[Embed durability](orchestration_design.md#embed_chunk-durability-d80--minimum-contract).
 
 ## 5. Acceptance
 
@@ -124,8 +145,16 @@ check commands with implementation.
 Test structural and scalar cuts, labelled gaps, exact reconstruction and
 provenance, full-input fit when a shorter body gets a larger header, and
 terminal size rejection versus bounded throttling. Exercise replay with a
-partial vector batch, an already succeeded CHUNK, repeat and stale requests,
-rollback, and refusal for published versions or downstream evidence.
-With two dated versions, check that untouched regions keep their claim IDs
-and make zero embedding, Selection and Claimify calls when inputs match. Update the E1 acceptance checks
-with implementation. [E1 check](../implementation_evals/eval_checks/e1_chunks_whole_blocks_no_overlap.yaml).
+partial vector batch and CHUNK already succeeded on its last attempt. Use
+the generic replay entry point. Cover repeat and stale requests, rollback,
+and refusal for publication or downstream evidence. Resume reclaimed CHUNK
+and EMBED_CHUNK attempts after recovery and require zero writes. A second
+provider rejection under the same fit qualification must preserve partial
+vectors and attempt limits. Verify recovery after a corrected fit decision.
+
+With two dated versions, verify that untouched regions keep their claim IDs
+and make zero embedding, Selection and Claimify calls when inputs match.
+Fresh Selection for an equal-hash split piece with different published cards
+must block dependent Claimify reuse. Equivalent cards after remapping and
+two committed empty results must permit reuse. Update the E1 acceptance
+checks with implementation. [E1 check](../implementation_evals/eval_checks/e1_chunks_whole_blocks_no_overlap.yaml).

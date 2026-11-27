@@ -329,11 +329,13 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
-  inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
-  when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
-  under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
+  inputs are unchanged.** For **extraction**, `extraction_input_hash` locates
+  a prior Selection result. Reuse it when the evidence remaps. Claimify also
+  checks [D122's ordered Selection dependencies](document_reference_context_design.md#reuse-including-negative-dependencies).
+  Unchanged regions keep the prior version's structure under `structurer_version`.
+  LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
-  `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
+  `extraction_input_hash = hash(own and neighbor block or fragment hashes + stable header
   facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
   deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming

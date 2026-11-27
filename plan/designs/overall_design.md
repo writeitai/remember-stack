@@ -126,7 +126,8 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    metadata + the queryable section index (D37).
 2. **E1** (design: `e1_chunks_design.md`, D57–D58): the **blockizer** derives the deterministic
    block sequence from document.md; PageIndex sections snap to the block grid; semchunk packs
-   whole blocks into non-overlapping, section-bounded, anchor-stabilized chunks → context
+   whole-block candidates within sections using content anchors. [D162](split_oversized_chunks_design.md)
+   refines candidates that exceed the embedding limit. The non-overlapping chunks receive context
    (the E1 prefix — exists under the D63 default conventional embedder; a contextual-embedder port config deletes it, D63) → embed
    → P1. Unchanged blocks reuse prior claims/embeddings across document versions (D56).
 3. **E2 → E3** (every chunked document — there is no pre-extraction value gate, D25): coreference

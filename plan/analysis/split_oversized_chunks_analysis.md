@@ -32,17 +32,28 @@ count or changed extraction windows reflect those inputs.
 [D80 prepare](../../src/rememberstack/workers/e1.py#L290-L295) ·
 [D80 snapshot write](../../src/rememberstack/workers/e1.py#L535-L572).
 
+Selection can run fresh after an equal-input result fails to remap. The
+Claimify hash includes that producer's input hash, and remapping the old
+claim's citations can still succeed after its reference cards change. Compare
+the bounded frozen Selection results before attaching a Claimify completion.
+This catches newly introduced competitors, preserves reuse for equivalent
+results and keeps generated text out of the identity keys.
+[Selection fallback](../../src/rememberstack/workers/e2.py#L655-L695) ·
+[Claimify hash](../../src/rememberstack/core/selection_references.py#L70-L86) ·
+[Claim reuse](../../src/rememberstack/workers/e2.py#L817-L860).
+
 ## Why replay is limited to unpublished versions
 
 `embed_chunk` releases E2 only after success. The ledger commits embed
 success with the claims handoff. Deferred claims admission also requires
 sources completion. With a terminal embed failure, readiness diagnostics
-show missing downstream stages blocked by `embed_chunk`. That ordering
-explains why the normal path has no claims, observations, relations or
+show expected downstream stages missing and blocked by `embed_chunk`. That
+ordering explains why the normal path has no claims, observations, relations or
 facts for the failed version. Replay verifies the actual rows as well.
 [Claims handoff](../../src/rememberstack/workers/e1.py#L422-L442) ·
 [Ledger completion](../../src/rememberstack/spine/work_ledger.py#L266-L329) ·
 [Deferred admission](../../src/rememberstack/spine/processing_layers.py#L794-L808) ·
+[Readiness layers](../../src/rememberstack/spine/readiness.py#L113-L134) ·
 [Readiness blockers](../../src/rememberstack/spine/readiness.py#L42-L87).
 
 Publication is independent evidence. E0 marks the version ready before
@@ -64,9 +75,28 @@ CHUNK delivery also replays persisted cuts. Clear the private cuts and
 explicitly reschedule the existing row in one transaction. The failed
 embed row must remain attached to any billable partial batches. Let CHUNK
 completion reopen it so it cannot run against a missing grid.
+The claim predicate requires unused attempts even when a row previously
+succeeded. Generic dead-letter replay would reopen EMBED_CHUNK directly.
 [Work key](../../src/rememberstack/spine/work_ledger.py#L1996-L2023) ·
 [CHUNK replay](../../src/rememberstack/workers/e1.py#L132-L165) ·
+[Claim predicate](../../src/rememberstack/spine/work_ledger.py#L2154-L2167) ·
+[Generic replay](../../src/rememberstack/spine/work_ledger.py#L1026-L1098) ·
 [Cost foreign key](../../src/rememberstack/spine/migrations/versions/p0_02_0002_infrastructure_registries.py#L139-L159).
+
+A reaped CHUNK attempt can still reach the chunk insert after its replacement
+succeeds and the failed grid is deleted. The current attempt check at completion
+comes after the insert. EMBED_CHUNK also writes P1 and chunk stamps separately.
+Checking the ledger under lock in each data write transaction serializes those
+writes with reclaim and replay. Cost attribution already uses this pattern.
+[Lease reclaim](../../src/rememberstack/spine/work_ledger.py#L2290-L2322) ·
+[Chunk insert](../../src/rememberstack/spine/chunk_catalog.py#L74-L80) ·
+[Embed writes](../../src/rememberstack/workers/e1.py#L569-L607) ·
+[Cost attribution](../../src/rememberstack/spine/work_ledger.py#L1100-L1131).
+
+Provider-confirmed size errors can also reveal an incorrect local ceiling.
+Repacking with the same fit check would repeat the cuts, discard partial
+vectors and grant fresh attempts. A corrected qualification has to make the
+rejected input fail locally before replay can fix that case.
 
 ## Benchmark sizing
 

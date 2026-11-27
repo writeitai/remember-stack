@@ -204,8 +204,9 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    at CHUNK under the [D162 recovery preconditions](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
-   vector/hash/current attestation and stamps the chunk authority row. There is
-   no cross-store gap. A crash after provider response but before commit may
+   vector/hash/current attestation and stamps the chunk authority row while
+   holding the [D162 attempt lock](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
+   A crash after provider response but before commit may
    repeat a billable call; the design does not claim exactly-once provider spend.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
    stamp matching the **configured** `(policy_generation, embedder_generation)`
@@ -246,15 +247,17 @@ core logic. Rules:
 The DLQ **is** `processing_state` rows with `status='dead_letter'` (D12 — no separate
 infrastructure). The operational surface over it is thin and deterministic:
 
-- **Inspect** — SQL views by (stage, error class, component version, age); the preserved
-  enqueue `payload` makes every dead letter self-describing and manually replayable.
-- **Replay** — reset the row to `pending`, clear its retry defer reason, choose `not_before`, raise
-  `max_attempts` above the current `attempts` by the approved replay allowance, and re-announce
-  its `processing_id`. Attempts never reset, so cost-ledger deduplication remains stable.
-  Unconditionally safe: the idempotency key is unchanged, so a partially-succeeded earlier attempt
-  no-ops. Bulk replay is the same operation scoped by version or error class; an explicit operator
-  transition may reroute it through the backfill lane when large. `payload` remains handler input
-  for inspection, never the source of route, schedule, or retry state.
+- **Inspect** — SQL views group by stage, error class, component version and age.
+  Each dead letter carries its diagnostic and preserved enqueue `payload`.
+- **Replay** — `embed_chunk` dead letters with `embedding.input_too_large`
+  use [D162 CHUNK recovery](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
+  For ordinary replay, set the row to `pending`, clear its retry defer reason,
+  choose `not_before`, and raise `max_attempts` by the approved allowance above
+  the consumed attempt count. Announce the resulting claimable row after commit.
+  Monotonic attempts preserve cost-ledger deduplication. Bulk replay applies
+  the same rules by version or error class. An operator can reroute ordinary
+  replay through the backfill lane. Route, schedule and retry state come from
+  ledger columns.
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.
@@ -297,8 +300,10 @@ work stops at its next renewal):
 - **Attempt-conditional transitions.** Renewal, complete, fail and cost recording succeed only
   for the row's current attempt (`status = 'running' AND attempts = <claimed attempt>`). Example: attempt 1
   stalls, the reaper takes the row back, attempt 2 claims it; when attempt 1 wakes up and tries
-  to complete, nothing matches and its result is discarded (`lease_lost`), so it can never
-  overwrite or finish attempt 2. A complete after the lease has expired but before any reaper
+  to complete, nothing matches and the worker reports `lease_lost`.
+  [D162](split_oversized_chunks_design.md#3-recover-an-unpublished-version) checks
+  the same condition under lock for CHUNK and EMBED_CHUNK data writes.
+  A complete after the lease has expired but before any reaper
   ran is still accepted: no other attempt exists yet, and the work is done.
 - **The reaper.** Each worker periodically sweeps the stages it serves for `running` rows whose
   lease has passed. A row with attempts left goes back to `pending`, due now, with `last_error`
