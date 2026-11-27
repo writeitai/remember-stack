@@ -428,8 +428,12 @@ lookup. The view exposes the seed's deployment and entity ID directly.
 At each redirect, use a fenced point lookup on the seed deployment and
 the previous row's `merged_into` ID. Recursive `UNION` deduplicates
 `(entity_id, merged_into)` pairs, and only a row with `merged_into IS NULL`
-yields a survivor. Missing seeds, dangling targets, cycles and foreign
-hops yield no survivor. `v_graph_survivor` projects this same walk in its
+yields a survivor. The recursive term reads at most one input row per
+iteration. A walk starts with one seed, and its unique redirect target can
+produce at most one row for the next iteration. Making that bound explicit
+keeps the planner from costing each iteration as multiple point lookups.
+Missing seeds, dangling targets, cycles and foreign hops yield no survivor.
+`v_graph_survivor` projects this same walk in its
 existing two-column shape. Apply the shared `entities_current` check to the
 resolved endpoints as above.
 
@@ -772,8 +776,10 @@ or copy error.
 Run `alembic upgrade p9_55_0076` on each PostgreSQL 18 fixture. Verify the
 recorded revision and the required `pg_partman` parent names, control columns
 and intervals. Connect as its `rememberstack_query_<database>` login and read
-`memory_v1.facts_visible_history` successfully. Prepare the hosted-shaped
-fixture at the same head.
+`memory_v1.facts_visible_history` successfully. For preflight and sandbox
+reads, verify that the login sees the live backend of the session that checked
+the revision. Physical copies can have the same database name and system
+identifier. Prepare the hosted-shaped fixture at the same head.
 [Partition catalog check](../../src/rememberstack/spine/catalog_contract.py#L621-L638) ·
 [Retained-store evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#retained-store-oracle)
 
@@ -791,6 +797,10 @@ confirmation and agreement between stages on the same inputs. Include
 `distance` in scoped and keyed nomination and `coverage` when entity-scoped.
 Compare every final confirmation column, including `coverage` and
 `nomination_rank`. Require the same ordered top `k` with the normal limits.
+For each native read, compare the contradiction member SQL rows before the
+member cap. Compare the co-members in response order and the reported
+`returned` and `total` counts for each selected fact. Exercise groups of both
+fact kinds with eligible and out-of-scope members.
 Run the baseline to completion with a recorded diagnostic timeout if needed.
 
 - Include observations and relations with multiple qualifying evidence links.
@@ -855,8 +865,9 @@ For the shared view dependency, check broad `claims_visible_history`,
 `claims_live`, `facts_current`, `fact_claim_evidence_live` and `evidence_lineage`
 reads without ID filters. Keep baseline rows, work and completion comparable
 under the existing sandbox deadline as corpus size, evidence fanout and
-partitions grow independently. Include both BEAM fact queries, keeping the
-typed error for `label` and timing `fact_label AS label`.
+partitions grow independently. Use the query login's effective JIT settings and
+record them in the report. Include both BEAM fact queries, keeping the typed
+error for `label` and timing `fact_label AS label`.
 [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)
 
 **Migration check.** On a populated store, run `alembic upgrade head` and

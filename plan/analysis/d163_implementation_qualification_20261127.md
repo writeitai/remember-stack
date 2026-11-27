@@ -33,6 +33,9 @@ state. It verifies counts and key-ordered hashes (including vectors and
 current pointers), the pointer targets, and the database ACL. Preflight
 checks the registered partition parents, controls and intervals at the
 baseline and queries fact history through the database's actual query login.
+Each query connection must see the uniquely marked session that verified the
+database. This detects crossed connections even between physical clones that
+share the database name, login name and system identifier.
 
 Stop the prepared PostgreSQL 18 cluster and make two physical copies,
 preserving HNSW indexes, roles, and timestamps. Use the same role and server
@@ -73,13 +76,17 @@ and filtered scoped nomination cuts and records every column from final
 confirmation for each cut. Filtered confirmation receives the nominated IDs
 and the same predicate. The capture checks nomination-to-confirmation agreement
 on the same candidates and records the native operation's ordered final facts
-for broad and configured scoped modes.
+for broad and configured scoped modes. For each of those reads it records
+every contradiction member SQL row before the cap and the returned
+contradiction blocks, including the ordered co-members and both member counts.
 
-Compare requires the expected runtime manifest at each schema head. It checks
-ordered raw batches, ordered final facts, and the BEAM statements' ordered rows
-and typed outcomes. It runs `EXCEPT ALL` in both directions over the SQL cuts
-so repeated rows still count. Use a diagnostic timeout sufficient for the
-previous gate to finish. Regenerate both captures after updating the harness.
+Compare requires the expected runtime manifest at each schema head and matching
+effective sandbox JIT settings. It checks ordered raw batches, ordered final
+facts with their contradiction blocks, and the BEAM statements' ordered rows
+and typed outcomes. It runs `EXCEPT ALL` in both directions over the SQL cuts,
+including contradiction membership, so repeated rows still count. Use a
+diagnostic timeout sufficient for the previous gate to finish. Regenerate both
+captures after updating the harness.
 
 [Oracle and latency harness](../../benchmarks/d163_qualification.py) ·
 [Staged restore](../../benchmarks/d163_staged_restore.py)
@@ -107,6 +114,9 @@ It checks the declared p95 limits and, with the query login, records the broad
 query-space reads. The native measurements use mention-backed endpoints.
 The `sandbox` operation measures those reads separately. Pass the previous
 release on `PYTHONPATH` and its login to measure the same SQL on the reference.
+Use the deployment's query-login settings. The report's `sandbox_settings`
+records the JIT settings visible to that login, including the active `jit`
+flag and cost thresholds.
 Both releases capture the shipped BEAM queries with their SQL limits and
 40-row request cap. The original `label` query returns a typed
 `execution_error`. The sandbox report times `fact_label AS label` separately
@@ -197,6 +207,7 @@ and zero provider calls. Section backfill reported missing object bodies in
 that setup smoke. The migration regression exercises atomic visibility and
 saved-query revalidation for the same active version in each direction.
 
+The sandbox runs in this section used the earlier harness's JIT-off override.
 On the wide synthetic pair, both BEAM queries with valid columns completed.
 Five warm sandbox samples gave old/new p95 of 0.234/0.565 s for the aggregate
 and 0.264/0.508 s for the sample. The original `label` returned
@@ -237,6 +248,26 @@ native final facts matched for all four cases. The shipped BEAM statements
 matched in row order and typed outcomes through the two database query
 logins. The corrected sample completed on each release in the separate
 sandbox run.
+
+### Round-two oracle rerun
+
+Restore preflight and target capture rejected crossed query DSNs on physical
+PostgreSQL 18.6 clones with the same database name, query login and system
+identifier. With the correct DSNs, current, at, overlap and history matched
+588 rows per side across 80 SQL cuts, including 70 contradiction rows.
+Ordered raw HNSW batches and final facts, returned contradiction blocks and
+BEAM outcomes matched. Removing one captured contradiction row or changing
+one reported member total independently failed comparison.
+
+The first sandbox run with inherited `jit=on` reproduced a target-only BEAM
+aggregate timeout. The planner costed the recursive redirect step as several
+point lookups. The plan exceeded the login's JIT optimization threshold of
+500,000, and a diagnostic execution spent about 10.2 seconds on compilation.
+One initial seed and a unique redirect key bound each recursion iteration to
+one row. Expressing that bound brought the aggregate's estimated cost from
+595,807 to 62,827 on the synthetic fixture. With the role's original JIT
+settings, both releases then completed all five broad view reads, the BEAM
+aggregate and the corrected sample under the five-second sandbox deadline.
 
 ### Synthetic latency
 
@@ -306,6 +337,11 @@ privilege assertion.
 The round-one selection passed 270 unit tests and 129 PostgreSQL and MinIO
 tests, with one expected D122 failure. Ruff formatting and lint, Pyright,
 the import contracts and the test inventory passed.
+
+The round-two selection passed 496 unit tests, 334 integration tests with
+PostgreSQL 18.6 and MinIO, and 23 ingestion reuse tests. The D122 reuse
+regression had its expected failure. Ruff formatting and lint, Pyright,
+the import contracts, the test inventory and the capture fixture check passed.
 
 ```bash
 uv run ruff format --check src/ benchmarks/

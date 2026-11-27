@@ -15,6 +15,7 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from contextlib import contextmanager
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 import json
@@ -42,6 +43,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.sql.elements import TextClause
 
+from benchmarks.d163_query_login import bind_query_login
 from benchmarks.rs_harness_beam.answer_agent import _OPEN_QUERY_MAX_ROWS
 from benchmarks.rs_harness_beam.answer_agent import _OPEN_QUERY_SQL
 from remember.retrieval import DEFAULT_CONTEXT_K
@@ -65,7 +67,7 @@ BASELINE_HEAD = "p9_55_0076"
 TARGET_HEAD = "p9_58_0079"
 MANIFEST_BY_HEAD = {
     BASELINE_HEAD: "8e526b54aca2bbac954a0b008156ff1ccb7bf498a9e1b384bd450ccd81b6301d",
-    TARGET_HEAD: "dca2b2bb58e3e7a0e1552dac817f704b41668d10ebe47200ffb1969fd644123b",
+    TARGET_HEAD: "84e77c12d570364745cbf636d3a95d4289fa8eecdfe38f6eb2d1bfa4c72557b1",
 }
 FactKind = Literal["relation", "observation"]
 KINDS: tuple[FactKind, ...] = ("relation", "observation")
@@ -131,6 +133,7 @@ class Trace:
         self.raw: dict[str, list[list[Any]]] = defaultdict(list)
         self.gates: list[tuple[FactKind, Statement, list[Any]]] = []
         self.scoped: Statement | None = None
+        self.contradiction_members: list[Any] = []
         self._execute = Connection.execute
 
     def execute(
@@ -165,6 +168,10 @@ class Trace:
                     [tuple(row) for row in frozen.data],
                 )
             )
+            return frozen()
+        if "groups" in parameters and "fact.contradiction_group" in query:
+            frozen = result.freeze()
+            self.contradiction_members.extend(tuple(row) for row in frozen.data)
             return frozen()
         if "branch_limit" in parameters and "1.0 - distance AS score" in query:
             fields = "item_id, qualifier, distance"
@@ -305,12 +312,11 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
         keys = _fact_keys(connection, case)
         if not keys:
             raise AssertionError("fixture has no attested fact embeddings")
-        with _trace_sql() as broad:
-            top = _final_top_k(query, case)
+        broad, top = _record_native(query, case)
         record: dict[str, Any] = {
             "raw": broad.raw,
             "ordered": {"final/broad": top},
-            "cuts": {},
+            "cuts": {"contradiction/broad": broad.contradiction_members},
         }
         for batch, (kind, statement, rows) in enumerate(broad.gates):
             final = _run(
@@ -364,9 +370,11 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
             if name == "keyed":
                 continue
             predicate = case.predicate if name == "filtered" else None
-            record["ordered"][f"final/{name}"] = _final_top_k(
+            native_trace, final_top = _record_native(
                 query, case, scoped=True, predicate=predicate
             )
+            record["ordered"][f"final/{name}"] = final_top
+            record["cuts"][f"contradiction/{name}"] = native_trace.contradiction_members
             for kind in KINDS:
                 expected = [(row[0], row[3]) for row in nominated if row[1] == kind]
                 scoped_rows = _run(
@@ -451,6 +459,12 @@ def compare(
     _require_runtime(target, head=TARGET_HEAD)
     if baseline["case"] != target["case"]:
         raise AssertionError("the two releases must use identical inputs")
+    if not baseline.get("sandbox_settings") or not target.get("sandbox_settings"):
+        raise AssertionError("recapture both releases with the bound query login")
+    if baseline["sandbox_settings"] != target["sandbox_settings"]:
+        raise AssertionError("the two releases must use identical sandbox JIT settings")
+    if "contradiction/broad" not in baseline["cuts"]:
+        raise AssertionError("recapture both releases with native contradiction cuts")
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
     counts = {}
@@ -482,10 +496,12 @@ def compare(
     }
 
 
-def _sandbox(case: Case, *, dsn: str) -> QuerySandboxExecutor:
-    return QuerySandboxExecutor(
-        deployment_id=case.deployment_id,
-        connect=lambda: psycopg.connect(dsn, options="-c jit=off"),
+def _sandbox_settings(reader: psycopg.Connection) -> dict[str, str]:
+    return dict(
+        reader.execute("""
+            SELECT name, setting FROM pg_catalog.pg_settings
+            WHERE name LIKE 'jit%'
+        """).fetchall()
     )
 
 
@@ -727,24 +743,32 @@ def _native_failure(response: Envelope) -> str | None:
     return None
 
 
-def _final_top_k(
+def _record_native(
     query: QueryEngine,
     case: Case,
     *,
     scoped: bool = False,
     predicate: str | None = None,
-) -> list[tuple[str, str]]:
-    response = _native_read(
-        query,
-        case,
-        entities=case.entity_ids if scoped else (),
-        ranking_entities=case.ranking_entity_ids if scoped else None,
-        predicate=predicate,
-        k=case.k,
-    )
+) -> tuple[Trace, list[tuple[str, str, dict[str, Any] | None]]]:
+    with _trace_sql() as trace:
+        response = _native_read(
+            query,
+            case,
+            entities=case.entity_ids if scoped else (),
+            ranking_entities=case.ranking_entity_ids if scoped else None,
+            predicate=predicate,
+            k=case.k,
+        )
     if reason := _native_failure(response):
         raise AssertionError(f"native final confirmation did not complete: {reason}")
-    return [(fact.kind, str(fact.fact_id)) for fact in response.facts]
+    return trace, [
+        (
+            fact.kind,
+            str(fact.fact_id),
+            fact.contradiction.model_dump(mode="json") if fact.contradiction else None,
+        )
+        for fact in response.facts
+    ]
 
 
 def main() -> None:
@@ -763,20 +787,21 @@ def main() -> None:
     parser.add_argument("--stratum", choices=LATENCY_TARGETS)
     parser.add_argument("--expect-scope-boundary", action="store_true")
     parser.add_argument(
-        "--query-dsn", help="libpq DSN for the deployment's query login"
+        "--query-dsn", help="libpq DSN for the verified database's query login"
     )
     args = parser.parse_args()
     engine = create_engine(args.database)
     failed = False
     result: dict[str, Any]
-    try:
+    with ExitStack() as stack:
+        stack.callback(engine.dispose)
         if args.operation == "compare":
             if args.baseline is None or args.target is None:
                 parser.error("compare requires --baseline and --target")
             baseline = json.loads(args.baseline.read_text())
             target = json.loads(args.target.read_text())
-            with engine.connect() as connection:
-                result = compare(connection, baseline, target)
+            connection = stack.enter_context(engine.connect())
+            result = compare(connection, baseline, target)
             failed = not (
                 result["raw_batches_match"]
                 and result["ordered_top_k_match"]
@@ -787,16 +812,18 @@ def main() -> None:
         else:
             if args.case is None or args.output is None:
                 parser.error("this operation requires --case and --output")
+            if args.operation in {"capture", "sandbox"} and not args.query_dsn:
+                parser.error(f"{args.operation} requires --query-dsn")
             case = Case.model_validate_json(args.case.read_text())
-            with engine.connect() as connection:
-                head = connection.exec_driver_sql(
-                    "SELECT version_num FROM alembic_version"
-                ).scalar_one()
-                assert head in (BASELINE_HEAD, TARGET_HEAD), head
-                server = connection.exec_driver_sql(
-                    "SHOW server_version_num"
-                ).scalar_one()
-                assert int(server) // 10000 == 18, server
+            connection = stack.enter_context(engine.connect()).execution_options(
+                isolation_level="AUTOCOMMIT"
+            )
+            head = connection.exec_driver_sql(
+                "SELECT version_num FROM alembic_version"
+            ).scalar_one()
+            assert head in (BASELINE_HEAD, TARGET_HEAD), head
+            server = connection.exec_driver_sql("SHOW server_version_num").scalar_one()
+            assert int(server) // 10000 == 18, server
             identity = {
                 "schema_head": head,
                 "surface_manifest_hash": load_manifest()["surface_manifest_hash"],
@@ -807,8 +834,18 @@ def main() -> None:
                 if args.operation == "latency" and args.stratum
                 else head,
             )
-            if args.operation in {"capture", "sandbox"} and not args.query_dsn:
-                parser.error(f"{args.operation} requires --query-dsn")
+            sandbox = None
+            sandbox_settings = None
+            if args.query_dsn and args.operation in {"capture", "sandbox", "latency"}:
+                owner = cast(
+                    "psycopg.Connection", connection.connection.dbapi_connection
+                )
+                connect = bind_query_login(owner, args.query_dsn)
+                with connect() as reader:
+                    sandbox_settings = _sandbox_settings(reader)
+                sandbox = QuerySandboxExecutor(
+                    deployment_id=case.deployment_id, connect=connect
+                )
             if args.operation == "capture":
                 result = capture(engine, case, timeout=args.timeout)
             elif args.operation == "scope":
@@ -861,18 +898,19 @@ def main() -> None:
                         )
                     ]
                     failed |= bool(result["missed_targets"])
-            if args.query_dsn and args.operation in {"capture", "sandbox", "latency"}:
-                result["beam"] = _beam_queries(_sandbox(case, dsn=args.query_dsn))
+            if sandbox is not None:
+                result["sandbox_settings"] = sandbox_settings
+                result["beam"] = _beam_queries(sandbox)
                 failed |= any(
                     not _beam_completed(name, outcome)
                     for name, outcome in result["beam"].items()
                 )
-            if args.query_dsn and args.operation in {"sandbox", "latency"}:
-                sandbox = _sandbox_queries(
-                    _sandbox(case, dsn=args.query_dsn), samples=args.samples
-                )
-                result["sandbox"] = sandbox
-                failed |= any(state["error"] is not None for state in sandbox.values())
+                if args.operation in {"sandbox", "latency"}:
+                    checks = _sandbox_queries(sandbox, samples=args.samples)
+                    result["sandbox"] = checks
+                    failed |= any(
+                        state["error"] is not None for state in checks.values()
+                    )
             result["case"] = case.model_dump(mode="json")
             result.update(identity)
             result["server_version_num"] = int(server)
@@ -884,8 +922,6 @@ def main() -> None:
                 output.write(rendered)
         if failed:
             raise SystemExit("D163 qualification gate failed")
-    finally:
-        engine.dispose()
 
 
 if __name__ == "__main__":

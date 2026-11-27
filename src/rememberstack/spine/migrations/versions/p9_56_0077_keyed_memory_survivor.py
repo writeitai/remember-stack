@@ -28,12 +28,13 @@ CROSS JOIN LATERAL (
     SELECT seed.entity_id, seed.merged_into
     UNION
     SELECT target.entity_id, target.merged_into
-    FROM chain
+    -- One seed and one keyed target allow at most one row per iteration.
+    FROM (SELECT merged_into FROM chain LIMIT 1) AS hop
     CROSS JOIN LATERAL (
       SELECT next.entity_id, next.merged_into
       FROM public.entities AS next
       WHERE next.deployment_id = seed.deployment_id
-        AND next.entity_id = chain.merged_into
+        AND next.entity_id = hop.merged_into
       OFFSET 0
     ) AS target
   )

@@ -44,6 +44,7 @@ from rememberstack.spine.document_search import DocumentSearch
 from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces import query_engine
 from rememberstack.surfaces.query_engine import QueryEngine
 from tests.spine.d163_scale_fixture import _expand_chunks
 from tests.spine.test_d153_eligibility_pg import _plan_nodes
@@ -376,7 +377,7 @@ def test_split_links_and_duplicate_survivors_at_every_eligible_cut(
     assert cuts["default_final/observation"]
     assert cuts["filtered_final/observation"] == []
     for mode in ("broad", "default", "filtered"):
-        assert snapshot["ordered"][f"final/{mode}"] == [("relation", near)]
+        assert snapshot["ordered"][f"final/{mode}"] == [("relation", near, None)]
     with engine.connect() as connection:
         rows = (
             connection.execute(
@@ -389,6 +390,58 @@ def test_split_links_and_duplicate_survivors_at_every_eligible_cut(
             .all()
         )
     assert rows == [corpus.source_only]
+
+
+def test_contradiction_capture_preserves_rows_before_and_after_the_member_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with scratch_database(TARGET_HEAD) as engine:
+        corpus = seed_corpus(engine)
+        eligible = {
+            kind: {
+                corpus.facts[kind, name]
+                for name in ("split_links", "multi_source", "carried")
+            }
+            for kind in KINDS
+        }
+        groups = {kind: uuid4() for kind in KINDS}
+        with engine.begin() as connection:
+            for kind in KINDS:
+                connection.execute(
+                    text(
+                        f"UPDATE {kind}s SET contradiction_group=:group "
+                        f"WHERE {kind}_id=ANY(:ids)"
+                    ),
+                    {
+                        "group": groups[kind],
+                        "ids": [
+                            *eligible[kind],
+                            corpus.facts[kind, "contradiction_blocked"],
+                        ],
+                    },
+                )
+
+        monkeypatch.setattr(query_engine, "CONTRADICTION_COMEMBER_CAP", 1)
+        snapshot = capture(engine, corpus.case.model_copy(update={"k": 50}), timeout=20)
+
+    for mode in ("broad", "default", "filtered"):
+        kinds = ("relation",) if mode == "filtered" else KINDS
+        expected = {(kind, fact_id) for kind in kinds for fact_id in eligible[kind]}
+        rows = snapshot["cuts"][f"contradiction/{mode}"]
+        assert {(row[0], row[2]) for row in rows} == expected
+        assert len(rows) == len(expected)
+
+        contradictions = {
+            (kind, UUID(fact_id)): block
+            for kind, fact_id, block in snapshot["ordered"][f"final/{mode}"]
+            if block is not None
+        }
+        assert contradictions.keys() == expected
+        for (kind, fact_id), block in contradictions.items():
+            assert block["group_id"] == str(groups[kind])
+            assert (block["returned"], block["total"]) == (1, 2)
+            first = next(row[2] for row in rows if row[0] == kind and row[2] != fact_id)
+            assert [member["fact_id"] for member in block["co_members"]] == [str(first)]
 
 
 def _survivor(connection: Connection, *, origin: UUID) -> UUID | None:
@@ -588,6 +641,15 @@ def test_corrupt_round_trip_is_rejected_and_valid_walks_are_preserved(
         ends = {"source": source, "terminal": terminal, "deployment": _DEPLOYMENT_ID}
         assert _survivor(connection, origin=source) == terminal
         assert _survivor(connection, origin=terminal) == terminal
+        connection.execute(
+            text(
+                "UPDATE entities SET status='merged', "
+                "merged_into=CASE WHEN entity_id=:source THEN :via ELSE :terminal END "
+                "WHERE entity_id IN (:source, :via)"
+            ),
+            {**ends, "via": UUID(corpus.case.entity_ids[1])},
+        )
+        assert _survivor(connection, origin=source) == terminal
         connection.execute(
             text(
                 "UPDATE entities SET status='active', merged_into=NULL "

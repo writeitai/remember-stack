@@ -18,10 +18,13 @@ def _capture(*, head: str) -> dict[str, Any]:
     return {
         "schema_head": head,
         "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[head],
+        "sandbox_settings": {"jit": "on"},
         "case": {},
-        "cuts": {},
+        "cuts": {"contradiction/broad": []},
         "raw": {},
-        "ordered": {},
+        "ordered": {
+            "final/broad": [("observation", "fact", {"returned": 1, "total": 2})]
+        },
         "beam": {
             "facts_predicates": {
                 "rows": [["first", 2], ["second", 2]],
@@ -55,6 +58,7 @@ def test_compare_detects_beam_order_and_outcome_changes() -> None:
     baseline = _capture(head=qualification.BASELINE_HEAD)
     target = _capture(head=qualification.TARGET_HEAD)
     connection = MagicMock(spec=Connection)
+    connection.execute.return_value.one.return_value = (0, 0)
     assert all(
         qualification.compare(connection, baseline, target)["beam_matches"].values()
     )
@@ -67,6 +71,32 @@ def test_compare_detects_beam_order_and_outcome_changes() -> None:
         "facts_sample": False,
         "claims_live_sample": True,
     }
+
+
+def test_compare_detects_a_native_contradiction_total_change() -> None:
+    baseline = _capture(head=qualification.BASELINE_HEAD)
+    target = _capture(head=qualification.TARGET_HEAD)
+    connection = MagicMock(spec=Connection)
+    connection.execute.return_value.one.return_value = (0, 0)
+    assert qualification.compare(connection, baseline, target)["ordered_top_k_match"]
+
+    target["ordered"]["final/broad"][0][2]["total"] = 1
+    assert not qualification.compare(connection, baseline, target)[
+        "ordered_top_k_match"
+    ]
+
+
+def test_compare_requires_matching_sandbox_settings() -> None:
+    baseline = _capture(head=qualification.BASELINE_HEAD)
+    target = _capture(head=qualification.TARGET_HEAD)
+    connection = MagicMock(spec=Connection)
+    target["sandbox_settings"]["jit"] = "off"
+    with pytest.raises(AssertionError, match="identical sandbox JIT settings"):
+        qualification.compare(connection, baseline, target)
+    target.pop("sandbox_settings")
+    with pytest.raises(AssertionError, match="recapture both releases"):
+        qualification.compare(connection, baseline, target)
+    connection.execute.assert_not_called()
 
 
 @pytest.fixture

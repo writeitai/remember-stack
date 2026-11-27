@@ -20,6 +20,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.conninfo import make_conninfo
 
+from benchmarks.d163_query_login import bind_query_login
 from rememberstack.spine.catalog_contract import EXPECTED_RANGE_PARENTS
 
 _TABLES = """
@@ -273,7 +274,7 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
 
 def preflight(dsn: str, query_dsn: str) -> dict[str, Any]:
     """Validate the prepared baseline's PG18, partman and public login contracts."""
-    with psycopg.connect(dsn) as admin:
+    with psycopg.connect(dsn, autocommit=True) as admin:
         assert admin.info.server_version // 10000 == 18
         assert admin.execute("SELECT version_num FROM alembic_version").fetchone() == (
             "p9_55_0076",
@@ -286,11 +287,11 @@ def preflight(dsn: str, query_dsn: str) -> dict[str, Any]:
             (f"public.{name}", control, "1 mon")
             for name, control in EXPECTED_RANGE_PARENTS.items()
         }
-    with psycopg.connect(query_dsn) as reader:
-        assert reader.info.user == "rememberstack_query_" + reader.info.dbname
-        rows = reader.execute(
-            "SELECT count(*) FROM memory_v1.facts_visible_history"
-        ).fetchone()
+        connect = bind_query_login(admin, query_dsn)
+        with connect() as reader:
+            rows = reader.execute(
+                "SELECT count(*) FROM memory_v1.facts_visible_history"
+            ).fetchone()
     return {"partition_registrations": len(registrations), "visible_fact_rows": rows}
 
 

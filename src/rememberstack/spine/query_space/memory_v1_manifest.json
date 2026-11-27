@@ -13372,10 +13372,55 @@
                                       "name": "JOIN_INNER"
                                     },
                                     "larg": {
-                                      "@": "RangeVar",
-                                      "inh": true,
-                                      "relname": "chain",
-                                      "relpersistence": "p"
+                                      "@": "RangeSubselect",
+                                      "alias": {
+                                        "@": "Alias",
+                                        "aliasname": "hop"
+                                      },
+                                      "lateral": false,
+                                      "subquery": {
+                                        "@": "SelectStmt",
+                                        "all": false,
+                                        "fromClause": [
+                                          {
+                                            "@": "RangeVar",
+                                            "inh": true,
+                                            "relname": "chain",
+                                            "relpersistence": "p"
+                                          }
+                                        ],
+                                        "groupDistinct": false,
+                                        "limitCount": {
+                                          "@": "A_Const",
+                                          "isnull": false,
+                                          "val": {
+                                            "@": "Integer",
+                                            "ival": 1
+                                          }
+                                        },
+                                        "limitOption": {
+                                          "#": "LimitOption",
+                                          "name": "LIMIT_OPTION_COUNT"
+                                        },
+                                        "op": {
+                                          "#": "SetOperation",
+                                          "name": "SETOP_NONE"
+                                        },
+                                        "targetList": [
+                                          {
+                                            "@": "ResTarget",
+                                            "val": {
+                                              "@": "ColumnRef",
+                                              "fields": [
+                                                {
+                                                  "@": "String",
+                                                  "sval": "merged_into"
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        ]
+                                      }
                                     },
                                     "rarg": {
                                       "@": "RangeSubselect",
@@ -13525,7 +13570,7 @@
                                                 "fields": [
                                                   {
                                                     "@": "String",
-                                                    "sval": "chain"
+                                                    "sval": "hop"
                                                   },
                                                   {
                                                     "@": "String",
@@ -50796,5 +50841,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "dca2b2bb58e3e7a0e1552dac817f704b41668d10ebe47200ffb1969fd644123b"
+  "surface_manifest_hash": "84e77c12d570364745cbf636d3a95d4289fa8eecdfe38f6eb2d1bfa4c72557b1"
 }

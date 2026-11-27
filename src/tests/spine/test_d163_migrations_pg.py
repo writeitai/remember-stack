@@ -3,23 +3,32 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
 import logging
 import logging.config
+from pathlib import Path
+import sys
 from threading import Event
 from time import monotonic
 from typing import Any
 from unittest.mock import MagicMock
 
 from alembic import command
+from benchmarks import d163_qualification as qualification
 from benchmarks.d163_qualification import BASELINE_HEAD
 from benchmarks.d163_qualification import TARGET_HEAD
+from benchmarks.d163_staged_restore import preflight
 from fastapi.testclient import TestClient
 import psycopg
+from psycopg import sql
 import pytest
 from sqlalchemy.engine import Engine
 
 from rememberstack.profiles.selfhost import _provision_query_role_password
 from rememberstack.profiles.selfhost import _SelfHostSavedQueryReads
+from rememberstack.spine.migrations.versions.p9_02_0023_query_space_roles import (
+    query_role_name,
+)
 from rememberstack.spine.query_space import load_manifest
 from rememberstack.surfaces.graph_queries import GraphQueries
 from rememberstack.surfaces.http_api import build_api
@@ -140,6 +149,74 @@ def _catalog(engine: Engine) -> dict[str, Any]:
                             to_regclass('public.v_memory_claim_history_by_id'))
         """)
         return {row[0]: tuple(row[1:]) for row in rows}
+
+
+def test_d163_readers_reject_crossed_dsns_and_use_the_query_role_jit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("PGOPTIONS", raising=False)
+    with (
+        scratch_database(BASELINE_HEAD) as baseline,
+        scratch_database(TARGET_HEAD) as target,
+    ):
+        corpus = seed_corpus(target)
+        query_dsns = []
+        for engine in (baseline, target):
+            assert engine.url.database is not None
+            role = query_role_name(engine.url.database)
+            with _connect(engine) as connection:
+                _provision_query_role_password(connection=connection, engine=engine)
+                connection.execute(
+                    sql.SQL("ALTER ROLE {} SET jit = on").format(sql.Identifier(role))
+                )
+                connection.execute(
+                    sql.SQL("ALTER ROLE {} SET jit_above_cost = 90000").format(
+                        sql.Identifier(role)
+                    )
+                )
+            query_dsns.append(
+                engine.url.set(drivername="postgresql", username=role).render_as_string(
+                    hide_password=False
+                )
+            )
+        baseline_dsn = baseline.url.set(drivername="postgresql").render_as_string(
+            hide_password=False
+        )
+        assert preflight(baseline_dsn, query_dsns[0])["visible_fact_rows"] == (0,)
+        for invalid_dsn in (query_dsns[1], baseline_dsn):
+            with pytest.raises(
+                RuntimeError, match="verified database as its restricted query login"
+            ):
+                preflight(baseline_dsn, invalid_dsn)
+
+        case, output = tmp_path / "case.json", tmp_path / "sandbox.json"
+        case.write_text(corpus.case.model_dump_json())
+        args = [
+            "d163_qualification",
+            "sandbox",
+            "--database",
+            target.url.render_as_string(hide_password=False),
+            "--case",
+            str(case),
+            "--output",
+            str(output),
+            "--samples",
+            "1",
+            "--query-dsn",
+        ]
+        monkeypatch.setattr(sys, "argv", [*args, query_dsns[0]])
+        with pytest.raises(
+            RuntimeError, match="verified database as its restricted query login"
+        ):
+            qualification.main()
+        assert not output.exists()
+
+        monkeypatch.setattr(sys, "argv", [*args, query_dsns[1]])
+        qualification.main()
+        report = json.loads(output.read_text())
+        assert report["sandbox_settings"]["jit"] == "on"
+        assert report["sandbox_settings"]["jit_above_cost"] == "90000"
+        assert report["sandbox"]["beam_predicates"]["termination"] == "completed"
 
 
 def test_d163_upgrade_and_downgrade_with_previous_readers(
