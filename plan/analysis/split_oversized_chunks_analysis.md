@@ -1,7 +1,8 @@
 # Oversized E1 chunks in v0.22.4
 
 The incident audit uses `c1f15b783`. The rescope round-three source checks
-use `8bd115b7a`. The PR #681 round-three checks use `8393bdef8`.
+use `8bd115b7a`. The PR #681 round-three checks use `8393bdef8` and the
+offline-check review uses `11b3b805f`.
 [Proposed D162](../designs/split_oversized_chunks_design.md).
 
 ## Incident and failure path
@@ -115,6 +116,17 @@ ordered label ranges relative to their slots before reusing extraction.
 [catalogue construction](../../src/rememberstack/core/source_passages.py#L124-L171),
 [card remap](../../src/rememberstack/workers/extraction_references.py#L156-L218).
 
+Renaming a heading outside those slots from `Orchard` to `Terrace` kept
+the slot bytes, relative origins, ordered catalogue ranges, E1 keys and
+D80 embedding hashes equal in a local probe. The bounded D80 header
+omitted the section title, while the E2 prompt and grounding union consumed
+it. Grounding accepted `Orchard` before the rename and rejected it after.
+Compare the effective E2 location pairs for reuse, including each D122
+producer whose Selection could change. D140 still dates the unchanged text
+from its date-free evidence.
+[D80 rendering](../../src/rememberstack/core/embedding_input_policy.py#L188-L234),
+[E2 bundle and grounding](../../src/rememberstack/workers/e2.py#L1596-L1737).
+
 D140 records the inherited date before embedding. A fresh lookup after the
 original donor is deleted can move relative dates from the inherited date to
 the version date. Refining verified same-version spans preserves those dates
@@ -153,6 +165,13 @@ mapping and full delivery before trusting a donor.
 [E1 assignment and stamps](../../src/rememberstack/workers/e1.py#L502-L572),
 [P1 validation](../../src/rememberstack/ports/p1_index.py#L26-L49).
 
+E1 READY records completion. The legacy decoder discards reply indices,
+and the persisted vector and expected input hash cannot establish their
+original mapping. Carrying that row into a new D162 grid could propagate an
+incorrect vector even on a fitting edit. The first such edit pays to
+embed each matching passage that lacks proof across all eligible donors.
+A successful D162 call makes its vector reusable on later matching edits.
+
 ## Benchmark fixture audit
 
 The published 94.09% LoCoMo result uses retained Full-v45 ingestion with
@@ -182,10 +201,17 @@ Qualification uses the exact retained rendering.
 [Pinned BEAM chat](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json).
 
 Both fixtures can be checked from committed Markdown, packing inputs and
-D80 facts. Rebuilding OCR or section structure would change the inputs being
-tested. Legacy CHUNK assigns random UUIDv4s on first write and reuses
-committed IDs on replay. Supply the original allocation sequence to compare
-IDs deterministically alongside the spans, hashes and full rendered input.
+D80 facts. LoCoMo's publication used v45 ingestion revision
+`13ce4a5224709b3e3cda65c429d5915d47e95e89`. Restore the verified conversation
+backups at their recorded revisions and use the stored BEAM 100K/1
+representation. Capture and hash the committed data and expected grids before
+running the new packer. The sizing-audit digest above identifies that audit's
+inputs.
+Rebuilding OCR or section structure would change the inputs being tested.
+Legacy CHUNK assigns random UUIDv4s on first write and reuses committed IDs on
+replay. Feed those saved IDs only to the allocator so the comparison can
+detect missing, extra or reordered output.
+[LoCoMo restore command](../../benchmarks/locomo/sharding/README.md#4-restore-one-conversation),
 [CHUNK replay](../../src/rememberstack/workers/e1.py#L132-L165),
 [legacy allocator](../../src/rememberstack/workers/e1.py#L683-L731).
 

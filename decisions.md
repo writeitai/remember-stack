@@ -8773,8 +8773,11 @@ structural or scalar boundaries with exact provenance. Split grids add a
 packing and delivery generation. Fitting grids retain their packing and paid
 input identities.
 Split grids key extraction and D140 reuse on exact consumed slot bytes.
-Reusing paid extraction also requires equivalent relative passage catalogues.
-Vector donors require full-delivery and request-to-vector proof.
+Paid extraction reuse also compares relative passage catalogues and the
+typed D80 location pairs used by E2, including for the preceding D122
+producers. Vector donors require full-delivery and request-to-vector proof.
+The first fitting edit after activation can re-embed unchanged passages
+that lack a verified donor.
 Every CHUNK recovery has a distinct embed delivery.
 
 Refine the grid at CHUNK for new versions and explicit recovery of oversize

@@ -380,16 +380,16 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    the claim it reuses.
    A matching extraction in the lineage **reuses its claim IDs** when the
    evidence remaps and the consumed context matches, including ordered
-   passage ranges under D162. Embedding reuse checks the full D80 input
-   and D162's vector proof. [E1 reuse mechanics](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
+   passage ranges and typed D80 pairs under D162. Embedding reuse checks the
+   full D80 input and D162's vector proof.
+   [E1 reuse mechanics](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,
    stale no K pages.
 
-Walkthrough: a 50-page Drive document gets a two-paragraph edit. The watcher fetches once;
-conversion produces the new Markdown; chunk hashing shows ~2 changed chunks; E2 runs on ~2
-chunks; reconciliation diffs and finds the handful of affected facts; everything else — ~148
-chunks' claims, embeddings, evidence links, K pages — carries forward untouched. **Cost ∝
-the edit, not the document.**
+In a 50-page Drive document with a two-paragraph edit, conversion produces new
+Markdown, and about two changed chunks trigger E2 and reconciliation. With
+matching context and verified vectors, the other roughly 148 chunks carry
+forward their claims, embeddings, evidence links and K pages.
 
 Honest boundary: chunk-boundary shift. An edit that changes section structure can re-align
 chunk boundaries so unchanged text lands in differently-hashed chunks. Section-aware chunking

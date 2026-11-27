@@ -811,13 +811,13 @@ reports the same current search-configuration attestation and freshness.
 `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` share one body
 path. It obtains bytes only after PG confirms the current ready
 document/version/representation/section coordinate, then verifies the
-reproducible embedding-text hash and generated-prefix separation. The stored
-source-content hash remains a returned coordinate but is not claimed as
-body-byte verification in v1: it is composed from ordered block hashes whose
-inputs are not present in the P1 body row. A future store contract may add
-those reproducible inputs and then strengthen verification without weakening
-this rule. The path returns source body and D80 deterministic location header in separate columns;
-the header is never asserted evidence. `fetch_chunk_bodies` is this exact path
+embedding-text hash using the normalized P1 body and any D80 location header.
+The returned `chunk_content_hash` identifies source content. Whole-block
+runs hash ordered block hashes. D162 partial blocks and gaps use a tagged
+digest of exact source bytes. Reproducing either source-content hash requires
+the corresponding E0 blocks or Markdown slice. The path returns the normalized
+body and the deterministic location header in separate columns. Source evidence
+comes from the E0 representation. `fetch_chunk_bodies` is this exact path
 minus nomination: `input_ordinal` records first input position, duplicate IDs
 collapse to that first position, and more than 50 IDs fails
 `invalid_parameter` before any store read. An outer query requires

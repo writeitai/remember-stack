@@ -153,6 +153,10 @@ synthetic ordinals, no free-form “prefix” kind.
 `added_context[]` tags point at `element_id` / `kind` (advisory attribution may remain);
 membership is still **token-in-union** (existing D32 token rule).
 
+When either grid is split, reuse of Selection or Claimify checks the ordered
+`(kind, text)` pairs admitted by E2. The embedding renderer can omit a title
+that E2 still uses. [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
+
 ---
 
 ## 4. Embedding input policy
@@ -402,7 +406,7 @@ A deployment may swap conventional embedders when:
 | Decision / design | Effect |
 |---|---|
 | D63 | Default remains conventional hosted/self-host embedders; **product path drops contextual alternate**; input policy replaces “per-chunk LLM prefix stage” |
-| D56 / A3 | Extraction reuse unchanged (no LLM in identity keys). **Vector** reuse requires embedding_text_hash + policy + embedder generation |
+| D56 / A3 | Stable extraction identities and paid reuse checks (§3.3). Vector reuse checks input, policy, embedder and proof (§4.5). |
 | D58 | Claims = needles; chunks = passages; normalized joins apply role filters |
 | D79 | Summaries orientation-only; **not** default embedding text; **not** grounding |
 | D32 / E2 | Typed groundable location elements; free-form header out of union |
@@ -424,8 +428,8 @@ A deployment may swap conventional embedders when:
 4. **Fault injection** — kill mid-embed batch; no re-embed of completed chunks;
    cost keys unique.  
 5. **Reuse locality** — edit that moves a chunk’s section/channel changes
-   embedding_text_hash; content-only body edit without location change reuses
-   vector when hash matches.  
+   embedding_text_hash; a matching passage reuses a verified vector when
+   its rendered input matches.
 6. **Two conventional embedders** — exercise unready/rebuild/verify/publish.
 7. **D159** — forget purges derived search state and location facts.
 
