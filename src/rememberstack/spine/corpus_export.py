@@ -45,6 +45,28 @@ class CorpusReaderCatalog:
     def __init__(self, *, engine: Engine) -> None:
         self._engine = engine
 
+    def git_targets(
+        self,
+        *,
+        deployment_id: UUID,
+        source_refs: set[str],
+        connection: Connection | None = None,
+    ) -> dict[str, CorpusDocument]:
+        """Select live served targets by their existing git lineage keys."""
+        with (
+            nullcontext(connection)
+            if connection is not None
+            else self._engine.connect()
+        ) as reader:
+            rows = reader.execute(
+                text(
+                    _DOCUMENTS
+                    + " AND d.source_kind = 'git' AND d.source_ref = ANY(:source_refs)"
+                ),
+                {"deployment_id": deployment_id, "source_refs": sorted(source_refs)},
+            ).mappings()
+            return {row["source_ref"]: CorpusDocument(**dict(row)) for row in rows}
+
     @contextmanager
     def documents(
         self,

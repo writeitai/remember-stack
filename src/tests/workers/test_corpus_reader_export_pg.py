@@ -75,10 +75,11 @@ def _seed(engine: Engine, source: CorpusDocument) -> None:
         "placement": source.placement_path,
         "summary": source.root_summary,
         "source_kind": source.source_kind,
+        "source_ref": source.source_ref or str(source.doc_id),
     }
     statements = (
         """INSERT INTO documents (doc_id, deployment_id, source_kind, source_ref, title)
-        VALUES (:doc, :d, :source_kind, :doc, :lineage_title) ON CONFLICT DO NOTHING""",
+        VALUES (:doc, :d, :source_kind, :source_ref, :lineage_title) ON CONFLICT DO NOTHING""",
         """INSERT INTO content_objects (deployment_id, content_hash, mime, byte_size, raw_uri)
         VALUES (:d, :hash, :mime, 100, :raw) ON CONFLICT DO NOTHING""",
         """INSERT INTO document_versions (version_id, deployment_id, doc_id, content_hash,
@@ -110,8 +111,8 @@ def _seed(engine: Engine, source: CorpusDocument) -> None:
 
 
 @pytest.fixture()
-def corpus(engine: Engine):
-    source, artifacts, raw = authority()
+def corpus(engine: Engine, request: pytest.FixtureRequest):
+    source, artifacts, raw = authority(**getattr(request, "param", {}))
     with engine.begin() as connection:
         connection.execute(text("TRUNCATE deployments CASCADE"))
     DeploymentBootstrapper(engine=engine).bootstrap_deployment(

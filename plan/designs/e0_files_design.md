@@ -78,7 +78,7 @@ Markdown body. Timing-preserving `.vtt`/`.srt`/JSON transcripts may also be read
 assets, but a sidecar alone is never testimony. `media/` contains derived images,
 keyframes, crops, thumbnails and other reader assets; the original is copied
 separately as `original<suffix>` in the document folder. P3 copies `document.md`
-byte-for-byte, preserving offsets and `media/` relative links.
+byte-for-byte for source offsets and generates a navigable reader view (§6.1).
 
 **Byte-authoritative admission (D132).** Before raw storage or a catalog row,
 E0 inspects file signatures and header fields, ISO BMFF file-type brands
@@ -779,6 +779,7 @@ full repair reconciles this same live tree, not another snapshot layout.
         document.json
         original.eml
         document.md
+        reader.html
         pageindex.json
         source_map.json          # when emitted
         media/                   # when reader assets exist
@@ -801,6 +802,7 @@ is an allowlist, never a recursive copy of the artifact prefix:
 |---|---|
 | `original<suffix>` | Byte-identical original of the displayed version, copied from its recorded raw URI; full media included. Choose a safe extension from the validated format registry/MIME, `.bin` on unknown format |
 | `document.md` | Exact immutable Markdown bytes of the displayed representation; no P3 banners, frontmatter edits or offset changes |
+| `reader.html` | Rendered Markdown for navigation, with checked links to corpus files |
 | `pageindex.json` | Exact active structure-generation sidecar: sections, spans, roles and available summaries for reading at section grain |
 | `source_map.json`, when present | Exact representation source map so a reader can relate Markdown spans to original pages, times or regions |
 | `media/<asset-name>` | Every reader asset in the conversion inventory: extracted/page images, crops, thumbnails, keyframes, and timing-preserving transcript/annotation interchange that a reader/player uses, including assets not linked in Markdown |
@@ -813,9 +815,28 @@ reader or pipeline. Reader kinds include `embedded_image`, `page_image`,
 kinds include `provider_response`. An unknown kind fails publication until
 classified, instead of accidentally publishing internals or silently dropping a
 useful asset. Custom conversion routes supply the same classification. Validate
-safe relative names and reserve generated filenames; every local asset link in
-copied Markdown must resolve to a reader asset. No manufactured per-keyframe
-lineages. Preserve converter asset paths so relative links stay valid.
+safe relative names and reserve generated filenames. Preserve converter asset
+paths within the document folder. Keyframes belong to their source document.
+
+The reader view in `reader.html` keeps the Markdown text and turns confirmed
+destinations into relative corpus links. It keeps links to listed reader assets
+and heading fragments. For a git lineage with a `<repository>:<path>` source
+reference, resolve relative document paths from the source file's directory
+within that repository. For example, `../decisions.md#d100` from
+`design/designs/foo.md` refers to `design/decisions.md`. Look up the corresponding
+live served lineage by its exact git source reference in the same deployment.
+Generate the path to the destination's `reader.html` from its selected corpus
+folder, carrying the fragment forward. The corpus can choose a different folder
+structure from the source repository.
+
+Missing and unsafe destinations leave the label or image alternative text in
+the view. The exporter uses a relative path only after checking its target
+against the served catalog or the document's reader inventory. Absolute local
+paths, `file:` URLs and paths that leave the repository root have no navigation.
+Web and mail links and same-page fragments remain usable. Raw HTML retains
+supported formatting and media, with URL attributes checked by the same rules
+and active content stripped. Use the copied `document.md` for offsets from
+`pageindex.json`, `source_map.json` and the derivation ranges.
 
 **Out:** `blocks.json` (chunking grid), `conversion.json` (full route/execution
 manifest), engine `meta.json`, conversion checkpoints, raw provider response JSON
@@ -942,7 +963,7 @@ bounded by the type taxonomy. It is the only `llms.txt` in this tree.
 Index rendering uses SQL metadata and stored summaries, **zero LLM**. There are no
 directory summaries, facets, `documents/<doc_id>/`, `by-source/`, `by-time/`,
 `entities/`, duplicate view stubs, K links or monolithic id-to-path file. The ladder is
-`llms.txt → type/topic/shard _index.md → folder _index.md → document.md/original`.
+`llms.txt → type/topic/shard _index.md → folder _index.md → reader.html/original`.
 
 Folder paths change only when their type, topic or title changes; index pagination
 does not move them. Consumers store `doc_id` (and a version/representation handle for a citation).
@@ -995,9 +1016,9 @@ cannot write; seed current-policy work instead.
 One deployment-scoped PostgreSQL advisory lock serializes publication, including
 index regeneration, normal removal and reconcile. Forget's sweep does not take it
 (§6.7). Reuse caller lock ownership for internal calls. Re-read authority after
-taking the lock. The task uses the lock session for its catalog reads and marker
-writes. End each SQL transaction before starting object I/O so the session
-holds only the advisory lock while copying. Keep the claim alive while
+taking the lock. The task uses the lock session for its catalog reads, including
+Git link targets, and for marker writes. End each SQL transaction before object
+I/O so the session holds only the advisory lock while copying. Keep the claim alive while
 streaming. Before each object write or delete, confirm ownership of the
 advisory lock on that session and that the work claim is still live. Abort
 further mutations on loss.
@@ -1077,7 +1098,12 @@ folder index says `updating`. DB-derived shared indexes can temporarily lead or
 lag another document's files or counts. No cross-file or point-in-time media
 snapshot is promised. Check the ready folder identity before/after a read, or use
 immutable version-addressed source handles when exactness matters, including for
-cached/ranged media reads. The marker certifies a successful publication of this
+cached/ranged media reads. A reader link uses the target's served folder, which
+can precede the target's own publication. Ordinary publication refreshes the
+source's links when it runs. Verifying reconcile updates inbound links when a
+target moves, becomes served or leaves the corpus. These changes can update the
+reader view and its file hash under the same source export identity. The marker
+certifies a successful publication of this
 document's current inputs; it is not a whole-tree snapshot. Failed or interrupted
 publication normally leaves it null, and the next affected publish or reconcile
 regenerates shared indexes from authority. The marker means “these current inputs

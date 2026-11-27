@@ -423,6 +423,7 @@ def test_navigation_to_originals_and_derivatives_and_suffix_moves(
     for name in (
         "original.pdf",
         "document.md",
+        "reader.html",
         "pageindex.json",
         "source_map.json",
         "media/nested/plot.png",

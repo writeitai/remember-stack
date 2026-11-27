@@ -10625,9 +10625,10 @@ Source: https://remember.dev/docs/self-hosting/filesystem-views
 # Filesystem views
 
 The `remember-corpusfs` bucket is a live filesystem for readers. Each completed
-source has one folder containing its original, exact converted Markdown, active
-PageIndex, available source map and reader media. Publication runs automatically
-through the ordinary `llm` worker class. It makes no model calls.
+source has one folder containing its original, a reader view, exact converted
+Markdown, active PageIndex, available source map and reader media. Publication
+runs automatically through the ordinary `llm` worker class. It makes no model
+calls.
 
 A newer stored or parked upload leaves the previous completed reading in place.
 A source with no completed reading has no corpus folder; its original remains
@@ -10657,6 +10658,7 @@ Provider access logging must include reads of corpus originals.
 │           ├── document.json
 │           ├── original.pdf
 │           ├── document.md
+│           ├── reader.html
 │           ├── pageindex.json
 │           ├── source_map.json
 │           └── media/
@@ -10669,6 +10671,12 @@ have an optional topic under its type. Large member tables use navigation pages
 under a reserved `~/` subtree; pagination never moves document folders.
 
 Start at `llms.txt`, follow type/topic indexes, then open a folder's `_index.md`.
+Follow its **Read the document** link to open `reader.html`. Relative links to
+other served documents in the same synced git repository lead to their corpus
+reader views and keep any heading fragment. Links to missing files or unsafe
+destinations display as text. Use `document.md` for the exact Markdown and its
+PageIndex or source-map offsets.
+
 `document.json` records the document, displayed version, representation,
 inventory and deterministic publication identity. Pipeline manifests, extraction
 state and historical readings are excluded. Plane K is a separate repository.
@@ -10730,7 +10738,8 @@ docker compose --profile operations run --rm projections
 This runs `project --plane p3`, repairs the same live tree and prints the number
 of served documents reconciled. Matching digests avoid recopying originals and
 media. Ordinary publication touches only the changed document and its navigation
-ancestors.
+ancestors. Verifying repair refreshes links in other documents when a target
+becomes available, moves or leaves the corpus.
 
 ## Archive, forget and restore
 

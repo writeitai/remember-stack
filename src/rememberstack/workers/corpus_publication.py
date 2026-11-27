@@ -18,6 +18,7 @@ from rememberstack.core.corpus_export import CopyFile
 from rememberstack.core.corpus_export import corpus_policy_version
 from rememberstack.core.corpus_export import corpus_suffix
 from rememberstack.core.corpus_export import CORPUS_TYPES
+from rememberstack.core.corpus_export import CorpusDocument
 from rememberstack.core.corpus_export import CorpusPolicy
 from rememberstack.core.corpus_export import DEFAULT_CORPUS_POLICY
 from rememberstack.core.corpus_export import GeneratedFile
@@ -270,8 +271,20 @@ class CorpusPublisher:
             return None, None
         folders.add(document.path)
         self._catalog.set_paths(lock=lock, doc_id=doc_id, paths=folders)
+
+        def git_targets(source_refs: set[str]) -> dict[str, CorpusDocument]:
+            with lock.transaction() as connection:
+                return self._readers.git_targets(
+                    deployment_id=lock.deployment_id,
+                    source_refs=source_refs,
+                    connection=connection,
+                )
+
         export = load_document_export(
-            document, artifact_store=self._artifacts, policy=self.policy
+            document,
+            artifact_store=self._artifacts,
+            policy=self.policy,
+            git_targets=git_targets,
         )
         existing = {key.root for key in self._store.iter_keys(prefix=export.path)}
         desired = {export.path + "/" + file.path for file in export.files}
@@ -279,7 +292,13 @@ class CorpusPublisher:
         changed = [
             file
             for file in export.files
-            if not (unchanged and export.path + "/" + file.path in existing)
+            # Generated files can change when a git target moves without an
+            # edit to this document or its publication marker.
+            if not (
+                unchanged
+                and isinstance(file, CopyFile)
+                and export.path + "/" + file.path in existing
+            )
             and self._store.sha256_of(key=ObjectKey(export.path + "/" + file.path))
             != file.sha256
         ]

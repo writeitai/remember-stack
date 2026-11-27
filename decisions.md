@@ -8355,7 +8355,12 @@ There are no users requiring migration, aliases or a transition layout.
 - **Publish copies, not stubs.** One folder contains `original<suffix>`, exact
   `document.md`, the active `pageindex.json`, optional `source_map.json`, every
   reader-classified media/transcript asset, and generated `document.json` and
-  `_index.md`. Exclude blocks, full conversion/meta manifests, provider-response
+  `_index.md`. The generated `reader.html` uses the corpus paths of served
+  documents for resolvable links within a synced git repository and keeps other
+  local link labels as text. The exact Markdown continues to support source
+  offsets. See [E0 §6.1](plan/designs/e0_files_design.md#61-folder-contents-reader-files-with-an-explicit-boundary)
+  and the [link analysis](plan/analysis/corpus_document_folders.md#links-in-the-reader-view-2026-11-27).
+  Exclude blocks, full conversion/meta manifests, provider-response
   JSON, checkpoints, references NDJSON, work/extraction state and old readings.
   Export by inventory/kind allowlist, never by copying an artifact prefix.
 - **Type first, topic optional.** Fixed types: `email`, `chat`, `image`, `audio`,

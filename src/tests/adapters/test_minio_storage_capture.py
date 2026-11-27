@@ -32,6 +32,7 @@ from rememberstack.core.corpus_export import CorpusPolicy
 from rememberstack.core.corpus_export import DEFAULT_CORPUS_POLICY
 from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.core.corpus_export import json_bytes
+from rememberstack.core.corpus_export import READER_PAGE
 from rememberstack.core.storage_capture import capture_request_id
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import ObjectKey
@@ -459,6 +460,7 @@ def test_live_tree_classes_and_separate_original_quantities(
     )
     for name, native_class in (
         ("document.md", "documents.corpus_derivative"),
+        (READER_PAGE, "documents.corpus_derivative"),
         ("_index.md", "corpus.navigation"),
     ):
         path = provider.keys[("corpus", published.path + "/" + name)]
