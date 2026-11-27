@@ -582,8 +582,9 @@ Alembic revisions in the following upgrade order.
 3. Create the private keyed claim history lookup.
 
 Downgrade in reverse order, restoring the deployed definitions and the
-original adapter comment with `v_memory_entity_survivor`. Under D160, both
-survivor views serve previous-release readers between commits.
+original adapter comment with `v_memory_entity_survivor`. Before D163
+publishes its hash, both survivor views must serve previous-release readers
+between commits in either direction under D160.
 Replacing a dependency and its caller together can deadlock a reader
 holding the caller's lock and waiting on the dependency. Commit each
 replacement before acquiring the next exclusive view lock. Under D161 the
@@ -609,12 +610,22 @@ before the incoming API serves. Customer saved-query versions resume
 execution once revalidated and active under the existing registry rules.
 [Saved-query registry](open_query_space_design.md#5-saved-query-registry)
 
+After D163 publishes its hash, stop admitting D163 reads and drain its
+readers before reversing any DDL. The first reverse revision removes
+`v_memory_claim_history_by_id`, which D163 native reads use. Run
+`alembic downgrade p9_55_0076` with the D163 release. At that revision, run
+the previous release's `setup` before bringing its API back into service.
+Setup republishes the previous hash and moves customer versions active
+under D163 to `pending_revalidation` in one transaction. Those versions
+resume execution once revalidated and active under the restored hash.
+
 For deployments using D152, pause new storage captures and drain in-flight
-captures before running Alembic. The previous collector refuses new captures
-as soon as the first D163 revision commits. Keep capture paused through any
-migration retries. After the target head commits, install its allocation guard
-and catalog reader through the existing operator path, then resume with the
-collector and profile qualified for that head.
+captures before running Alembic in either direction. The previous collector
+refuses new captures as soon as the first D163 upgrade revision commits.
+Keep capture paused through any migration retries. After the target head
+commits, install its allocation guard and catalog reader through the existing
+operator path, then resume with the collector and profile qualified for that
+head.
 [D152 storage capture](storage_capture_consumer_design.md)
 
 ## 7. Failure, security and operational behavior
@@ -741,21 +752,25 @@ or copy error.
    `--dbname` pointing to a separate maintenance database. This restores
    the database and its access privileges and creates the tables and
    partitions before the foreign keys. Preserve object owners and grants.
-2. Load the retained application rows and vectors with text `COPY` and
-   explicit writable columns. Keep the original current pointers, Alembic
-   revision row and sequence state.
+2. Load the retained application rows and vectors, plus the source's
+   `public.part_config` rows for the restored range parents with text `COPY`
+   and explicit writable columns. Keep the original current pointers,
+   Alembic revision row and sequence state.
 3. Apply `pg_restore --section=post-data --exit-on-error` to the staged database
    to build indexes and install triggers and constraints. Verify its access
-   privileges match the reference. Compare row counts and key-ordered row and
-   vector hashes with the source. Verify that each current-version and
+   privileges match the reference and the partition configuration rows
+   match the source. Compare row counts and key-ordered row and vector
+   hashes with the source. Verify that each current-version and
    current-reading pointer matches the source, including nulls, and that
    populated pointers name versions of their own lineage or readings of
    their own version.
 
-Run `alembic upgrade p9_55_0076` on each PostgreSQL 18 fixture and verify the
-recorded revision. Connect as its `rememberstack_query_<database>` login and
-read `memory_v1.facts_visible_history` successfully. Prepare the hosted-shaped
+Run `alembic upgrade p9_55_0076` on each PostgreSQL 18 fixture. Verify the
+recorded revision and the required `pg_partman` parent names, control columns
+and intervals. Connect as its `rememberstack_query_<database>` login and read
+`memory_v1.facts_visible_history` successfully. Prepare the hosted-shaped
 fixture at the same head.
+[Partition catalog check](../../src/rememberstack/spine/catalog_contract.py#L621-L638) ·
 [Retained-store evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#retained-store-oracle)
 
 Take two physical copies of each fixture's stopped PostgreSQL 18 cluster with
@@ -858,11 +873,21 @@ committed revision with zero `40P01` deadlocks. Check definitions, grants,
 comments and gate rows at each head.
 [Existing retry synchronization](../../src/tests/spine/test_migrations.py#L244-L284)
 
-At the upgraded head, drain the previous-release readers and run stock
+Upgrade again, drain the previous-release readers and run the D163 release's
 `setup`. Verify that the new hash and the query's `pending_revalidation`
-state become visible together. Require the new API to return
-`saved_query_revalidation_pending` before revalidation. Revalidate and
-activate the same version, then require the expected rows under the new hash.
+state become visible together. Require the D163 API to return
+`saved_query_revalidation_pending` before revalidation. Revalidate the same
+version with activation authority, then require it to be active and return
+the expected rows under the new hash.
+
+With that version active under D163, follow the post-publication downgrade
+in §6.1, including the drain before reverse DDL. Verify that the registry
+still holds the D163 hash at the restored schema. Run the previous release's
+`setup` and check that its hash and the query's `pending_revalidation` state
+become visible together. Require `saved_query_revalidation_pending` through
+the previous API. Revalidate with activation authority on the previous
+release, then run the same active `(query_id, version)` through that API
+and require the expected rows and the previous hash.
 
 On a D152-enabled fixture, verify the previous collector refuses a new capture
 after the first D163 commit. Verify the incoming collector completes a capture

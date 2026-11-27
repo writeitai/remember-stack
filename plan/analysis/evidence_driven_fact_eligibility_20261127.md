@@ -144,6 +144,16 @@ preserved its deployment row and database ACL. The full Alembic upgrade
 reached `p9_55_0076` with the same ACL. A new connection as the query login
 read `memory_v1.facts_visible_history` and `memory_v1.tags_current`.
 
+`pg_partman` registers `public.part_config` as extension configuration data.
+PostgreSQL 18.6 includes those rows in a schema-only archive as table data.
+The pre-data and post-data restores both skip that section. Copying the source
+registrations during the staged load preserves the range parents' maintenance
+settings and supplies the rows required by the catalog contract.
+[Extension configuration](https://github.com/pgpartman/pg_partman/blob/v5.5.0/sql/tables/tables.sql#L33-L38) ·
+[Schema-only configuration data](https://github.com/postgres/postgres/blob/REL_18_6/src/bin/pg_dump/pg_dump.c#L19627-L19636) ·
+[Dump section](https://github.com/postgres/postgres/blob/REL_18_6/src/bin/pg_dump/pg_dump.c#L2877-L2892) ·
+[Partition catalog check](../../src/rememberstack/spine/catalog_contract.py#L621-L638)
+
 pgvector draws a random graph level for each HNSW index entry. Independent
 builds can therefore change the ordered candidates before the gate sees them.
 Physical copies of one prepared PostgreSQL 18 fixture preserve the index.
@@ -195,6 +205,13 @@ incoming release's `setup` can publish using the existing registry transaction.
 [Setup](../../src/rememberstack/profiles/selfhost.py#L1248-L1268) ·
 [Registry hash check](../../src/rememberstack/surfaces/query_sandbox/saved_queries.py#L1364-L1373) ·
 [Registry publication](../../src/rememberstack/surfaces/query_sandbox/saved_queries.py#L1846-L1897)
+
+After cutover, the first reverse revision drops the keyed claim-history view
+used by D163 native readers. Draining them first lets their queries finish.
+Reversing the schema leaves the D163 hash in the registry, so the previous
+release must run its own `setup` to republish the hash it expects. The same
+publication transaction marks active customer versions `pending_revalidation`.
+[Keyed claim lookup](../designs/shared_retrieval_eligibility_design.md#candidate-bound-source-membership-and-survivor-resolution)
 
 The deployed D152 allocation guard and catalog reader require
 `p9_55_0076`, so the first D163 commit closes admission for the previous

@@ -912,8 +912,11 @@ excludes that edition. The gate closes this without touching fact windows:
   confirmation, before the relevance cut (for P1 channels, D142's confirmation step).
   Under proposed D163, the current-belief native check binds the fact's raw evidence,
   then its claim occurrences, chunks and readable versions. For a past open-query
-  `believed_at`, `fact_in_scope_support` reads the declaration ledgers using
-  `versions_in_scope(…, believed_at, doc_ids)` on the fact's occurrence lineages.
+  `believed_at`, `fact_in_scope_support` returns false when no qualifying live
+  occurrence survives and true when any such occurrence belongs to a lineage
+  undeclared at that belief instant. When all surviving lineages were
+  periodised, it calls `versions_in_scope` with that belief instant and their
+  document IDs and checks for a selected version carrying an occurrence.
   `ContextRetrievalBudget.candidate_depth` uses the supplied `candidate_k` or
   defaults to `max(4 × k, 60)`. Evidence is hydrated after confirmation and only
   from in-scope claims.

@@ -8761,8 +8761,10 @@ retained LoCoMo and hosted-shaped stores. Qualify latency on hosted-size
 hardware. Commit compatible view replacements separately under D161 and
 qualify the shipped three-second lock wait with previous-release readers.
 Publish the new manifest atomically with the saved-query registry transition
-after previous-release readers drain. D142 ranking and D56 ingestion
-identities continue to use their existing inputs.
+after previous-release readers drain. A downgrade after publication drains
+D163 readers before restoring the previous schema and republishing its hash.
+D142 ranking and D56 ingestion identities continue to use their existing
+inputs.
 
 [Fact path](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
 [Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·
