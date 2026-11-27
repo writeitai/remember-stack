@@ -1,7 +1,8 @@
 # Oversized E1 chunks in v0.22.4
 
-The incident audit uses `c1f15b783`. The round-three source checks use
-`8bd115b7a`. [Proposed D162](../designs/split_oversized_chunks_design.md).
+The incident audit uses `c1f15b783`. The rescope round-three source checks
+use `8bd115b7a`. The PR #681 round-three checks use `8393bdef8`.
+[Proposed D162](../designs/split_oversized_chunks_design.md).
 
 ## Incident and failure path
 
@@ -105,6 +106,15 @@ keeps invalidation local. The block hashes still describe the packing.
 [relative origin hash](../../src/rememberstack/core/source_origins.py#L55-L65),
 [E2 bundle](../../src/rememberstack/workers/e2.py#L1596-L1619).
 
+Removing a Markdown fence outside three fixed split slots kept their text
+and relative origin hashes equal in a local probe. The blockizer changed
+one clipped target range into three paragraph ranges. The old card still
+remapped by substring, although no new label covered its span. Compare the
+ordered label ranges relative to their slots before reusing extraction.
+[Block ranges](../../src/rememberstack/core/blockizer.py#L177-L193),
+[catalogue construction](../../src/rememberstack/core/source_passages.py#L124-L171),
+[card remap](../../src/rememberstack/workers/extraction_references.py#L156-L218).
+
 D140 records the inherited date before embedding. A fresh lookup after the
 original donor is deleted can move relative dates from the inherited date to
 the version date. Refining verified same-version spans preserves those dates
@@ -125,6 +135,12 @@ representation supplies the text and provenance, so the retained evidence
 needs only coordinates and matching metadata.
 [Donor lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345),
 [consumed slots](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
+
+The lease reaper updates the work ledger row without the lineage lock.
+A checkpoint transaction must lock that row through commit to prevent a
+reap and reclaim after validation, as well as holding the lineage lock
+to fence delivery replacement and forget.
+[Lease reaper](../../src/rememberstack/spine/work_ledger.py#L2290-L2322).
 
 ## Benchmark fixture audit
 
@@ -175,7 +191,7 @@ results under the same builds. Admission needs the resolved settings for
 each protected read.
 [Discovery](../../src/rememberstack/surfaces/http_api.py#L2403-L2415),
 [D143 admission](../../src/rememberstack/spine/processing_layers.py#L519-L614),
-[BEAM event ordering](../../benchmarks/rs_harness_beam/answer_agent.py#L449-L508),
+[BEAM event ordering](../../benchmarks/rs_harness_beam/answer_agent.py#L449-L509),
 [retrieval deadline](../../src/rememberstack/profiles/selfhost.py#L1432-L1439),
 [SQL limits](../../src/rememberstack/surfaces/query_sandbox/executor.py#L586-L600).
 
@@ -184,7 +200,14 @@ delivery. The current OpenRouter decoder sorts indices and checks count and
 dimension, so a singleton at index `1` with a valid vector passes P1. The
 strict D162 decoder rejects it. Replay from raw transport replies can detect
 that difference before a protected ingest changes worker.
+
+A local two-input mock returned two distinct vectors, both at index `0`.
+The decoder accepted both in reply order and both passed P1 validation.
+E1 assigns by request position and writes the expected input hashes, so
+even a matching hash in P1 can accompany a vector for a different input.
+Verify the original mapping and full delivery before trusting a donor.
 [Decoder](../../src/rememberstack/adapters/openrouter.py#L1034-L1077),
+[E1 assignment and stamps](../../src/rememberstack/workers/e1.py#L502-L572),
 [P1 validation](../../src/rememberstack/ports/p1_index.py#L26-L49).
 
 Equal stored vectors can yield different search results. Legacy E1 inserts
@@ -206,6 +229,14 @@ before using them to isolate reader changes.
 [SQL response](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061-L1085),
 [BEAM SQL path](../../benchmarks/rs_harness_beam/answer_agent.py#L511-L525),
 [LoCoMo tool dispatch](../../benchmarks/locomo/retrieval.py#L165-L202).
+
+LoCoMo parses each model-generated call and applies its retrieval budget
+before dispatch. In a local runner probe, two stub readers returned the
+same saved-query ranking and opposite rankings for a new generated query.
+The runner recorded both new responses. A saved trace proves parity only
+for its calls and scopes. Keep other calls on the pinned reader until
+paired replay covers them.
+[Live call dispatch](../../benchmarks/locomo/runner.py#L2392-L2420).
 
 The published LoCoMo serving revision pins PostgreSQL 19 RC 1. The physical
 backup contains the stopped PostgreSQL volume. A logical copy into PostgreSQL

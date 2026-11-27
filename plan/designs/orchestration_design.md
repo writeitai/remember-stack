@@ -205,7 +205,10 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    `(deployment_id, chunk_id)` first, then commits the chunk authority stamp in
    a separate transaction.
    D162 checkpoints batches off-index and writes final projection rows with first E1
-   readiness. A crash after the provider response and before a checkpoint may repeat a billable call.
+   readiness. Both writes lock the claiming `processing_state` row through commit to
+   serialize with lease reclaim. A crash after the provider response and before a
+   checkpoint may repeat a billable call.
+   [D162 write fence](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk).
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
    stamp matching the **configured** `(policy_generation, embedder_generation)`
    and input hash (or a closed typed skip such as `empty_body`). D162 readiness

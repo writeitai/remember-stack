@@ -259,9 +259,10 @@ A prior vector may be reused without a provider call only when its
 `embedding_text_hash`, embedder model/dimension, and all policy-relevant
 attestation match exactly. The worker may then restamp the same row inside an
 explicit unready maintenance operation; it must never claim that a vector was
-produced from different text. [Proposed D162](split_oversized_chunks_design.md#2-coordinates-and-reuse)
-also requires verified full delivery for the original call and matches
-complete block runs exposed by a split on their original content key.
+produced from different text. D162 requires proof of full delivery and of
+which original request input produced the stored vector, including P1-only
+checkpoints. Complete block runs exposed by a split keep their original
+content key. [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
 
 | Change | Action |
 |---|---|

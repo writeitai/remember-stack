@@ -325,6 +325,7 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   Legacy keys use block content identities. Proposed D162 keys split grids on
   exact consumed slot bytes, including gaps and separators. If either grid is
   split, verify each slot's bytes by role for D140 and paid extraction.
+  Extraction reuse also requires equivalent ordered passage ranges.
   [D162 reuse checks](split_oversized_chunks_design.md#2-coordinates-and-reuse).
 
   **Stable header facts** come from the deterministic document metadata the E2
@@ -355,9 +356,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   version, including a previous processing generation of that same version, but
   exclude deleted versions. Keep each distinct `(chunk_content_hash,
   embedding_text_hash)` pair under the requested policy/model so identical body
-  text at one location cannot hide the matching vector from another. Advancing
-  the chunk-row and embed-delivery generations for converter-origin input hashes
-  creates fresh work without changing packing or the embedding model/policy.
+  text at one location cannot hide the matching vector from another. Under
+  D162, use a donor with proof of full delivery and request-to-vector mapping.
+  Advancing the chunk-row and embed-delivery generations for converter-origin
+  input hashes creates fresh work without changing packing or the model/policy.
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.

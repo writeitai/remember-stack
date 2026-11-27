@@ -8773,6 +8773,8 @@ structural or scalar boundaries with exact provenance. Split grids add a
 packing and delivery generation. Fitting grids retain their packing and paid
 input identities.
 Split grids key extraction and D140 reuse on exact consumed slot bytes.
+Reusing paid extraction also requires equivalent relative passage catalogues.
+Vector donors require full-delivery and request-to-vector proof.
 Every CHUNK recovery has a distinct embed delivery.
 
 Refine the grid at CHUNK for new versions and explicit recovery of oversize
@@ -8785,8 +8787,9 @@ capacity retries stay bounded. LoCoMo and BEAM require frozen-grid and
 ingest-delivery parity plus public tool-response parity on the published
 replay stores. Candidate admission binds the worker, reader, schema,
 embedding bindings and effective serving settings to the qualified inputs
-and published store. The exact LoCoMo binding must qualify at 22,528 Qwen
-tokens or higher.
+and published store. A candidate read needs parity for its exact operation,
+resolved arguments and effective scope. The exact LoCoMo binding must
+qualify at 22,528 Qwen tokens or higher.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

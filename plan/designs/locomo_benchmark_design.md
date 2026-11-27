@@ -72,8 +72,10 @@ delivery and stored passage vectors, plus public tool parity on the stores
 those replays publish. Candidate readers, schemas and query embedding paths
 also require public tool parity. Admission binds the runtime fingerprint,
 including layer states and retrieval budgets, to the qualified frozen inputs
-and published store. Use the pinned path until those checks pass and whenever
-the candidate identity is missing or differs.
+and published store. At dispatch, candidate reads also need parity for the
+exact operation, resolved arguments and effective scope. Initial admission
+failures and uncovered calls use the pinned path. Runtime drift suspends an
+admitted candidate run.
 [D162 release checks](split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
 
 The published 94.09% run used retained Full-v45 ingestion and frozen image
