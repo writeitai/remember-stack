@@ -263,6 +263,14 @@ the migration chain, the saved-query cutover and the collector handoff. The
 separate native collector guard and original-view suites passed 9 and 5
 tests. The pending and deferred archive-review cases both passed.
 
+The broader checkpoint inventory finished with 1,655 passed, 16 skipped and
+2 expected failures. PostgreSQL lock-table exhaustion during `DROP SCHEMA`
+caused 24 Work Ledger setup errors. The checkpoint also ran an early D163
+assertion that read the private helper without qualifying `public`, which
+returned `UndefinedTable` under the query role's search path. The final
+214-test rerun passed Work Ledger and the corrected, schema-qualified
+privilege assertion.
+
 ```bash
 uv run ruff format --check src/ benchmarks/
 uv run ruff check src/ benchmarks/
@@ -271,6 +279,7 @@ uv run lint-imports
 uv run python .github/ci/check_test_inventory.py
 PYTHONPATH=src:. uv run python scripts/generate_storage_capture_fixture.py --check
 xargs uv run pytest -q --tb=short < .github/ci/unit-paths.txt
+PGOPTIONS='-c jit=off' xargs uv run pytest -q --tb=short < .github/ci/integration-paths.txt
 PGOPTIONS='-c jit=off' uv run pytest -q --tb=short \
   src/tests/spine/test_{migrations,per_database_migrations_pg,work_ledger,query_space_batch_a,d153_eligibility_pg,d163_eligibility_pg,d163_migrations_pg}.py \
   src/tests/adapters/test_{p1_ranked_pg,minio_storage_capture}.py \
