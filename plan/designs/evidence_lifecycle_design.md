@@ -122,9 +122,10 @@ such a contract.
   time*. Old-version claims remain current testimony forever — correct for versioned archival
   sources (quarterly reports fetched from one URL, contract amendments), where the old
   version's assertions were never withdrawn, only succeeded.
-- **`living`**: the current version is the source's *standing statement* (rosters, wikis,
-  config pages). Claims present only in superseded versions lose testimony currency (§3) —
-  they stop counting toward current belief while remaining immutable history.
+- **`living`**: the lineage has one *standing statement* (rosters, wikis, config pages).
+  Superseded claims lose testimony currency (§3) and remain immutable history. Under
+  [proposed D162](split_oversized_chunks_design.md#publication), standing follows ordered
+  claim settlement independently of the source head.
 
 **Effective periods (D140) — when a version is in force.** Separately from the mode, a
 caller may declare for each version of a **`snapshot`** lineage the periods during which its
@@ -138,10 +139,8 @@ becomes periodised with its first declaration and stays so until the caller expl
 effective time, so retracting a withdrawn edition's last period never makes it current again.
 Periods never change testimony currency and never trigger reprocessing; fact reads apply a
 deterministic evidence gate so that no answer rests solely on text that is not in force at the
-scope. Periods are not accepted on `living` lineages, whose newest version is by definition
-the standing statement. Versions may also carry an immutable caller-chosen `version_key`, the
-stable address for pinned references (the `source_version_ref` cursor stays mutable). The full
-contract is
+scope. Versions may also carry an immutable caller-chosen `version_key`, the stable address
+for pinned references. The `source_version_ref` cursor stays mutable. The full contract is
 [the effective time design §2–§3](effective_time_and_section_references_design.md#2-effective-periods).
 
 **Absence is never *silent* retraction — and in `living` mode, removal retracts.** The two
@@ -151,16 +150,13 @@ modes, side by side (stress-test amendment O-B; a `review` softener existed brie
 | Mode | Claims existing only in old versions | A fact whose current support hits zero via removal |
 |---|---|---|
 | `snapshot` | stay current testimony **forever** (each version = independent dated testimony) | cannot happen via removal |
-| `living` | lose currency when their content leaves the current version | **sole-support removal adjudicates the fact closed** — recorded (`retracted_source_removal`), loud, reversible |
+| `living` | lose currency when their content leaves the standing statement | **sole-support removal adjudicates the fact closed** — recorded (`retracted_source_removal`), loud, reversible |
 
-**Why living retracts:** `living` *means* "the current version is the source's standing
-statement" — once declared, a fact whose only support left the standing statement is, by that
-declaration, no longer stated; keeping it served as current belief pending a review queue is
-exactly the zombie-fact failure this system treats as cardinal. The wrong-retract failure is
-visible (K recompiles, envelope), audited (an adjudication row), and self-healing (re-added or
-newly-sourced content reopens through ordinary E3). The mechanical form of this rule: at
-reconciliation, `versioning_mode = 'living'` **obliges** the worker to close any fact whose
-sole current-testimony support left the current version — no flag path exists for this case.
+**Why living retracts.** When a fact loses its only support in the source's standing
+statement, reconciliation closes it. The revised belief appears in K and the
+envelope, and the adjudication records it. Re-added or newly sourced evidence can
+reopen a fact through ordinary E3 adjudication. For D162, a reused application
+receipt can restore support without revising the recorded fact window.
 
 **The removed alternative (documented, with its re-add condition).** A `removal_semantics =
 review` softener (removal only withdraws support + flags, belief stands until triaged) was
@@ -220,9 +216,9 @@ lineage's current extraction basis *under the lineage's mode*:
   Fresh claims from superseded living versions enter history at publication.
 - **`living` version supersession**: claims absent from the eligible versions
   flip non-current (`version_superseded`). Under [proposed D162](split_oversized_chunks_design.md#publication),
-  standing advances at ordered reconciliation. Count published carriage on the
-  standing version and any newer completed claims basis awaiting reconciliation,
-  even when the source head has moved;
+  standing advances at ordered reconciliation. Count carriage on standing
+  and on the one successor admitted to publish while its own settlement
+  is pending. Private staging cannot supply eligible carriage;
 - **`snapshot`**: version succession flips nothing.
 
 **What currency is not.** Not supersession, not invalidation, not a validity judgment — no
@@ -339,14 +335,22 @@ not reached a version yet, the version's reconcile runs at component version
 exactly as the full reconcile does — so facts that already exist keep exact counts and closures,
 and connector-cycle closure still defers to finalization — but opens no fact label and no window
 review. When the facts layer later reaches the version, the full reconcile runs under its own
-key and opens them. **Living supersession guard (configured deployments):** a reconcile computes
-and applies step 2's `version_superseded` transitions in one transaction under the lineage lock,
-and only when the lineage's current version is its own version or its claim occurrences are
-complete — its `embed_chunk` succeeded for its representation and chunk grid, and every chunk's
-Selection and Claimify results are committed or the grid is empty (processing layers design §5.1);
-otherwise the current version's occurrences may not exist yet and the step is skipped — the current version's own reconcile computes it
-lineage-wide. Deployments without a layer configuration run step 2 exactly as before
-([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
+key and opens them.
+
+**Legacy living supersession guard (configured deployments).** Under the
+lineage lock, a reconcile uses the source head when it is the reconcile's
+own version or has complete claim occurrences (processing layers §5.1).
+Otherwise that head's reconcile applies the lineage-wide transitions once
+its occurrences are complete. Legacy deployments without layer configuration
+use the original path.
+[D143 reconcile modes](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes).
+
+**Ordered standing (proposed D162).** Either reconcile mode can settle
+its own admitted successor. A successor can stage its claims early and
+publishes eligible carriage only in settlement order. Apply the source
+diff, recount and closure policy at the settling version's source time and
+sync cycle.
+[D162 publication](split_oversized_chunks_design.md#publication).
 
 **Worked example, end to end.** Living document A; version 1 was extracted by extractor v1;
 chunk with block `b2` yielded claim `c1` ("Alice works at Acme") → relation `r1
@@ -464,8 +468,10 @@ survive its source's reorganization.)
 - **Remove a version** (operator, internal): that version's testimony ends
   (`version_archived`); the lineage continues; bytes purge if no other version references the
   content object. Under [proposed D162](split_oversized_chunks_design.md#publication),
-  compare selected completed claims bases before removal and after any repointing.
-  Restore currency using the repointed version's eligible published occurrences.
+  a living lineage repoints removed standing to its latest surviving
+  settled version, independently of its source head. Restore currency
+  from that version's selected completed claims basis, recount and reopen
+  unfinished facts work in the removal transaction.
 - **Archive a lineage**: the §13 document cascade at lineage grain over **every one of its
   versions**, recorded on the lineage as `documents.archived_at` and `archived_by` (`caller`
   or `source`).

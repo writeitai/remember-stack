@@ -1781,15 +1781,15 @@ config choice.
 > **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
 > A repaired packing grid publishes its completed claim occurrences and currency
 > together. Eligible published carriage governs additions, withdrawals and automatic
-> restoration. A living lineage advances standing through ordered reconciliation
-> of completed claims, independently of the source head. A restore verdict
-> authorizes its exact reviewed occurrence for reads and effective time.
-> Counting still uses distinct lineages.
+> restoration. A living lineage admits one successor to standing and settles
+> it in order. Removing standing selects the latest surviving settled version
+> independently of the source head. A restore verdict authorizes its exact
+> occurrence for reads and effective time. Counting still uses distinct lineages.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
 > claims-mode component version that applies the same currency and counting logic but opens no
-> fact follow-ups. In a configured deployment a reconcile computes `living` supersession only once
+> fact follow-ups. In the legacy configured path a reconcile computes `living` supersession only once
 > the lineage's current version has complete claim occurrences, and a version's claims tail waits
 > for earlier fact work of its lineage. The currency and counting contract is unchanged.
 
@@ -1858,6 +1858,10 @@ coordinate is persisted on occurrence records and currency transitions.
 `evidence_lifecycle_design.md` §1/§3; `plan/designs/media_design.md` §6.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
+
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> The source head and standing testimony of a living lineage advance independently.
+> Version creation records whether first claims are owed in version order.
 
 > **Partially superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** Lineages remain stable source
 > identities and P3 serves the completed current version. A P3 folder path may
@@ -6666,9 +6670,9 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 ## D130. Adjacent chunks retrieval primitive (`adjacent_chunks`)
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> A retained handle used by a published claim can resolve to the pieces
-> covering its chunk span in the same reading. The window applies to
-> both edges of that interval.
+> A retired handle used by a published claim pages through its covering
+> pieces in the same reading, with the window on the two outer edges.
+> Each call keeps the original size bound and discloses continuation.
 
 **Status:** accepted (superseded in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-21.
 
@@ -7414,8 +7418,8 @@ only through D118 adjudication.
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Cutovers publish private passage and claim search projections. Each
-> operation pins its selected index populations through hydration.
+> Cutovers publish private passage and claim projections with verified clean
+> ranking populations. Each operation pins its selected indexes through hydration.
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -7644,11 +7648,11 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 ## D143. Processing layers can be switched off per deployment and per request
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Gaps and completion follow the packing basis, including with default
-> layers. Search-ready claims publication opens the facts boundary.
-> Re-enable admits historical claims repairs. Facts advance oldest eligible
-> completed basis first. A newer source head leaves those obligations open
-> and an ordered reconcile can advance standing independently of it.
+> Version creation records ordered claims obligations when claims are
+> enabled. Living backfill after claims-off ingest remains head-only.
+> Gaps and completion follow the packing basis. Search-ready claims publish
+> in settlement order, opening facts on the oldest eligible basis first.
+> Re-enable also admits historical claims repairs.
 
 > **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
 > sources-only document tree with no entities, fact metadata or K links, identical
@@ -8695,8 +8699,9 @@ every failure; a central code registry.
 ## D159. Archive and forget replace delete; forget hides at once and sweeps until clean
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Archive recovery uses eligible carriage on selected completed claims bases,
-> including after a version removal repoints the lineage during the archive.
+> Archive recovery uses eligible carriage on selected completed claims bases.
+> If standing was removed, recover the surviving settled basis independently
+> of the source head.
 
 **Decision (2026-11-24, owner).** A caller has exactly two ways to remove a document's
 contribution, on the API, SDK, CLI and MCP; the public delete is removed outright (pre-launch,
@@ -8820,14 +8825,14 @@ can reuse an attested whole-block vector for the same D80 input in either
 direction. Repair replaces a failed pending basis when the qualified
 envelope changes and reuses equivalent committed products.
 
-**Publication.** Passage and claim index cutovers use private copies,
-with online catch-up and first-publication appends to a warmed copy.
-Claims publish with both channels ready. Eligible completed bases keep
-their facts obligation as the source head advances. A restore verdict
-authorizes its exact reviewed evidence for reads and fact periods.
-LoCoMo and BEAM keep their pinned readers, schema and effective query
-binding until the exact candidate passes frozen input, grid and
-tool-response parity.
+**Publication.** Use clean private index builds and insert-only catch-up.
+First publication can append to a qualified warm copy. Register ordered
+claims obligations at ingest, stage later claims privately, and publish
+both claim channels in settlement order. Removing standing falls back to
+the latest surviving settled version. A restore verdict authorizes its
+exact reviewed evidence for reads and fact periods. LoCoMo and BEAM keep
+their pinned readers, schema and query binding until the candidate passes
+frozen input, grid and tool-response parity.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

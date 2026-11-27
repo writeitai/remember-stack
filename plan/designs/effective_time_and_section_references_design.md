@@ -345,7 +345,9 @@ and every handle it carries opens that version:
   chunks of every non-deleted ready version for scoped reads. Under
   [proposed D162](split_oversized_chunks_design.md#publication), resolve the
   published packing basis of that representation through hydration. Reference
-  links use that same basis.
+  links use that same basis. A retired chunk ID from a readable claim
+  can [page its covering pieces](adjacent_chunks_retrieval_design.md) in
+  that same version and representation.
 - **Source handles** use `source_open(version_id, representation_id)` (D115 already takes a
   version). Under D155 a **P3 path** is the movable, applied corpus folder for
   that selected version/representation. Return it only if the selection is served

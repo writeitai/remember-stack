@@ -1644,10 +1644,12 @@ the matching basis pointer. Pending and reusable superseded vectors live
 in private storage. Running readers may finish on their pinned projection.
 Claim occurrences follow the selected completed claims basis, including
 across a sources-only swap. A D54 verdict can authorize its exact reviewed
-occurrence. D54 currency changes with claim publication, and living
-lineages store their standing version. D143 gaps and D90/D118 staging and
-unit memberships record their basis. An unapplied application records the
-eligibility generation of its stream position and attempts.
+occurrence. Living lineages record standing independently of the source
+head and publish current carriage in settlement order. D143 first-claims
+gaps record whether claims were enabled at version creation. Gaps and
+D90/D118 staging and unit memberships record their basis once assigned.
+An unapplied application records the eligibility generation of its stream
+position and attempts.
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────

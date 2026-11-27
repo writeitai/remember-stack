@@ -217,11 +217,13 @@ embedding configuration.
 Under [proposed D162](split_oversized_chunks_design.md#search-projection-publication),
 stage passage bodies and claim vectors away from serving indexes. Claim
 embedding follows grounding and finishes before claims publication. Build
-replacements online and catch up committed writes. First publication
-appends to a warmed private copy. Switch each ready projection with its
-basis and authority changes in one transaction. Readers pin the selected
-relations and bases through ranking, confirmation and hydration, including
-SQL ranking.
+replacements online and catch up committed writes. Verify a clean
+physical population from the committed rows and an insert-only tail
+before switching. Rebuild outside the switch fence after an indexed-row
+conflict. First publication appends to a qualified warm copy. Switch each
+ready projection with its basis and authority changes in one transaction.
+Readers pin the selected relations and bases through ranking, confirmation
+and hydration, including SQL ranking.
 
 Projection lag may reduce recall; it must never expose an ineligible record.
 Archive, invalidation, supersession, and forget are enforced by the

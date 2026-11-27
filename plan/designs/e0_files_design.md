@@ -161,6 +161,11 @@ document_representations(  -- IMMUTABLE conversion outputs (D65): one row per (v
   status, created_at)                                    -- never updated after ready; never overwritten
 ```
 
+Under [proposed D162](split_oversized_chunks_design.md#dispatch-and-writes),
+E0 records the first claims obligation when it creates the version under
+the layer and lineage fences. The source head can advance independently
+of standing testimony.
+
 PageIndex, summaries, and placement are **LLM-derived, non-deterministic** E0 state, so every
 producing step is **versioned** (`structurer_*`, `placement_version`) and its output persisted. Like
 every non-deterministic stage (D7), structure is **replayed from stored state** on rebuild and only

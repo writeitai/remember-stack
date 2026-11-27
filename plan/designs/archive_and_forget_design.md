@@ -104,12 +104,16 @@ undo a caller's archive; a changed version does (§2.3).
   sees the file again, identical bytes act as unarchive and changed bytes as a changed version.
   Within one sync cycle a delete-and-recreate never archives at all (D135's cycle barrier).
 
-Under [proposed D162](split_oversized_chunks_design.md#publication), automatic restoration
-uses eligible occurrences in the selected completed claims basis. This also applies when
-an unarchive restores a living lineage whose head was removed during the archive, or when
-a changed version returns with reused claims. Archive suspends the D54
-`restore_support` authorization. Unarchive restores that exact occurrence
-and its contribution to reads, support and D140 periods if it remains eligible.
+Under [proposed D162](split_oversized_chunks_design.md#publication), automatic
+restoration uses eligible occurrences in selected completed claims bases.
+If a living lineage loses its standing version during archive, removal
+selects the latest surviving settled version independently of the source
+head. Unarchive restores eligible testimony from that standing basis and
+the archive episode and resumes any unfinished facts obligation. A changed
+version restores its reused testimony when it publishes as eligible.
+Archive suspends the D54 `restore_support` authorization. Unarchive restores
+that exact occurrence and its contribution to reads, support and D140 periods
+if it remains eligible.
 
 ### 2.4 Surfaces
 

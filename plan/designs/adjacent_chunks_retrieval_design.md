@@ -11,11 +11,11 @@
 
 1. **Chunk Neighborhood Determinism:**
    * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_all_versions_live` (D140): the chunk may belong to any non-deleted ready version of a live lineage — a time-scoped search can return a passage of a version that is not the lineage's newest — and is read in that version's current representation.
-   * Expanding context stays within the target's document, version and representation. Under [proposed D162](split_oversized_chunks_design.md#passage-cutover-and-reads), lookup, expansion and hydration share one snapshot of the published grid. A visible retained handle used by a published claim resolves to the published pieces intersecting its original span in that reading.
+   * Expanding context stays within the target's document, version and representation. Under [proposed D162](split_oversized_chunks_design.md#passage-cutover-and-reads), a visible retired handle used by a published claim resolves to the published pieces intersecting its original half-open span. Each page shares one snapshot for lookup, expansion and hydration. The original citation ID, quote and coordinates still identify the cited evidence.
 2. **Symmetric Windowing (`window: int = 1`):**
    * The retrieval primitive accepts `chunk_id: UUID` and a symmetric `window: int = 1` (constrained to `1 <= window <= 2`).
-   * Return the target and up to `window` chunks on each side, in document order. With D162 a retained claim handle can resolve to an interval of pieces. The same window applies outside the interval's two edges.
-   * Edges of documents truncate naturally. A single target at ordinal 0 with `window=1` returns ordinals 0 and 1 when both exist.
+   * Return the target and up to `window` chunks on each side, in document order. A single target at ordinal 0 with `window=1` returns ordinals 0 and 1 when both exist.
+   * For a D162 retired handle, page the covering pieces and up to `window` chunks outside each edge of that interval. Every page has at most `2 * window + 1` chunks. A non-null `next_cursor` signals more of that range. Continue with the same `chunk_id`, `window` and the returned cursor.
 3. **Consistent Wire Contract:**
    * The operation returns a standard `Envelope` with `grain = Grain.EVIDENCE`.
    * Result chunks are instances of `ChunkEvidenceResult` ordered by `ordinal ASC`.
@@ -39,6 +39,7 @@ def adjacent_chunks(
     deployment_id: UUID,
     chunk_id: UUID,
     window: int = 1,
+    cursor: str | None = None,  # D162 retired-handle continuation
 ) -> Envelope:
     """Fetch surrounding source chunks within a window around a target chunk in document order."""
 ```
@@ -51,12 +52,13 @@ def adjacent_chunks(
    FROM memory_v1.chunks_all_versions_live
    WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id
    ```
-   Under D162, if no row matches, check visible retained claims provenance for the supplied
-   ID and resolve the target span to its first and last covering ordinals in the same
-   version and representation. Otherwise the target has a single ordinal. If neither
-   lookup resolves, return an empty `Envelope` with `NegativeKind.UNKNOWN_ENTITY`.
-3. Query surrounding chunk identifiers from the first target ordinal minus `window`
-   through the last plus `window`:
+   Under D162, if no row matches, validate the retained source handle's
+   citation authorization and seek the first and last intersecting ordinals
+   by character coordinate on that published grid. A live target has one
+   ordinal. If neither lookup resolves, return an empty `Envelope` with
+   `NegativeKind.UNKNOWN_ENTITY`.
+3. Query identifiers between the first target ordinal minus `window`
+   and the last plus `window`:
    ```sql
    SELECT chunk_id
    FROM memory_v1.chunks_all_versions_live
@@ -68,15 +70,23 @@ def adjacent_chunks(
      AND ordinal <= :ordinal_end
    ORDER BY ordinal ASC
    ```
-4. Confirm and hydrate the selected IDs. Under proposed D162, read the search
-   text and coordinates in the same snapshot as steps 2 and 3.
-5. Return `_envelope(grain=Grain.EVIDENCE, chunks=chunks, freshness=_freshness(), dropped_by_hydration=dropped, negative=...)`.
+   For a retired handle use an ordinal keyset and fetch at most the page cap
+   plus one ID to detect more rows. Bind the cursor to the deployment, retired
+   ID, version, representation, published basis, window and last page ordinal.
+   Recheck access on every page. A cursor for another request or a changed
+   basis gets the D154 cursor error. Restart from the original handle on the new
+   basis. Advance past the last selected ordinal even if hydration drops a row.
+4. Confirm and hydrate only the page's IDs. Under proposed D162, read the
+   bodies and coordinates in the same snapshot as steps 2 and 3.
+5. Return the evidence envelope with `dropped_by_hydration` and an opaque
+   `next_cursor` when more rows remain. The final page has a null cursor.
 
 ### 2.2 HTTP API (`rememberstack.surfaces.http_api`)
 
 Add routes:
-* `GET /chunks/{chunk_id}/adjacent?window=1` -> `Envelope`
-* `POST /chunks/adjacent` with JSON body:
+* `GET /chunks/{chunk_id}/adjacent?window=1` -> `Envelope`. Under D162 it
+  accepts the optional `cursor` query parameter.
+* `POST /chunks/adjacent` with JSON body (D162 also accepts `cursor`):
   ```json
   {
     "chunk_id": "UUID",
@@ -94,18 +104,21 @@ def adjacent_chunks(
     *,
     chunk_id: UUID | str,
     window: int = 1,
+    cursor: str | None = None,
 ) -> Envelope:
     """Fetch surrounding source chunks within a window around a target chunk."""
 ```
-Invokes `GET /chunks/{chunk_id}/adjacent` with parameter `window`.
+Invokes `GET /chunks/{chunk_id}/adjacent` with `window` and the optional
+D162 `cursor`. The TypeScript client exposes the same continuation (D141).
 
 ### 2.4 CLI (`remember.cli`)
 
 Add subcommand under `remember query`:
 ```bash
-remember query adjacent-chunks <chunk_id> [--window 1]
+remember query adjacent-chunks <chunk_id> [--window 1] [--cursor <cursor>]
 ```
-Outputs standard `Envelope` JSON containing `chunks` (`ChunkEvidenceResult` list ordered by ordinal).
+Outputs the `Envelope` with chunks in ordinal order. Under D162, pass
+the returned `next_cursor` as `--cursor` to continue a retired lookup.
 
 ### 2.5 Benchmark Harness & Surface Boundary
 
@@ -114,4 +127,4 @@ Outputs standard `Envelope` JSON containing `chunks` (`ChunkEvidenceResult` list
    * Dispatch in `_dispatch_primitive`.
    * Include in `_has_content_bearing_attempt` direct tools in `benchmarks/locomo/runner.py`.
 2. **Top-level MCP Scope Boundary (D50, D83, D87, amended by D137):**
-   * Under D137, `adjacent_chunks` is a first-class read tool in the shared MCP catalogue (`remember.mcp_tools`, D136) and exposed across `OperationMcpServer` and `EngineMcpServer` to ensure complete client parity across HTTP API, Python SDK, CLI, and MCP.
+   * Under D137, `adjacent_chunks` is a first-class read tool in the shared MCP catalogue (`remember.mcp_tools`, D136) and exposed across `OperationMcpServer` and `EngineMcpServer` for client parity. The D162 reader exposes the optional cursor in both MCP and harness dispatch. Protected readers follow [D162's parity gate](split_oversized_chunks_design.md#benchmark-admission).

@@ -21,7 +21,11 @@ rate-limit message. The evidence points to a per-input boundary around 20k
 tokens. The exact boundary and the production chunks' rendered input sizes
 were unmeasured. E1 normally sends up to 64 inputs, and the adapter retries
 429s as capacity errors. E1's outage test then re-raises, and the ledger spends
-its attempt budget. Replaying the same embed row reuses the same cut and input.
+its attempt budget. Replaying the same embed row keeps its cuts, but E1
+renders the input again from live source facts. A lineage title rename
+changes the input and hash when D80 includes the title.
+[Title read](../../src/rememberstack/spine/chunk_catalog.py#L270-L289),
+[D80 rendering](../../src/rememberstack/workers/e1.py#L263-L295),
 [workers/e1.py:100–113](../../src/rememberstack/workers/e1.py#L100-L113),
 [adapters/openrouter.py:1034–1123](../../src/rememberstack/adapters/openrouter.py#L1034-L1123),
 [adapters/openrouter.py:1302–1360](../../src/rememberstack/adapters/openrouter.py#L1302-L1360),
@@ -197,20 +201,39 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
   [Fan-out guard](../../src/rememberstack/spine/work_ledger.py#L1538-L1547),
   [Stream admission and head](../../src/rememberstack/spine/fact_applications.py#L363-L414),
   [Completion](../../src/rememberstack/spine/fact_applications.py#L527-L540).
-- D143 normally discharges unentered claims gaps on non-head living versions.
-  That is appropriate for versions that never published claims. A
-  sources-only repair can have an older claims basis still serving, so it
-  owes that specific version a claims replacement when claims are enabled.
-  [Discharge and admission](../../src/rememberstack/spine/processing_layers.py#L315-L354).
-- The same head-only rule discharges unentered facts gaps. If B has entered
-  claims, C can take the source head before B's facts boundary and leave
-  B with a claims-only reconcile. If C then stalls, B stands without its
-  facts. Keep the obligation on the eligible completed basis. Living
-  versions that never entered claims can still be skipped, and genuine
-  supersession can end a facts obligation that never entered while facts
-  were off.
-  [Discharge](../../src/rememberstack/spine/processing_layers.py#L897-L925),
-  [Tail release](../../src/rememberstack/spine/processing_layers.py#L935-L995).
+- E0 assigns version numbers under the lineage lock before queueing conversion
+  and can move the source head at structure completion. D143 first records
+  the claims gap at E1 completion. If C takes the head before that boundary,
+  advance can discharge B before it ever enters claims. Recording the
+  obligation at version creation covers this race and lets a later E1
+  completion wait for B. Keep head-only selection for living backfill of
+  versions ingested with claims off. A repair of published claims also owes
+  work on its replacement basis regardless of head changes.
+  [Version creation](../../src/rememberstack/spine/document_catalog.py#L272-L294),
+  [Version numbering](../../src/rememberstack/spine/document_catalog.py#L1068-L1084),
+  [Source head update](../../src/rememberstack/spine/document_catalog.py#L827-L852),
+  [Claims boundary](../../src/rememberstack/spine/processing_layers.py#L95-L144),
+  [Discharge](../../src/rememberstack/spine/processing_layers.py#L897-L925).
+- The same head-only rule can discharge B's unentered facts gap even if B
+  already entered claims. Retaining that obligation is necessary but does
+  not order the eligible claims population. Suppose A alone supports a fact
+  via X, B drops X and C reuses it. Early eligibility for C can prevent B
+  from ever seeing zero support. Direct ingest closes at zero support, and
+  an applied receipt returns without adjudicating the reused claim again.
+  A single eligible successor lets B build facts before settling, lets C
+  ground and embed privately, and preserves B's withdrawal at B's date.
+  Connector-cycle closure still uses D54's barrier.
+  [Facts target](../../src/rememberstack/spine/processing_layers.py#L707-L751),
+  [Source withdrawal](../../src/rememberstack/workers/reconcile.py#L203-L238),
+  [Applied receipt](../../src/rememberstack/spine/fact_adjudication.py#L785-L816).
+- The legacy removal updates the source pointer only when the deleted
+  version was the source head. Unarchive also tests for source-head
+  repointing. With C at the head and B standing, deleting B can leave
+  both paths unaware that settled A should carry testimony again.
+  Repoint standing independently and use A's selected basis to restore
+  support and recover any unfinished facts work.
+  [Source repoint](../../src/rememberstack/spine/lifecycle.py#L1798-L1810),
+  [Unarchive](../../src/rememberstack/workers/reconcile.py#L1049-L1085).
 - `restore_support` records currency and recounts existing fact links. It
   writes no occurrence. Selecting only the new extraction basis would
   discard the reviewed quote and its D140 period while counting the claim's
@@ -229,7 +252,10 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
 - A claim's primary citation normally names its immutable origin chunk.
   The adjacency query only accepts a live passage ID. The old chunk's range
   already determines its covering pieces on the new grid of the same
-  reading, so the lookup can preserve the citation and use that range.
+  reading. An unbounded interval would bypass the ordinary window even for
+  `window=1`. Seek the interval's endpoints and page by ordinal using
+  the existing envelope cursor. Each page keeps the original citation
+  and authorizes the same exact handle and published grid anew.
   [Evidence result](../../src/rememberstack/model/envelope.py#L336-L360),
   [Adjacency lookup](../../src/rememberstack/surfaces/query_engine.py#L6562-L6583).
 - Dead-letter replay reopens the same job. On a first ingest there may be no
@@ -265,7 +291,24 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
   A separate append index would require merging rankings across physical
   indexes with different BM25 statistics. A failed private index write also
   needs a clean private rebuild before selection because rollback alone can
-  leave its physical totals changed.
+  leave its physical totals changed. Deletes and replacements during
+  catch-up can do the same: VACUUM can mark entries dead while leaving
+  their document and length totals in scoring, and compaction may skip
+  the affected segment. A clean private build and a reconciled
+  insert-only tail give a proof without adding an extension API. If a
+  late write would change an already indexed row, rebuild off the fence
+  with that key held for coalesced replay. A bounded set of frequently
+  changed keys can then keep changing throughout the rebuild. A larger
+  conflicting tail can delay publication.
+  [VACUUM counts](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/access/vacuum.c#L236-L245),
+  [Compaction limits](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/README.md#L384-L415).
+- The claim embedder sends the exact claim text. P1 validates the vector
+  and stamps text hash, model and policy against that claim ID and text.
+  With unchanged claim embedding configuration, these fields suffice
+  for a repair to carry the vector across to its private projection.
+  The qualified E1 envelope belongs to passage embedding.
+  [Claim embedder](../../src/rememberstack/workers/p1.py#L99-L144),
+  [Claim stamp](../../src/rememberstack/adapters/postgres_p1.py#L370-L401).
 - Stock Compose leaves embedding routing open. An order alone still permits
   marketplace fallback, even if a pin is also configured. Keeping stock
   routing on the compatibility path avoids silently sending data to a
