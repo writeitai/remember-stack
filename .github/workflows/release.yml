@@ -500,6 +500,7 @@ jobs:
     name: Publish GitHub release
     needs: [prepare, publish-pypi, publish-ghcr, publish-postgres-ghcr]
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: write
     steps:
@@ -575,6 +576,7 @@ jobs:
     needs: [prepare, github-release]
     if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
     steps:

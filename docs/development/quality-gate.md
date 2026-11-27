@@ -1,5 +1,10 @@
 # Quality gate
 
+RememberStack workflows use GitHub-hosted runners. Keep the public repository
+free of self-hosted runner registrations. Jobs that use the release App key
+declare the `production` Actions environment, which admits only the `main`
+branch.
+
 The required local test lane is the fast lane:
 
 ```bash
