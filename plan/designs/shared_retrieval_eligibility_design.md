@@ -609,6 +609,14 @@ before the incoming API serves. Customer saved-query versions resume
 execution once revalidated and active under the existing registry rules.
 [Saved-query registry](open_query_space_design.md#5-saved-query-registry)
 
+For deployments using D152, pause new storage captures and drain in-flight
+captures before running Alembic. The previous collector refuses new captures
+as soon as the first D163 revision commits. Keep capture paused through any
+migration retries. After the target head commits, install its allocation guard
+and catalog reader through the existing operator path, then resume with the
+collector and profile qualified for that head.
+[D152 storage capture](storage_capture_consumer_design.md)
+
 ## 7. Failure, security and operational behavior
 
 All reads remain bounded by configured pool admission and operation deadlines.
@@ -724,25 +732,30 @@ or concurrency qualification.
 conv-47 backups in isolation on their recorded PostgreSQL versions. For each
 PostgreSQL 19 restore, record the backup and its Alembic revision. Use
 PostgreSQL 18 `pg_dump --schema-only --format=custom` on a reference database
-at that revision with the source's partition bounds. Stage the transfer
-into an empty database in the same isolated PostgreSQL 18 cluster and stop
-on any restore or copy error.
+at that revision with the source's partition bounds. Rename the disposable
+reference after dumping so the restore can recreate its original name in the
+same isolated cluster and reuse its query and graph roles. Stop on any restore
+or copy error.
 
-1. Apply `pg_restore --section=pre-data --exit-on-error` to create the tables
-   and partitions before the foreign keys.
+1. Run `pg_restore --create --section=pre-data --exit-on-error` with
+   `--dbname` pointing to a separate maintenance database. This restores
+   the database and its access privileges and creates the tables and
+   partitions before the foreign keys. Preserve object owners and grants.
 2. Load the retained application rows and vectors with text `COPY` and
    explicit writable columns. Keep the original current pointers, Alembic
    revision row and sequence state.
-3. Apply `pg_restore --section=post-data --exit-on-error` to build the indexes
-   and install triggers and constraints. Compare row counts and key-ordered
-   row and vector hashes with the source. Verify that each current-version
-   and current-reading pointer matches the source, including nulls, and that
+3. Apply `pg_restore --section=post-data --exit-on-error` to the staged database
+   to build indexes and install triggers and constraints. Verify its access
+   privileges match the reference. Compare row counts and key-ordered row and
+   vector hashes with the source. Verify that each current-version and
+   current-reading pointer matches the source, including nulls, and that
    populated pointers name versions of their own lineage or readings of
    their own version.
 
-Then bring each PostgreSQL 18 fixture to the deployed v0.22.4 schema
-(`p9_55_0076`) with Alembic and prepare the hosted-shaped fixture at the same
-head.
+Run `alembic upgrade p9_55_0076` on each PostgreSQL 18 fixture and verify the
+recorded revision. Connect as its `rememberstack_query_<database>` login and
+read `memory_v1.facts_visible_history` successfully. Prepare the hosted-shaped
+fixture at the same head.
 [Retained-store evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#retained-store-oracle)
 
 Take two physical copies of each fixture's stopped PostgreSQL 18 cluster with
@@ -850,6 +863,10 @@ At the upgraded head, drain the previous-release readers and run stock
 state become visible together. Require the new API to return
 `saved_query_revalidation_pending` before revalidation. Revalidate and
 activate the same version, then require the expected rows under the new hash.
+
+On a D152-enabled fixture, verify the previous collector refuses a new capture
+after the first D163 commit. Verify the incoming collector completes a capture
+after the final revision and helper installation.
 
 #### Follow-ups (not part of D163)
 

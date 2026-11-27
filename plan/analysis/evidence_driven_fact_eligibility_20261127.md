@@ -128,6 +128,22 @@ constraints validate them after both sides exist.
 [Version/reading cycle](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L443-L452) ·
 [PostgreSQL 18 restore sections](https://www.postgresql.org/docs/18/app-pgrestore.html)
 
+The archive grants schema objects to the reference database's query and graph
+roles. A differently named target leaves those grants tied to the reference
+name, while the tag and archive migrations derive their grantees from
+`current_database()`. Reusing the name in the isolated cluster keeps the
+same cluster-wide roles and settings. Restoring with `pg_restore --create`
+also restores the database ACL, including the query role's `CONNECT` grant
+and the revocation of the default `PUBLIC` privileges.
+[Query role and database grants](../../src/rememberstack/spine/migrations/versions/p9_02_0023_query_space_roles.py#L110-L146) ·
+[Tag migration](../../src/rememberstack/spine/migrations/versions/p9_53_0074_document_tags.py#L107-L115) ·
+[Archive migration](../../src/rememberstack/spine/migrations/versions/p9_55_0076_archive.py#L296-L306)
+
+On PostgreSQL 18.6, a staged restore of a synthetic `p9_48_0069` database
+preserved its deployment row and database ACL. The full Alembic upgrade
+reached `p9_55_0076` with the same ACL. A new connection as the query login
+read `memory_v1.facts_visible_history` and `memory_v1.tags_current`.
+
 pgvector draws a random graph level for each HNSW index entry. Independent
 builds can therefore change the ordered candidates before the gate sees them.
 Physical copies of one prepared PostgreSQL 18 fixture preserve the index.
@@ -179,6 +195,15 @@ incoming release's `setup` can publish using the existing registry transaction.
 [Setup](../../src/rememberstack/profiles/selfhost.py#L1248-L1268) ·
 [Registry hash check](../../src/rememberstack/surfaces/query_sandbox/saved_queries.py#L1364-L1373) ·
 [Registry publication](../../src/rememberstack/surfaces/query_sandbox/saved_queries.py#L1846-L1897)
+
+The deployed D152 allocation guard and catalog reader require
+`p9_55_0076`, so the first D163 commit closes admission for the previous
+collector. The incoming collector needs the updated SQL helpers, installed
+through the existing trusted operator operations outside normal setup.
+[Allocation guard](../../src/rememberstack/spine/storage_capture_guard.py#L144-L147) ·
+[Catalog reader](../../src/rememberstack/spine/storage_capture_catalog.py#L155-L159) ·
+[Guard installer](../../src/rememberstack/spine/storage_capture_guard.py#L283-L292) ·
+[Catalog installer](../../src/rememberstack/spine/storage_capture_catalog.py#L282-L289)
 
 Full-schema equivalence, migration and latency are implementation gates.
 [D163 qualification](../designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
