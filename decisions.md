@@ -1937,6 +1937,11 @@ identity rules per source kind are a named spike.
 
 ## D56. Content-addressed reuse — the cost of a new version is proportional to the edit
 
+> **Proposed D162 amendment.** Split targets require a matching split donor
+> for paid reuse. First processing across a new split boundary is fresh.
+> Later versions reuse completed split inputs when they still match.
+> [D162 reuse](plan/designs/split_oversized_chunks_design.md#2-split-only-failing-candidates).
+
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The date among the "stable header facts" is the
 > chunk's **text origin time**, recorded once when the chunk is created: the text origin
 > time of the earliest chunk, dated no later than the new version, of a non-deleted version
@@ -2034,10 +2039,12 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
-> **Proposed D162 amendment.** The whole-block rule applies to base candidates.
-> Provider-qualified cuts supersede the oversized exceptions below.
-> Section boundaries, anchoring and non-overlap still govern packing.
-> [D162](#d162-split-oversized-chunks-before-embedding).
+> **Proposed D162 amendment.** The section-bounded packer counts whitespace
+> tokens and forces boundaries at accepted content anchors. Whole blocks
+> form base candidates. Provider-qualified cuts supersede the oversized
+> exceptions below and preserve non-overlap. D80 governs embedding input.
+> [D162](#d162-split-oversized-chunks-before-embedding) ·
+> [D80 design](plan/designs/e1_embedding_input_policy.md#4-embedding-input-policy).
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2182,6 +2189,9 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 ---
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
+
+> **Proposed D162 amendment.** The fixed engine uses the section-bounded
+> whitespace-token packer with content anchors. [E1 packing](plan/designs/e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58).
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -8762,13 +8772,17 @@ READY versions retain their grids permanently. New versions use the fix.
 A typed size dead letter can restart at CHUNK if the stored input fails the
 qualified fit check, the version has never published, and there is no embed
 success or downstream work or evidence. Replay requires exclusive lineage
-processing through replacement CHUNK commit. Drain old E1 workers before
-activation. CHUNK and EMBED_CHUNK share a pinned qualification through retries
-and verify the current attempt in their write transactions.
-Repeat replay requires a changed fit decision. Claimify reuse verifies the
-donor's admitted inputs. A legacy result without a verified donor can require
-a fresh Claimify call on first demand. Confirmed input rejections are
-terminal and throttling retries are bounded.
+processing through replacement CHUNK commit. Activation drains legacy CHUNK,
+EMBED_CHUNK, Selection and Claimify handlers. CHUNK and EMBED_CHUNK share a
+qualification through retries and verify the current attempt on writes. Pin
+admission and P1 model changes use the same deployment lock. Repeat replay
+requires a changed fit decision.
+
+Split targets require matching split donors for paid reuse. Keep the stable
+D122 keys and verify the donor's admitted inputs before Claimify reuse.
+An unverified legacy donor can require fresh Claimify on demand. Nonblank
+D80 inputs require usable vectors. Confirmed rejections are terminal.
+Unusable replies and capacity errors have bounded retries.
 Require offline full-row equality on frozen LoCoMo v45 and BEAM with a
 benchmark ceiling of at least 22,528 tokens.
 

@@ -192,27 +192,26 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    it does not require separate ledger rows. Use CHUNK's qualified binding for the handoff
    and retries. [D162 activation](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
-   configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
-   (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
-   generation.
+   active policy and pinned model into batches within the qualified item, token and byte
+   limits. A batch **never crosses** document, representation, lane, or embedder generation.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
-   are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
+   are idempotent inserts in `cost_ledger`, including calls after batch bisection.
 4. **Provider failures.** Bisect an input-specific batch failure to isolate
    the input. A confirmed rejection fails the stage with a terminal code.
-   Other isolated poison inputs follow their typed fail or skip outcome.
-   Capacity errors use bounded retries. A typed size dead letter can restart
-   at CHUNK under the [D162 recovery preconditions](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
+   Unusable replies and capacity errors use bounded work retries and
+   dead-letter on exhaustion. A typed size dead letter can restart at CHUNK
+   under the [D162 recovery preconditions](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
    vector/hash/current attestation and stamps the chunk authority row while
    holding the [D162 attempt lock](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
    A crash after provider response but before commit may
    repeat a billable call; the design does not claim exactly-once provider spend.
-6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
-   stamp matching the **configured** `(policy_generation, embedder_generation)`
-   and input hash (or a closed typed skip: at minimum `empty_body`). Mixed or
-   stale attestation is not ready.
+6. **Readiness.** For each nonblank D80 input, require a usable P1 vector and
+   matching chunk stamp for the active policy, pinned model and input hash.
+   The only successful skip is `empty_body` after D80 normalization.
+   [D162 vector validity](split_oversized_chunks_design.md#4-rejection-and-retry).
 
 K/P and other stages are unchanged by this subsection.
 
@@ -254,7 +253,8 @@ infrastructure). The operational surface over it is thin and deterministic:
   use [D162 CHUNK recovery](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
   For ordinary replay, set the row to `pending`, clear its retry defer reason,
   choose `not_before`, and raise `max_attempts` by the approved allowance above
-  the consumed attempt count. Announce the resulting claimable row after commit.
+  the consumed attempt count. Re-admit any pinned embed qualification before
+  reopening the row. Announce the resulting claimable row after commit.
   Monotonic attempts preserve cost-ledger deduplication. Bulk replay applies
   the same rules by version or error class. An operator can reroute ordinary
   replay through the backfill lane. Route, schedule and retry state come from

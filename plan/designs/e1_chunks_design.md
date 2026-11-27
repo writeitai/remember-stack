@@ -19,7 +19,7 @@ sets the embedding fit contract and the benchmark qualification floor.
 > **Reading this cold (CLAUDE.md Rule 1).** E0 converts every input to a clean Markdown
 > rendering (`document.md`) plus sidecars; **PageIndex** is the LLM-based structurer that
 > builds a per-document section tree (titles, roles like `results`/`references`, summaries);
-> **semchunk** is the deterministic token-budget text splitter the requirements impose;
+> **E1** packs whole blocks within sections by a whitespace-token budget and content anchors;
 > **E2** extracts claims from chunks; a claim's `source_span` must trace back through
 > `document.md` to the source (grounding, D32); **D56 reuse** requires that when a watched
 > document is edited, unchanged content is *not* re-extracted or re-embedded. "**Embedding
@@ -225,17 +225,14 @@ Each piece follows the same section, eligibility and non-overlap rules.
   identity or extraction costs.
 - **Anchor-stabilized boundaries** (amendment A2) — the algorithm is bound; only its numbers
   are spikes (Codex review F15). **Anchor predicate**: block `b` is an anchor iff
-  `uint64(block_hash) mod M == 0` *and* ≥ `min_gap` tokens accumulated since the last anchor
-  (suppresses clusters); `M` targets a mean spacing of a few chunk budgets. **Packing**:
-  semchunk packs to budget as usual, but a chunk boundary is *forced* before every anchor —
-  packing after an anchor is independent of everything before it, so an early edit perturbs
-  boundaries only to the next anchor. **Sparse anchors** (> `max_gap` tokens without one):
-  budget-only packing in that stretch — graceful degradation to plain semchunk, worst case is
-  today's behavior. **Dense anchors**: `min_gap` caps forced boundaries so no chunk is
-  pathologically small. D162 refines only within the resulting candidate spans.
-  Parameters (`M`, `min_gap`, `max_gap`, budget) live in `chunker_version`; their *values* are
-  spike 3. Load-bearing for sectionless documents (the synthetic-root case), where sections
-  provide no containment.
+  the first 64 bits of its hash satisfy `uint64(block_hash) mod M == 0`.
+  Accept the first such block in each owner run and require at least `min_gap`
+  whitespace tokens since the preceding accepted anchor for each subsequent one.
+  An anchor starts a new candidate. Between anchors, start a new candidate
+  before the next block would exceed the budget. After a shared accepted
+  anchor, packing is independent of the preceding text. D162 refines only
+  within the resulting candidate spans. The budget, `M` and `min_gap`
+  are part of `chunker_version`.
 - **Determinism.** Base cuts depend on blocks, sections and the versioned packer
   parameters. D162 checks the rendered cuts under the qualified binding.
   READY versions keep their cuts and IDs.
@@ -379,6 +376,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
+- **Split pieces (D162).** For all three paid stages a split target requires a
+  matching completed split donor. A piece's first processing is fresh even
+  when a whole-chunk donor has equal keys. Later edits can reuse unchanged
+  split inputs. [Split reuse](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.
 
@@ -387,7 +388,7 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 
 - `chunks` stores `version_id`, `block_start`/`block_end` ordinals, `chunk_content_hash` (§4),
-  `extraction_input_hash` (§7), `section_id`, exact character offsets and **D80**
+  `split_piece`, `extraction_input_hash` (§7), `section_id`, exact character offsets and **D80**
   location-facts snapshot ref / bounded optional header, `embedding_text_hash`,
   `embedding_input_policy_version` and current embedder stamps. The normalized body and
   vector live in the sole `chunk_search` sidecar; exact body remains in the artifact
@@ -410,7 +411,7 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 | D54–D56 (lifecycle) | **completed**: the reuse mechanics deferred by lifecycle §6 are bound here (A1–A3); the D56 key is corrected to stable components only |
 | D8/D9/D48–D50/D94 (retrieval) | **composes**: claims = needle channel, chunks = passage channel; role and `source_shape` filters join normalized authority; one current search attestation, no copied generation scalars |
 | D63/D80 (embed path) | **D80 binds** conventional interchangeable embedders + embedding-input policy; contextual non-goal |
-| requirements (semchunk) | **honored**: semchunk survives as the packer over blocks |
+| D162 | Checks the complete D80 input and cuts failing candidates within their section |
 | D7/D12/D33 | **followed**: blockizer/chunker versioned; embedding-text hashes are replayed state; all derivations deterministic or ledgered |
 
 ## 10. Spikes (measure before locking)
@@ -443,5 +444,4 @@ D33, D37, D38, D39, D51, D54–D56, D63. Discussion record:
 `e1_embedding_input_policy.md` (normative embedding input), `e0_files_design.md` (conversion,
 artifacts), `evidence_lifecycle_design.md` (the reuse contract, currency, counting),
 `e2_e3_claims_relations_design.md` (bundles, grounding), `retrieval_design.md` (channels),
-`postgres_schema_design.md` §6–§8. Requirements: §Plane E (E1), §Imposed constraints
-(semchunk).
+`postgres_schema_design.md` §6–§8. Requirements: §Plane E (E1), §Reference deployment.

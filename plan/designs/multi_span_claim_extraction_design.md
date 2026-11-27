@@ -30,7 +30,9 @@ contract does not expand the context to whole documents or cross-section search.
 
 The engine builds deterministic, request-local labels for exact source slices in
 the permitted context, using existing blocks/passages and clipping intersections
-where needed. Labels are assigned before inference; they are not inserted into
+where needed. [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates)
+also labels each nonblank gap-only window, even beside a window with clipped
+blocks. Labels are assigned before inference; they are not inserted into
 stored document bytes and never participate in content-reuse keys. The engine
 retains the map to representation-specific character ranges. It verifies the
 mapping against the immutable representation.

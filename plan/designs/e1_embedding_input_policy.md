@@ -176,8 +176,8 @@ Changing any of the above is a **new policy version**.
 [D162](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
 qualifies provider size limits independently of this renderer. CHUNK and
 EMBED_CHUNK measure the full rendered input plus framing with the pinned
-provider tokenizer. The policy's own length counter still chooses the
-header mode.
+provider tokenizer. Admit the pin against P1's active model and dimensions.
+The policy's own length counter still chooses the header mode.
 
 ### 4.2 Modes
 
@@ -280,6 +280,8 @@ produced from different text.
 Content-hash-only vector carry-forward is **insufficient** when embedding text
 includes location. Block-level **extraction** reuse (D56 A1–A3) remains
 content-addressed without LLM output in identity keys.
+[D162 split targets](split_oversized_chunks_design.md#2-split-only-failing-candidates)
+require a matching split donor for carry-forward.
 
 **Maintenance cutover:** an incompatible model, dimension, or policy change
 makes semantic search unavailable while disposable vector state is rebuilt and
@@ -348,9 +350,9 @@ pack chunks
   (size from embedder capabilities; starting hypothesis 64–128 texts). Normative
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
-- **Document readiness.** All in-scope chunks have prepare stamps and embeddings
-  matching the configured policy and model, or valid skips. A confirmed
-  per-input rejection fails the stage under [D162](split_oversized_chunks_design.md#4-rejection-and-retry).
+- **Document readiness.** Every nonblank D80 input has a usable P1 vector and
+  matching attestation. `empty_body` is the only skip. See the
+  [D162 failure contract](split_oversized_chunks_design.md#4-rejection-and-retry).
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.

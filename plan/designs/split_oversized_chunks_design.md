@@ -13,10 +13,11 @@ Start hosted qualification at **16,384 tokens** for Qwen3-Embedding-8B on
 OpenRouter `nebius/bf16`. The benchmark binding requires **at least 22,528**.
 [Embedding policy](e1_embedding_input_policy.md#4-embedding-input-policy).
 
-Before activating D162 for ordinary ingestion or replay, stop legacy CHUNK
-and EMBED_CHUNK workers from claiming work. Wait for their in-flight
-handlers to exit, including reclaimed attempts. Resume those routes with
-workers that apply the write checks in §3.
+Before activating D162 for ingestion or replay, stop legacy handlers for
+CHUNK, EMBED_CHUNK, Selection (`extract_claims`) and Claimify
+(`ground_claims`) from claiming on either lane, by polling or named
+delivery. Drain their in-flight handlers, including reclaimed attempts,
+then serve those routes with D162 handlers.
 
 Ordinary CHUNK pins the active qualification on its work row before packing
 and passes it to EMBED_CHUNK in the handoff. Both stages honor that pin on
@@ -24,6 +25,16 @@ retries and reclaims, including after configuration changes. Unpinned embed
 work already queued at cutover pins the active qualification at its first
 D162 attempt and checks the persisted grid under it. A worker must be able
 to honor the pin before writing a grid or calling the provider.
+
+Pin admission and P1 model publication hold the same deployment lock
+through commit. Under that lock, admit a pin only when its model and
+dimensions match the active P1 chunk semantic channel. After locking,
+setup checks stored vectors and live pins in one snapshot and refuses an
+incompatible switch before publishing. A pin stays live while either
+stage can still run under it, including through handoff, backoff, budget
+parking and reclaim. Re-admit the qualification before reopening terminal
+work, including at recovery in §3.
+[P1 model changes](postgres_p1_search_projection_design.md#10-rebuild-and-incompatible-embedding-changes).
 
 CHUNK uses the existing section-bounded, anchored packer. Check each
 candidate's full D80 input, including normalized body, header, separators
@@ -58,19 +69,29 @@ the first and last intersected blocks, inclusive. Use the preceding block
 ordinal for both fields if the slice lies entirely between blocks. Pieces
 can share a block ordinal. The character spans determine coverage. Clip the
 source map and converter-origin ranges to the exact slice. D119 passage
-labels use these ranges, including a label for a nonblank gap-only window.
+labels use these ranges. Label a nonblank gap-only window in Selection
+and Claimify even when a neighbouring window has clipped blocks.
 
 Use the existing chunk ID allocation with each piece's own span and
 ordinal in the row. The current allocator is UUIDv4.
 [Legacy row builder](../../src/rememberstack/workers/e1.py#L694-L731).
 Build a piece's content key from its covered block fragments in source
-order, including any nonblank gap text. Use the existing block hash and
-content-key functions. Intact chunks retain their block hashes and legacy
-key inputs wherever their extraction windows are unchanged. Use the final
-consumed neighbour text and clipped provenance where a window changes. Use
-D140 text origins and D119 evidence remapping. For Claimify reuse, compare the
-current inputs against those that produced the donor's completion, even when
-a split piece ran Selection fresh. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
+order, including any nonblank gap text, using the existing hash functions.
+Intact chunks keep their legacy key inputs wherever their extraction
+windows are unchanged. Use the final neighbour text and clipped provenance
+for changed windows. D140 text origins use their normal lookup.
+
+Mark each piece as `split_piece` on its chunk row. A split target starts
+fresh for embedding, Selection and Claimify unless that stage finds a
+matching completed split donor under its existing reuse checks. Filter
+donors before choosing a match, even when a whole chunk has identical keys.
+This preserves D56 reuse when a later edit leaves the same split inputs.
+Intact targets use the existing donor path. Retries on the same chunk ID
+use its committed vector, frozen Selection and Claimify completion.
+Ineligible pieces and Selection results with no keeps follow the usual
+empty extraction path. Keep stable Selection hashes for the ordered D122
+window and verify the donor's admitted inputs on every Claimify reuse.
+[D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 An input past the provider's real limit could never embed. D162 writes
 one chunk grid per version under the existing chunker version and work
@@ -106,7 +127,8 @@ unchanged text a later date. [D140 origin rule](effective_time_and_section_refer
 Operator and automatic replay target the `embed_chunk` dead letter by
 processing ID and observed attempt. The generic dead-letter replay entry
 point routes `embedding.input_too_large` here. In one PostgreSQL transaction,
-lock the version and relevant work rows and perform these checks and writes.
+take the model-admission lock (§1), lock the version and relevant work rows,
+and perform these checks and writes.
 
 1. Verify the size error and failed attempt for a live version with no prior
    embed success, publication, started downstream work or downstream claims,
@@ -117,9 +139,9 @@ lock the version and relevant work rows and perform these checks and writes.
    Refuse on evidence of publication or uncertainty.
    [E0 status](../../src/rememberstack/spine/document_catalog.py#L827-L852) ·
    [SQL visibility](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719).
-2. Require the active qualified fit check to fail for the rejected nonblank
-   input on the stored grid. For a rebuilt grid, require a revised
-   qualification that changes that input's fit decision from pass to fail.
+2. Admit the active qualification and require its fit check to fail for the
+   rejected nonblank input on the stored grid. For a rebuilt grid, require
+   a revised qualification that changes that input's fit decision from pass to fail.
    A provider rejection that still passes local fit stays terminal.
 3. Delete partial `chunk_search` rows by the version's chunk IDs. Delete
    the chunk grid and any downstream ledger rows still pending with zero
@@ -139,14 +161,20 @@ ingestion path.
 
 ## 4. Rejection and retry
 
+Every nonblank D80 input requires a usable vector. Check that each input
+has its own vector with the pinned dimension, finite stored components
+and nonzero norm.
+Only `empty_body` (blank after normalization) qualifies for a skip.
+Missing or unusable vectors, genuine throttling, ambiguous 429s and
+transient outages use bounded retries and dead-letter on exhaustion.
+
 A confirmed deterministic per-input rejection is a terminal typed error.
 Store `embedding.input_too_large` for size and `embedding.input_rejected`
 for another confirmed input rejection. Establish the cause from a local
 fit check or a provider-specific error that identifies the input failure.
 Isolate the rejected input from a batch when needed. For a size rejection,
 record the rejected chunk ID, D80 input hash and fit qualification in the
-dead-letter diagnostic. A rejected nonblank input fails EMBED_CHUNK.
-Genuine throttling, ambiguous 429s and transient outages use bounded retries.
+dead-letter diagnostic.
 [Embed durability](orchestration_design.md#embed_chunk-durability-d80--minimum-contract).
 
 ## 5. Acceptance
@@ -155,21 +183,26 @@ Offline, pack the exact frozen LoCoMo Full-v45 and BEAM inputs at their
 qualified benchmark ceiling. Use saved E0 artifacts, configuration and
 reuse history. Replay recorded UUIDs and clock values only at allocation
 and stored vectors only after checking the exact rendered inputs against
-the saved hashes. Compare both `chunks` and `chunk_search` column for
-column, in document order, including nulls. Recompute D122 stamps for
-recorded completions and compare the ordered prior-eight producer IDs and
-typed E2 location elements. Require zero splits and zero model calls.
-Missing fixtures or digest mismatches fail the check. Record the baseline, digests and restore and
-check commands with implementation.
+the saved hashes. Compare `chunks` and `chunk_search` column for column in
+document order, including nulls. Legacy rows have `split_piece` null.
+For recorded completions, recompute D122 stamps and compare the ordered
+prior-eight producer IDs and typed E2 location elements. Require zero splits
+and zero model calls. Missing fixtures or digest mismatches fail the check.
+Record the baseline, digests and restore and check commands with implementation.
 
 Test structural and scalar cuts, labelled gaps, exact reconstruction and
-provenance, full-input fit when a shorter body gets a larger header, and
-terminal size rejection versus bounded throttling. At activation, verify
-legacy workers cannot claim new work. Change the active qualification after
-ordinary CHUNK pins it and verify CHUNK and EMBED_CHUNK keep the same pin
-through handoff, retries and reclaims. Exercise replay with a
-partial vector batch and CHUNK already succeeded on its last attempt. Use
-the generic replay entry point. Cover repeat and stale requests, rollback,
+provenance and full-input fit when a shorter body gets a larger header.
+Exercise a nonblank gap-only Selection target beside a block-backed neighbour.
+Verify terminal size rejection, bounded failure for an empty provider vector,
+and a successful `empty_body` skip. At activation, verify all four legacy
+handlers are drained and both claim paths serve D162 handlers only.
+
+Pin model A before any vectors land, then verify setup refuses model B
+before and through the final vector commit. If B publishes first, A cannot
+pin. Change a compatible qualification after CHUNK pins it and verify
+CHUNK and EMBED_CHUNK keep that pin through handoff, retries and reclaims.
+Use the generic replay entry point with a partial vector batch and CHUNK
+already succeeded on its last attempt. Cover repeat and stale requests, rollback,
 and refusal for publication or downstream evidence. Resume reclaimed CHUNK
 and EMBED_CHUNK attempts after recovery and require zero writes. A second
 provider rejection under the same fit qualification must preserve partial
@@ -183,6 +216,9 @@ matching unchanged chunk.
 
 With two dated versions, verify that untouched regions keep their claim IDs
 and make zero embedding, Selection and Claimify calls when inputs match.
+Seed an equal-key whole-chunk donor for a split piece. Verify fresh
+embedding and extraction, zero calls on retry, and carry-forward if a later
+version leaves the split inputs unchanged.
 For equal hashes, verify a fresh Selection card blocks dependent reuse if it
 changes the admitted inputs. A changed ninth-ranked card that stays outside
 the cap must allow reuse without a Claimify call. Test a legacy V2 that

@@ -1471,7 +1471,7 @@ CREATE TABLE document_sections (
   page_start      integer,                     -- source page span (from conversion blocks), if paginated
   page_end        integer,
   ordinal         integer NOT NULL,            -- order among siblings
-  summary         text,                        -- per-section summary (D39): context for E1 prefixes/navigation/Selection-explainability; NOT a fact source
+  summary         text,                        -- per-section summary (D39): navigation and extraction orientation
   placement_path  text,                        -- root-only nullable normalized topic path; no type/filename (D39/D155)
   structurer_version text,                     -- LOGICAL FK → pipeline_component_versions; matches documents.structurer_version
   section_key     text,                        -- D140: stable key from a trailing heading attribute {#key}; NULL when absent (never model-produced)
@@ -1632,17 +1632,15 @@ CREATE INDEX ix_crossrefs_pending  ON document_crossrefs (deployment_id, to_sour
 
 ## 7. E1 — chunks
 
-Retrieval-sized units that preserve context and trace back to position. Chunk
-**search text and embedding live in the private PostgreSQL `chunk_search`
-sidecar**; authority
-tables hold metadata, offsets, the section link, and the **generated
-context prefix** (LLM-derived, so it is *replayed* on rebuild, not regenerated — D7 — and therefore
-stored as derived metadata, not body text).
+Retrieval-sized units that preserve context and trace back to position.
+The private PostgreSQL `chunk_search` sidecar stores normalized body text and
+the current vector. Chunk authority rows store offsets, the section link,
+D80 location facts and optional deterministic header, and reuse stamps.
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
--- chunks — semchunk units, section-aware (never split mid-section, D39). Body = markdown_uri sliced
--- by [char_start,char_end] (NOT stored in the authority row, D37). P1 is keyed by chunk_id. Large
+-- chunks — non-overlapping E1 slices within a section (D58/D162). Body = markdown_uri sliced
+-- by [char_start,char_end) (D37). P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (
@@ -1657,6 +1655,7 @@ CREATE TABLE chunks (
   -- A slice entirely within a gap uses the preceding block ordinal in both fields.
   block_start     integer NOT NULL,            -- first intersected block ordinal (inclusive)
   block_end       integer NOT NULL,            -- last intersected block ordinal (inclusive)
+  split_piece     boolean,                     -- true for a D162 piece, null for intact/legacy rows; split targets require a split donor for paid reuse
   chunk_content_hash text NOT NULL,            -- ordered block hashes, or ordered fragment hashes including nonblank gap text for D162 split pieces
   extraction_input_hash text NOT NULL,         -- own and neighbor block or fragment hashes + consumed converter-origin hashes + stable header facts (title, file name, source kind, text_origin_at, language) + extractor and structurer versions (D56/D140)
   char_start      integer NOT NULL,            -- inclusive code-point offset into document.md
@@ -1674,14 +1673,14 @@ CREATE TABLE chunks (
   embedding_input_policy_version text,         -- LOGICAL FK → pipeline_component_versions (embedding_input_policy)
   context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
   prefixer_version text,                       -- LEGACY context_prefixer component version
-  chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (semchunk config)
+  chunker_version text,                        -- LOGICAL FK → pipeline_component_versions (anchored whitespace-token packer)
   embedding_version text,                      -- configured embedder/model attestation for the current chunk vector
   policy_generation text,                      -- configured embedding_input_policy_version
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
+  'Section-bounded E1 retrieval units, one row per (version, position). Normalized search text + current embedding live in private chunk_search (D94). The authority row stores offsets, section link, D80 stamps and D56 reuse keys. Split pieces carry forward vectors and extraction only from matching split donors (D162). Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup

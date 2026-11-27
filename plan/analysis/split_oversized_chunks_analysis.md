@@ -32,6 +32,19 @@ count or changed extraction windows reflect those inputs.
 [D80 prepare](../../src/rememberstack/workers/e1.py#L290-L295) ·
 [D80 snapshot write](../../src/rememberstack/workers/e1.py#L535-L572).
 
+A split at a block boundary can leave a piece with the same ordered block
+hashes and rendered D80 input as an earlier whole chunk. A new UUID only
+changes same-row recovery. Vector carry-forward, Selection and Claimify
+look up older results by hashes. Record that the row is a split piece so
+its first processing can require fresh results even on a whole-chunk hash
+match. Matching completed split pieces can serve later versions under D56.
+Otherwise an edit in another section would buy the same work again.
+[Content hash](../../src/rememberstack/core/chunker.py#L135-L138) ·
+[D80 render](../../src/rememberstack/core/embedding_input_policy.py#L188-L234) ·
+[Vector reuse](../../src/rememberstack/workers/e1.py#L319-L356) ·
+[Selection reuse](../../src/rememberstack/workers/e2.py#L655-L671) ·
+[Claimify reuse](../../src/rememberstack/workers/e2.py#L817-L838).
+
 Selection can run fresh after an equal-input result fails to remap. The
 Claimify hash includes that producer's input hash, and remapping the old
 claim's citations can still succeed after its reference cards change. The
@@ -117,13 +130,32 @@ writes with reclaim and replay. Cost attribution already uses this pattern.
 [Embed writes](../../src/rememberstack/workers/e1.py#L569-L607) ·
 [Cost attribution](../../src/rememberstack/spine/work_ledger.py#L1100-L1131).
 
-Ordinary CHUNK claims use the same deployment, stage and lane predicate
-as named deliveries. Legacy workers can claim that route during rollout
-because D162 keeps the work keys. Drain legacy E1 workers before activation
-and carry the qualified binding through handoff and retries so both stages
-use the same fit rules.
+Polling and named deliveries use the same deployment, stage and lane
+predicate. D162 keeps the work keys, so drain legacy handlers for all four
+affected stages before activation. Legacy Selection's fallback labels a gap
+only if the entire catalogue is empty. A clipped neighbour block can leave
+a gap-only target without a label. Legacy Claimify can persist a donor
+attachment without checking which Selection inputs produced it.
 [Claim route](../../src/rememberstack/spine/work_ledger.py#L2176-L2201) ·
-[Embed handoff](../../src/rememberstack/workers/e1.py#L794-L812).
+[Passage fallback](../../src/rememberstack/core/source_passages.py#L124-L148) ·
+[Claim attachment](../../src/rememberstack/workers/e2.py#L832-L859).
+
+Setup checks stored vector stamps before publishing new semantic channels.
+It can see zero vectors after CHUNK pins model A, publish model B and leave
+the resulting A vectors excluded by semantic search. Serialize pin admission
+and model publication. Check live pins and stored vectors in one snapshot
+so an embedding completing during setup cannot fall between the two checks.
+[Setup](../../src/rememberstack/profiles/selfhost.py#L1269-L1286) ·
+[Stored model guard](../../src/rememberstack/adapters/postgres_p1.py#L201-L222) ·
+[Semantic filter](../../src/rememberstack/adapters/postgres_p1.py#L874-L889).
+
+OpenRouter rejects successful HTTP responses with missing or empty vectors.
+Legacy E1 can isolate that error and stamp a successful skip for a nonblank
+singleton. This can advance the version without a semantic passage. Require
+a P1-usable vector and use the ledger's bounded attempts for unusable replies.
+[Adapter validation](../../src/rememberstack/adapters/openrouter.py#L1052-L1077) ·
+[Singleton skip](../../src/rememberstack/workers/e1.py#L463-L478) ·
+[Vector validity](../../src/rememberstack/ports/p1_index.py#L26-L49).
 
 Provider-confirmed size errors can also reveal an incorrect local ceiling.
 Repacking with the same fit check would repeat the cuts, discard partial

@@ -79,6 +79,8 @@ to validated source descriptors before persistence; preserve exact text and
 range/origin information needed for occurrence remapping.
 
 Reuse a matching prior-version Selection result when its evidence remaps.
+A split target requires a matching split donor for both Selection and Claimify.
+[D162 donor rule](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 Retries replay the committed response. Uncommitted concurrent calls may race, but only
 one accepted result becomes authoritative through existing transaction/CAS
 patterns. Do not add a second queue or distributed cache. Associate results with
@@ -126,9 +128,8 @@ identify. A changed unadmitted card permits reuse when admitted inputs match.
 Record cap diagnostics for the current occurrence, including on zero-claim
 reuse. Two committed empty Selection results match. A missing prior result,
 a difference in compared inputs or a failed remap disqualifies that candidate.
-Missing current results keep Claimify at the Selection barrier. Apply the same
-check when a split piece ran Selection fresh.
-[D162](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+Missing current results keep Claimify at the Selection barrier. Fresh Selection
+still permits Claimify reuse when an eligible donor's admitted inputs match.
 
 Keep `claimify_input_hash` on its stable input basis. A successful check
 still requires D119 to remap every claim span into the new occurrence before

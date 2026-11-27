@@ -24,8 +24,8 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
             ┌── registries: entities, predicates ──┐
             ▼                  ▼                    ▼
  inputs ─► E0 files ─► E1 chunks ─► E2 claims ─► E3 relations
-           (raw+md+         (semchunk,   (claimify,    (normalization,
-            PageIndex,      ctx prefix)  coref)        evidence, supersession)
+           (raw+md+         (anchored    (claimify,    (normalization,
+            PageIndex,      cuts, D80)   coref)        evidence, supersession)
             placement)      │            │   │
                  │          │            │   │      PLANE K — KNOWLEDGE (debounced,
                  │          │            │   │      LLM-compiled; git is truth)
@@ -124,12 +124,16 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    **structure** (PageIndex tree + roles + spans + summaries + a **placement hint**,
    D39) → **crossref** (citations). Bodies live in GCS (raw + artifacts buckets); Postgres holds only
    metadata + the queryable section index (D37).
-2. **E1** (design: `e1_chunks_design.md`, D57–D58): the **blockizer** derives the deterministic
-   block sequence from document.md; PageIndex sections snap to the block grid; semchunk packs
-   whole-block candidates within sections using content anchors. [D162](split_oversized_chunks_design.md)
-   refines candidates that exceed the embedding limit. The non-overlapping chunks receive context
-   (the E1 prefix — exists under the D63 default conventional embedder; a contextual-embedder port config deletes it, D63) → embed
-   → P1. Unchanged blocks reuse prior claims/embeddings across document versions (D56).
+2. **E1** (D57–D58): the blockizer derives the ordered blocks from `document.md`, and
+   PageIndex sections snap to block boundaries. E1 packs non-overlapping whole-block
+   candidates within each section using a whitespace-token budget and content anchors.
+   D80 renders the normalized body with an optional deterministic location header.
+   D162 splits candidates whose full input fails the provider's qualified limits.
+   EMBED_CHUNK writes usable vectors to P1. Matching inputs carry forward
+   embeddings and extraction across versions under D56.
+   [Packing](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58) ·
+   [Rendering](e1_embedding_input_policy.md#4-embedding-input-policy) ·
+   [Fit and cuts](split_oversized_chunks_design.md).
 3. **E2 → E3** (every chunked document — there is no pre-extraction value gate, D25): coreference
    (D19: in the E2 extraction call, all languages) → **Claimify extraction with in-call Selection**
    (proposition-level verifiability KEEP/REWRITE/DROP — the value filter that replaces any
