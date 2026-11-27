@@ -190,13 +190,17 @@ The [D159 sweep](archive_and_forget_design.md#33-the-sweep) deletes both
 sets by document, including published representations and deliveries
 whose chunk rows are already gone.
 
-**First publication.** Activate the gate with compatible readers after
-draining and fencing incompatible workers. Enroll each new D162 representation
-as pending for passages in the same lineage transaction that first makes it
-E0-ready, before CHUNK is enqueued. Enrollment is idempotent. It exists even
-before a delivery or packing stamp is recorded. CHUNK commits the selected
-delivery and stamp with the grid, including an empty grid.
-Waiting, failure and delivery replacement preserve pending status.
+**First publication.** Apply the additive migration while the previous release
+serves and enrollment is inactive. Activate enrollment once compatible readers
+are serving and incompatible workers are drained and fenced.
+[D160 and D161 migration rules](packaging_distribution_design.md#61-migration-compatibility).
+
+Enroll each new D162 representation as pending for passages in the same
+lineage transaction that first makes it E0-ready, before CHUNK is enqueued.
+Enrollment is idempotent. It exists even before a delivery or packing stamp
+is recorded. CHUNK commits the selected delivery and stamp with the grid,
+including an empty grid. Waiting, failure and delivery replacement preserve
+pending status.
 
 Withhold pending passages from current and all-version SQL views, body
 fetches, passage search, adjacency and section links. Scoped passage reads use
@@ -208,6 +212,13 @@ pending. In that transaction install the final P1 projection, publish the
 grid, delete delivery checkpoints and succeed the ledger row, including on
 the empty-grid path. Keep the representation's origin records for D140.
 D143 continues from that delivery.
+
+Record and rehearse the activation and rollback procedures with the
+implementation. Before activation, roll back binaries on the expanded
+schema. After activation, keep the gate enforced during recovery. Returning
+to incompatible binaries requires a verified pre-activation restore under
+the standard restore and forget rules.
+[Restore rules](packaging_distribution_design.md#6-releases-upgrades-portability).
 
 ## 4. Provider rejection and retry
 
@@ -236,21 +247,48 @@ passage and query embedding bindings that passed. The embedding bindings
 include the actual gateway URL without credentials, model and dimensions,
 qualified endpoints, routing and fallback, zero-data-retention and
 data-collection settings, tokenizer, framing, and all qualified limits.
-Pin any request, decoder and retry settings used in parity.
+Pin any request, decoder and retry settings used in parity. Bind the fingerprint
+to the effective serving settings used for parity. Include the active tool
+catalog, D143 claims and facts states (enabled, backfilling or disabled),
+context result counts and candidate depth, retrieval deadlines, and SQL
+planner settings, tier and caps.
+[D143 reads](processing_layers_design.md#7-retrieval).
 
 Verify the complete identity of the running deployment before protected
-ingest, replay or reads, including at BEAM's supplied API URL. Carry the
-expected identity into queued work and check it again at CHUNK and
-EMBED_CHUNK execution. Each read checks the serving reader, schema and
-query adapter at execution. Use the checked settings and schema for the
-operation. Use the pinned deployment when a candidate identity is
-missing or differs. Suspend a candidate-bound run on drift until its
-recorded identity is restored.
+ingest, replay or reads. Check the deployment at BEAM's supplied API URL
+before its first tool call (`GET /operations`). Carry the expected identity
+in protected requests and queued work. Recheck it at CHUNK and EMBED_CHUNK
+execution. Each protected discovery and read requires a matching reader,
+applied schema, query adapter and effective serving settings at execution.
+Use the same resolved settings and live layer-state snapshot for the check
+and the operation. Use the pinned deployment when initial admission fails.
+On drift, refuse the request and suspend the candidate run before scoring
+until its recorded identity is restored.
 
 For parity with LoCoMo's published 94.09% run, replay its saved tool traces
 using its recorded reader and copies of its attested retained v45 stores.
 Current Full-v47 execution uses its own profile.
 [LoCoMo baselines](locomo_benchmark_design.md#2-fixed-protocol).
+
+With the implementation, record which fixtures serve as baseline and
+candidate, their snapshot and trace digests, exact restore commands,
+PostgreSQL images and schema revisions. Restore the same frozen store into
+isolated copies with its deployment ID and database name. For physical
+copies, use the recorded PostgreSQL image and retain indexes. Restore
+LoCoMo's verified receipt into empty targets with
+`python -m benchmarks.locomo.sharding.store_backup restore`. For a PostgreSQL
+19 store needed on 18, use D163's staged logical restore and require the
+copy to reproduce the pinned public-read responses.
+[LoCoMo restore](../../benchmarks/locomo/sharding/store_backup.py#L1519-L1602),
+[D163 staged restore](shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification).
+
+Record the application login, the `rememberstack_query_<database>` login
+used by open SQL, and the `rememberstack_graph_<database>` role assumed
+for traversal. Preserve owners (including `rememberstack_view_owner`),
+grants and role settings. Verify the mapped roles through the public SQL
+and graph paths before replay.
+[SQL login](../../src/rememberstack/profiles/selfhost.py#L781-L803),
+[graph role](../../src/rememberstack/surfaces/graph_queries.py#L446-L469).
 
 Dry-run frozen inputs including LoCoMo OCR and BEAM's retained rendering.
 Compare ordered spans, bodies, eligibility and D80 hashes. Check retained
@@ -265,11 +303,12 @@ a singleton with a valid vector at index `1` on a fitting grid. If the candidate
 accepts, keep the protected ingest on the pinned path. Qualification uses
 zero ingestion model calls and zero writes to protected stores.
 
-Replay the public read tools, including BEAM SQL and LoCoMo reads, with the
-recorded filters, planner settings and frozen application and SQL evaluation
-clocks, including effective and belief times. In SQL responses replace
-`request_id`, `elapsed_ms`, `execution_started_at` and `pg_snapshot_at` with
-fixed placeholders for comparison, preserving nulls. Compare the full ordered
+Replay public discovery and reads, including BEAM SQL and LoCoMo reads.
+Use the recorded layer selections, filters, budgets, planner settings and
+frozen application and SQL evaluation clocks, including effective and belief
+times. In SQL responses replace `request_id`, `elapsed_ms`,
+`execution_started_at` and `pg_snapshot_at` with fixed placeholders for
+comparison, preserving nulls. Compare the full ordered
 responses, including values, evidence, scores, applied times, statuses,
 limits, truncation and pagination. Require a reader to pass against itself
 before comparing builds. Pin query preparation, decoder, retries and routing.
@@ -287,17 +326,18 @@ preserves the published 94.09% and attestation.
 
 As part of implementation, update the
 [E1 acceptance check](../implementation_evals/eval_checks/e1_chunks_whole_blocks_no_overlap.yaml)
-to verify D58 packing and D162 splits. Require section-bounded,
-non-overlapping pieces that concatenate to the exact candidate bytes, and
-byte-identical grids when the original packing fits.
+to verify D58 packing and D162 splits. Require section-bounded, non-overlapping
+pieces that concatenate to the exact candidate bytes, the content hashes
+from §2, and byte-identical grids when the original packing fits.
 
 | Focus | Implementation release check |
 | --- | --- |
 | Packing | Byte-identical fitting output. Cover header-only overflow, YAML, OCR tables, long turns, CRLF and a skipped labelled HTML gap. Check exact spans, clipped origins, eligibility and nonblank pieces. With equal-tier cuts at 400 and 600 tokens and an anchor at 520, cut at 400 first, then respect the anchor. Reject a preferred line seam whose D80-rendered request exceeds the byte limit even though a longer scalar probe fits. Take the proved scalar cut when every preferred seam fails. |
 | Gap-only evidence | Split an eligible HTML gap beside a neighbour with a clipped block. Require a published D122 card citing the exact gap-only target span with its clipped converter provenance. |
-| Benchmark binding | Hold model and provider fixed and change only the gateway URL. Repeat with only the retention policy changed. Keep protected ingest, replay and reads on the pinned path, and refuse a mismatched BEAM API URL before retrieval. Exercise missing identity and worker, reader and schema drift. If drift follows candidate enqueue, stop before candidate execution. |
+| Benchmark binding | Hold model and provider fixed and change only the gateway URL. Repeat with only the retention policy changed. Keep protected ingest, replay and reads on the pinned path, and refuse a mismatched BEAM API URL before retrieval. Flip only facts off on an otherwise qualified BEAM deployment. Require candidate refusal before discovery when flipped before admission and before read execution when flipped after discovery. Exercise missing identity and worker, reader and schema drift. If drift follows candidate enqueue, stop before candidate execution. |
 | Provider | Cover stock and drifted routing, inconclusive bounds, full delivery and framed minimum input, and individually fitting items that exceed a batch limit together. Exercise real 429s and typed rejections, shuffled, missing and duplicate positions, and a good vector beside a zero-norm one. Malformed batches attest nothing. Test malformed singletons in both layouts and a valid sibling checkpoint. |
 | Publication | Dead-letter legacy E1 after a successful batch. Observe its handles through SQL and search, refuse CHUNK recovery, and verify ordinary embed replay preserves them. Check SQL, search and body fetches, adjacency and section links before and after D162 publication. Split a section's first block and check that references and history each return its first piece only. |
+| Rollout | Rehearse the additive migration with the previous release serving reads and writes. Induce a DDL lock timeout and verify D161 retry from the committed revision. Verify old reads and writes on the expanded schema. At activation, prove an incompatible worker's late attempt cannot commit. Interrupt first publication before commit, verify passages stay private, then resume and publish once. Rehearse rollback before and after activation. |
 | Scoped passages | Search by document ID with an E0-ready in-force D162 version and a published predecessor. Check before CHUNK enqueue, after CHUNK dead-letters without writing rows and after an EMBED_CHUNK dead letter. Each yields `boundary` and names the document in `scope_pending`. On a published empty grid with an exhausted search, require `known_empty`. Publish between nomination and the pending check and verify both use the original read snapshot. |
 | Claims tails | Ingest a fresh document that splits, with facts disabled and with the full pipeline. After each tail finishes, find a new claim through semantic claim search and verify it remains current testimony with no `reextracted` transition. |
 | Recovery | Audit the two hosted dead letters and canary any with verified privacy. Exercise ambiguous evidence, an old sidecar, changed envelopes on first ingest and replay, an interrupted P1 stamp, stale attempts and a published grid above the ceiling. Widen the envelope for a private legacy grid so it fits without cuts. Replay twice and check that one distinct embed delivery succeeds, IDs stay stable, and readiness and D143 advance on that delivery. |

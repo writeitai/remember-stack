@@ -71,7 +71,8 @@ ingestion binding. A candidate E1 path needs transport-replay parity for
 delivery and stored passage vectors. Candidate readers, schemas and query
 embedding paths require public tool parity. At runtime, protected ingest,
 replay and reads require the exact candidate fingerprint that passed those
-checks. Use the pinned path if the candidate identity is missing or differs.
+checks, including the serving layer states and retrieval budgets. Use the
+pinned path if the candidate identity is missing or differs.
 [D162 release checks](split_oversized_chunks_design.md#5-benchmark-admission-and-release-checks).
 
 The published 94.09% run used retained Full-v45 ingestion and frozen image

@@ -8781,8 +8781,9 @@ their cuts and handles. Confirmed per-input rejection is terminal, and
 capacity retries stay bounded. LoCoMo and BEAM require frozen-grid,
 ingest-delivery and public tool-response parity. Protected ingest, replay
 and reads stay on the pinned path unless the runtime worker, reader,
-schema and embedding bindings match the qualified candidate. The exact
-LoCoMo binding must qualify at 22,528 Qwen tokens or higher.
+schema, embedding bindings and effective serving settings match the qualified
+candidate. The exact LoCoMo binding must qualify at 22,528 Qwen tokens or
+higher.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

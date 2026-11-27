@@ -21,8 +21,9 @@ points to a per-input boundary near 20k tokens. The exact route boundary and
 the failed rendered sizes still need measurement. The adapter retries generic
 429s. Replay keeps the cuts and renders again from live source facts, so a
 title rename can change the input hash when D80 includes the title.
-[Retries](../../src/rememberstack/adapters/openrouter.py#L1302-L1360),
-[E1 failure path](../../src/rememberstack/workers/e1.py#L444-L500),
+[Retry classifier](../../src/rememberstack/adapters/openrouter.py#L1302-L1360),
+[bounded retry loop](../../src/rememberstack/adapters/openrouter.py#L1079-L1124),
+[E1 replay render](../../src/rememberstack/workers/e1.py#L262-L295),
 [title lookup](../../src/rememberstack/spine/chunk_catalog.py#L270-L289).
 
 Every converter reading feeds the same packer. The text route returns up to
@@ -154,6 +155,18 @@ switching a benchmark to an unqualified path.
 [LoCoMo guard](../../benchmarks/locomo/runner.py#L1714-L1729),
 [BEAM reader](../../benchmarks/rs_harness_beam/answer_agent.py#L692-L705).
 
+An in-process HTTP probe held the API and BEAM reader fixed and disabled only
+facts in a stub layer catalog. `facts_context` disappeared from discovery and
+from BEAM's event-ordering calls. The live catalog also supplies backfill
+state for read disclosure. Deployment deadlines and SQL caps can change read
+results under the same builds. Admission needs the resolved settings for
+each protected read.
+[Discovery](../../src/rememberstack/surfaces/http_api.py#L2403-L2415),
+[D143 admission](../../src/rememberstack/spine/processing_layers.py#L519-L614),
+[BEAM event ordering](../../benchmarks/rs_harness_beam/answer_agent.py#L449-L508),
+[retrieval deadline](../../src/rememberstack/profiles/selfhost.py#L1432-L1439),
+[SQL limits](../../src/rememberstack/surfaces/query_sandbox/executor.py#L586-L600).
+
 Matching chunk hashes and queries on retained vectors do not exercise ingest
 delivery. The current OpenRouter decoder sorts indices and checks count and
 dimension, so a singleton at index `1` with a valid vector passes P1. The
@@ -170,3 +183,12 @@ before using them to isolate reader changes.
 [SQL response](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061-L1085),
 [BEAM SQL path](../../benchmarks/rs_harness_beam/answer_agent.py#L511-L525),
 [LoCoMo tool dispatch](../../benchmarks/locomo/retrieval.py#L165-L202).
+
+The published LoCoMo serving revision pins PostgreSQL 19 RC 1. The physical
+backup contains the stopped PostgreSQL volume. A logical copy into PostgreSQL
+18 rebuilds indexes, which can change the order of retrieved candidates. Verify
+public reads across the copy. Preserve the database name because migrations
+and the running reader derive the query and graph roles from it.
+[Published server image](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/Dockerfile.postgres#L1),
+[volume backup](../../benchmarks/locomo/sharding/store_backup.py#L1248-L1263),
+[retained-store restore evidence](evidence_driven_fact_eligibility_20261127.md#retained-store-oracle).
