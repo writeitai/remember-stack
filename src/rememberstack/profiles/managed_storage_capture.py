@@ -42,6 +42,7 @@ from rememberstack.core.corpus_export import desired_export_revision
 from rememberstack.core.corpus_export import original_name
 from rememberstack.core.corpus_export import PIPELINE_ASSET_KINDS
 from rememberstack.core.corpus_export import READER_ASSET_KINDS
+from rememberstack.core.corpus_export import READER_PAGE
 from rememberstack.core.corpus_export import render_document_indexes
 from rememberstack.core.storage_capture import capture_request_id
 from rememberstack.core.storage_capture import check_capture_encoding
@@ -571,6 +572,7 @@ class StorageCaptureCatalog:
         files = {
             original_name(document.mime): "documents.corpus_original",
             "document.md": "documents.corpus_derivative",
+            READER_PAGE: "documents.corpus_derivative",
             "pageindex.json": "documents.corpus_derivative",
             "document.json": "documents.corpus_derivative",
         }

@@ -603,7 +603,8 @@ no text.)
 ## 8. What P3 and the mounts show
 
 Media documents are ordinary lineages in D155's corpus tree. Their real folders
-contain a **copy of the whole original**, exact canonical `document.md`, active
+contain a **copy of the whole original**, exact canonical `document.md`, a
+navigable `reader.html` view, active
 PageIndex, optional source map and every reader asset (keyframes, thumbnails,
 crops and transcript interchange). Raw remains the immutable source of truth;
 copying it for browsing is accepted. No per-keyframe pseudo-documents. Reader

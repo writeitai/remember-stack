@@ -275,7 +275,12 @@ class CorpusPublisher:
         folders.add(document.path)
         self._catalog.set_paths(lock=lock, doc_id=doc_id, paths=folders)
         export = load_document_export(
-            document, artifact_store=self._artifacts, policy=self.policy
+            document,
+            artifact_store=self._artifacts,
+            policy=self.policy,
+            git_targets=lambda refs: self._readers.git_targets(
+                deployment_id=lock.deployment_id, source_refs=refs
+            ),
         )
         existing = {key.root for key in self._store.iter_keys(prefix=export.path)}
         desired = {export.path + "/" + file.path for file in export.files}
@@ -283,7 +288,13 @@ class CorpusPublisher:
         changed = [
             file
             for file in export.files
-            if not (unchanged and export.path + "/" + file.path in existing)
+            # Generated files can change when a git target moves without an
+            # edit to this document or its publication marker.
+            if not (
+                unchanged
+                and isinstance(file, CopyFile)
+                and export.path + "/" + file.path in existing
+            )
             and self._store.sha256_of(key=ObjectKey(export.path + "/" + file.path))
             != file.sha256
         ]

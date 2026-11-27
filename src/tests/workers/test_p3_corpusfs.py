@@ -1,12 +1,15 @@
 """D155 activation: actual profile, ledger, readiness and normal deletion, no models."""
 
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+import posixpath
 from typing import Any
 from uuid import uuid4
 
+from lxml import html
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -15,6 +18,7 @@ from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing.model_provider import FakeModelProvider
 from rememberstack.core.corpus_export import CorpusDocument
+from rememberstack.core.corpus_export import READER_PAGE
 from rememberstack.model import ObjectKey
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import RunResultOutcome
@@ -22,6 +26,7 @@ from rememberstack.profiles import SelfHostProfile
 from rememberstack.profiles import SelfHostSettings
 from rememberstack.spine import PipelineReadinessCatalog
 from rememberstack.spine.processing_layers import ProcessingLayerCatalog
+from tests.workers.test_corpus_reader_export_pg import _seed
 from tests.workers.test_corpus_reader_export_pg import corpus as corpus
 from tests.workers.test_corpus_reader_export_pg import engine as engine
 
@@ -60,6 +65,95 @@ def _ready(engine: Engine, source: CorpusDocument, *versions):
             pipeline=False, p1=False, live_graph=False, p3=True
         ),
     )
+
+
+@pytest.mark.parametrize(
+    "corpus",
+    [
+        {
+            "markdown": (
+                "## D100 — One Shared Runtime\n\n"
+                "[Decision](../decisions.md#d100--one-shared-runtime)\n"
+                "[Missing](../analysis/actual-cost-settlement.md)\n"
+            ).encode()
+        }
+    ],
+    indirect=True,
+)
+def test_git_links_publish_and_refresh_as_target_appears_moves_and_leaves(
+    active, engine: Engine
+) -> None:
+    profile, source, store = active
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE documents SET source_kind = 'git', source_ref = 'repo:design/designs/foo.md' "
+                "WHERE doc_id = :doc"
+            ),
+            {"doc": source.doc_id},
+        )
+
+    def links() -> dict[str, str | None]:
+        page = html.fromstring(
+            store.read_bytes(key=ObjectKey(f"{source.path}/{READER_PAGE}"))
+        )
+        return {link.text_content(): link.get("href") for link in page.xpath("//a")}
+
+    profile.seed_corpus_work()
+    results = profile.worker_loop(worker_class="llm", concurrency=1).drain_due()
+    assert results and all(row.outcome == RunResultOutcome.SUCCEEDED for row in results)
+    published = _ready(engine, source)
+    assert published.ready
+    assert links() == {"Decision": None, "Missing": None}
+
+    target = replace(
+        source,
+        doc_id=uuid4(),
+        version_id=uuid4(),
+        representation_id=uuid4(),
+        structure_generation_id=uuid4(),
+        source_kind="git",
+        source_ref="repo:design/decisions.md",
+        title="Decisions",
+        placement_path=None,
+    )
+    _seed(engine, target)
+    assert profile.run_projection(plane="p3") == {"p3": 2}
+    fragment = "#d100--one-shared-runtime"
+    assert links() == {
+        "Decision": posixpath.relpath(f"{target.path}/{READER_PAGE}", source.path)
+        + fragment,
+        "Missing": None,
+    }
+    target_reader = html.fromstring(
+        store.read_bytes(key=ObjectKey(f"{target.path}/{READER_PAGE}"))
+    )
+    assert target_reader.xpath("//h2/@id") == [fragment[1:]]
+    assert (
+        _ready(engine, source).capabilities["p3"].version
+        == published.capabilities["p3"].version
+    )
+
+    moved = replace(target, title="Moved decisions")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_metadata SET title = :title WHERE version_id = :version"
+            ),
+            {"title": moved.title, "version": moved.version_id},
+        )
+    profile.run_projection(plane="p3")
+    assert (
+        links()["Decision"]
+        == posixpath.relpath(f"{moved.path}/{READER_PAGE}", source.path) + fragment
+    )
+    assert not list(store.iter_keys(prefix=target.path))
+
+    archive = profile.api_deployment().archive
+    assert archive is not None
+    archive.archive_document(deployment_id=source.deployment_id, doc_id=target.doc_id)
+    assert profile.run_projection(plane="p3") == {"p3": 1}
+    assert links() == {"Decision": None, "Missing": None}
 
 
 def test_readiness_matches_only_current_document_digest(active, engine: Engine) -> None:
