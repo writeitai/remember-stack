@@ -1656,7 +1656,7 @@ CREATE TABLE chunks (
   block_start     integer NOT NULL,            -- first intersected block ordinal (preceding block for a D162 gap-only piece)
   block_end       integer NOT NULL,            -- last block ordinal (inclusive)
   chunk_content_hash text NOT NULL,            -- ordered block-hash digest or D162 tagged digest of the exact source slice
-  extraction_input_hash text NOT NULL,         -- stable E2 input key (E1 §7), scoped to the piece ID under D162
+  extraction_input_hash text NOT NULL,         -- Selection input key (E1 §7, D162 §2)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)

@@ -8760,14 +8760,16 @@ generations, retrieval and rendering use their existing code and identities.
 Check each full D80 embedding input against a provider-qualified ceiling
 using a pinned tokenizer. Refine only failing candidates into lossless,
 section-bounded pieces with exact offsets, provenance and deterministic IDs.
-Fitting grids keep every stored field. Each split piece gets fresh E1 and E2
-work. READY and exposed grids keep their cuts. Confirmed size dead letters
-on never-published versions recover from CHUNK. Confirmed input rejection is
-terminal and capacity retries remain bounded.
+Fitting grids keep every stored field. Each split piece gets a
+generation-specific ID, a fresh vector and a fresh E2 completion. Stable
+Selection keys for ineligible pieces preserve matching Claimify inputs.
+E1-complete and exposed grids keep their cuts. CHUNK recovers confirmed size
+dead letters on incomplete grids with proven reader isolation. Confirmed
+input rejection is terminal and capacity retries remain bounded.
 
 Require offline full-row equality on frozen LoCoMo v45 and BEAM inputs at
 their qualified benchmark ceiling of at least 22,528 tokens, including the
-rendered inputs and derived D122 producer windows.
+rendered inputs, derived Claimify stamps and ordered D122 producer windows.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

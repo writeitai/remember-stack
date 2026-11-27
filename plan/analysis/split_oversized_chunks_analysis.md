@@ -31,15 +31,27 @@ piece. Render and check the actual pieces, and qualify a ceiling that
 admits a single nonblank scalar with maximum header and framing.
 [D80 mode selection](../../src/rememberstack/core/embedding_input_policy.py#L204-L223).
 
-E0 readiness can expose chunk IDs through SQL before E1 completes. Legacy
-E1 can also write successful P1 batches before a later batch fails. A
-dead letter therefore leaves publication status unresolved. Repacking is
-safe only with evidence that readers never had access to the grid. The work
-ledger deduplicates by stage and component version, so restarting CHUNK
+The ledger records grid completion when `embed_chunk` succeeds. E0 sets
+`ready` before CHUNK, so SQL can expose chunk IDs as soon as they are written.
+E1 can also write P1 batches before a later batch fails. A recovery that
+changes cuts therefore needs separate evidence that readers never had access.
+The ledger deduplicates by stage and component version, so restarting CHUNK
 must explicitly reopen the failed embed work after any private grid replacement.
+[E1 completion check](../../src/rememberstack/spine/processing_layers.py#L624-L644) ·
 [Public chunk view](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719) ·
 [E1 batch write](../../src/rememberstack/workers/e1.py#L535-L572) ·
 [Work identity](../../src/rememberstack/spine/work_ledger.py#L1996-L2023).
+
+Packing can produce a new grid over the same representation and spans.
+P1 upserts and E2 work deduplication use chunk IDs, so the full packing
+generation belongs in a split piece's ID. D122 hashes each producer's
+Selection key in order. Eligible pieces can emit different cards after
+fresh extraction. Ineligible pieces always complete empty, so a stable key
+for each unchanged slice preserves matching inputs for its Claimify consumers.
+[Same-representation repack](../../src/tests/workers/test_reuse_lifecycle.py#L1040-L1114) ·
+[P1 upsert](../../src/rememberstack/adapters/postgres_p1.py#L262-L280) ·
+[E2 enqueue](../../src/rememberstack/workers/e1.py#L855-L871) ·
+[Empty Selection and D122 hashing](../../src/rememberstack/workers/e2.py#L540-L606).
 
 ## Benchmark sizing
 
@@ -67,7 +79,10 @@ fixed. Changing ordinals from `0, 1, 2` to `0, 10, 20` drops producers
 from the last chunk's previous-eight window. Moving the header into the
 indexed body changes body fetches. Dropping only the typed section title
 can change E2 grounding. Full rows plus the effective E2 location pairs
-and D122 windows capture these dependencies.
+and D122 windows capture these dependencies. E2 stamps the Claimify hash
+on completion. The offline check can derive that stamp from candidate
+Selection keys before comparing the completed rows.
+[E2 stamp](../../src/rememberstack/spine/claim_catalog.py#L388-L394) ·
 [D122 producer lookup](../../src/rememberstack/workers/extraction_references.py#L56-L63) ·
 [Body fetch](../../src/rememberstack/surfaces/query_sandbox/nomination.py#L811-L832) ·
 [E2 location handling](../../src/rememberstack/workers/e2.py#L1691-L1737).

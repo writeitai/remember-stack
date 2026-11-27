@@ -239,7 +239,8 @@ uses the original row assembly and identities.
   golden set (spike 1). Starting point: mid-hundreds of tokens.
 
 **Chunk identity.** Intact candidates keep `chunk_content_hash = hash(ordered block hashes)`.
-D162 pieces use the tagged digest of their exact source slice and deterministic span IDs.
+D162 pieces use a tagged digest of their exact source slice and deterministic
+IDs scoped to the representation and full packing generation.
 
 ## 5. Embedding granularity — multi-granularity by architecture, not tiny chunks (D58)
 
@@ -318,8 +319,8 @@ change.
 The lifecycle design owns the *contract* (cost ∝ the edit); this section owns the mechanism:
 
 These reuse rules apply to intact chunks. [D162 split pieces](split_oversized_chunks_design.md#2-refine-only-failing-candidates)
-get fresh embedding, Selection, Claimify and grounding, with the usual
-eligibility rules.
+get fresh embeddings and E2 completions. Stable Selection keys for ineligible
+pieces allow their D122 consumers to reuse matching inputs.
 
 - **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
   new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain). A chunk

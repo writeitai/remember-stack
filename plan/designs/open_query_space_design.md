@@ -807,12 +807,13 @@ reports the same current search-configuration attestation and freshness.
 
 `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` share one body
 path. It obtains bytes only after PG confirms the current ready
-document/version/representation/section coordinate, then verifies the
-reproducible embedding-text hash and header separation. The source-content
-hash is a returned coordinate derived from ordered block hashes or, for D162
-pieces, exact source-slice bytes. P1 holds the normalized body, so confirmation
-uses the embedding-text hash. The path returns source body and D80 location
-header in separate columns. The header is never asserted evidence.
+document/version/representation/section coordinate. The E1 writer stores
+the normalized body in P1 and the D80 header on the chunk row. The reader
+recomposes the embedding input from those fields and verifies its hash
+against the recorded embedding-text hash. The returned source-content hash
+is derived from ordered block hashes or, for D162 pieces, exact source-slice
+bytes. The path returns the normalized body and D80 location header in
+separate columns. The header serves as location context only.
 `fetch_chunk_bodies` is this exact path
 minus nomination: `input_ordinal` records first input position, duplicate IDs
 collapse to that first position, and more than 50 IDs fails

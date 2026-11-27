@@ -78,8 +78,8 @@ results, its generation and stable source-input basis. Normalize temporary label
 to validated source descriptors before persistence; preserve exact text and
 range/origin information needed for occurrence remapping.
 
-Matching prior-version inputs reuse the frozen Selection output; retries never
-regenerate a committed response. Uncommitted concurrent calls may race, but only
+Intact chunks with matching prior-version inputs reuse the frozen Selection
+output. Retries replay the committed response. Uncommitted concurrent calls may race, but only
 one accepted result becomes authoritative through existing transaction/CAS
 patterns. Do not add a second queue or distributed cache. Associate results with
 each consuming chunk occurrence so position changes do not corrupt evidence.
@@ -96,8 +96,10 @@ call. Empty representations follow the existing empty completion path.
 
 ## Reuse, including negative dependencies
 
-Selection's stable reuse basis is its existing own/neighbor source context,
-header and generation. Claimify's effective basis adds the ordered stable
+For intact chunks, Selection's stable reuse basis is its own/neighbor source
+context, header and generation. [D162 defines Selection keys for split
+pieces](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
+Claimify's effective basis adds the ordered stable
 Selection-input bases of every owning unit in its eligible preceding region,
 including units that emitted no cards, and the reference-policy generation.
 Those Selection bases include any neighbor source used to define their cards.
@@ -107,12 +109,11 @@ competing referent even though the old cited card is unchanged. Hashing the enti
 document is unnecessarily broad. A fixed source region captures both positive
 and negative dependencies while bounding the spread of invalidation.
 
-Do not include absolute offsets, document-version IDs, temporary labels or freshly
-generated summaries in content identity. Identical stable inputs must reuse the
-same frozen Selection decision, not call the model to obtain new cards. For each
-new occurrence remap all selected evidence into its allowed source units, including
-reference-card passages. Reject ambiguous repeated-text remapping; never take the
-first global substring match. Existing D56 same-claim-ID reuse and D119 occurrence
+Content-based keys exclude absolute offsets, document-version IDs, temporary
+labels and freshly generated summaries. For each new occurrence remap all
+selected evidence into its allowed source units, including reference-card
+passages. Reject ambiguous repeated-text remapping; never take the first
+global substring match. Existing D56 same-claim-ID reuse and D119 occurrence
 evidence stay mandatory. Header timestamp changes retain their documented broader
 invalidation; shifting chunk boundaries can also change actual input context.
 

@@ -253,7 +253,8 @@ infrastructure). The operational surface over it is thin and deterministic:
   transition may reroute it through the backfill lane when large. `payload` remains handler input
   for inspection, never the source of route, schedule, or retry state.
   [D162 size recovery](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished)
-  re-runs CHUNK before reopening a confirmed size failure on a never-published grid.
+  re-runs CHUNK before reopening a confirmed size failure on an E1-incomplete
+  grid proven to have been continuously private.
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.
