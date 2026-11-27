@@ -218,8 +218,11 @@ lineage's current extraction basis *under the lineage's mode*:
   bump, or a structurer bump). For [proposed D162 grid repair](split_oversized_chunks_design.md#publication),
   use eligible published occurrences to determine gains and losses of currency.
   Fresh claims from superseded living versions enter history at publication.
-- **`living` version supersession**: claims whose chunks are absent from the new current
-  version flip non-current (`version_superseded`);
+- **`living` version supersession**: claims absent from the eligible versions
+  flip non-current (`version_superseded`). Under [proposed D162](split_oversized_chunks_design.md#publication),
+  standing advances at ordered reconciliation. Count published carriage on the
+  standing version and any newer completed claims basis awaiting reconciliation,
+  even when the source head has moved;
 - **`snapshot`**: version succession flips nothing.
 
 **What currency is not.** Not supersession, not invalidation, not a validity judgment — no

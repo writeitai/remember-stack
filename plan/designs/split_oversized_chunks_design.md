@@ -24,6 +24,16 @@ a singleton request. For OpenRouter, a hard allowlist must cover every
 reachable endpoint, since preference order permits marketplace fallback.
 [Routing code](../../src/rememberstack/adapters/openrouter.py#L1001-L1034).
 
+Stock self-host Compose with automatic routing uses the legacy ingestion
+path. Preference-only routing also uses that path until the operator
+configures and activates a qualified closed binding. Setup verifies the
+effective model, dimensions, endpoint set and actual routing payload against
+the qualified fingerprint before admitting paid ingestion to D162. Show
+which binding needs qualification on an activation failure. After activation,
+a mismatch blocks new paid work on the affected route until it is qualified
+again. CHUNK, embedding dispatch and replay check the pinned envelope.
+[Compose defaults](../../compose.yaml#L28-L36).
+
 A cheap upper bound within the limit proves fit. If the bound exceeds the
 limit, the binding must decide actual fit with the exact pinned counter or
 an equally conclusive offline check. Custom bindings supply the same proof
@@ -62,18 +72,25 @@ trial ceiling for LoCoMo's pinned binding, subject to §5.
 3. Take the next eligibility change, accepted anchor or candidate end,
    whichever comes first, as the hard endpoint. Set the probe goal at that
    endpoint or the end of the target-th whitespace token (**400** by
-   default), whichever comes first.
-   Probe prefixes of 1, 2, 4, … Unicode scalars from the first non-whitespace
-   scalar, capped at the goal. Extend each cut across following whitespace
-   up to the hard endpoint before testing fit. Keep CRLF together within
-   that bound. Emit a whitespace-only run intact with D80's empty-body
-   skip. Keep the last proved fit before the first overflow, or the goal
-   if reached. If that reaches the hard endpoint, take the cut. Otherwise
-   take the strongest fitting boundary tier in the latter half of the
-   proved reach by scalar distance, then the furthest cut in that tier.
-   The proved prefix itself is a scalar fallback. Test each cut against the
-   full D80 singleton request. Leading whitespace stays with the first
-   piece. An edit may move cuts up to the next unchanged accepted anchor
+   default), whichever comes first. Extend each tested cut across following
+   whitespace up to the hard endpoint or the next block start. Keep CRLF
+   together within those bounds. Keep leading whitespace with the piece
+   and emit a whitespace-only run intact with D80's empty-body skip.
+
+   If the piece starts at a block start, allowing whitespace before it,
+   try complete-block runs whose content ends by the goal, furthest first.
+   Take the first legal run end whose full D80 singleton request fits,
+   even before the midpoint of the probes below. Otherwise cap the probe
+   goal at the next block edge as well. This gives the next intact block
+   its own fit check after a split block or a gap.
+
+   Probe prefixes of 1, 2, 4, … Unicode scalars from the first
+   non-whitespace scalar, capped at that goal. Keep the last proved fit
+   before overflow or the goal if reached. Take the cut if it reaches the
+   hard endpoint or next block edge. Otherwise choose the strongest fitting
+   boundary tier in the latter half of the proved reach by scalar distance,
+   then the furthest cut in that tier. The proved prefix is the scalar
+   fallback. An edit may move cuts up to the next unchanged accepted anchor
    or candidate end.
 4. Assess splits under multi-chunk header semantics. For a failing legacy
    singleton without a required interior eligibility cut, cap the first
@@ -132,11 +149,13 @@ changed Selection input. Unaffected targets can reuse their frozen results
 and claim IDs even when a legacy slot hash differed.
 
 **Text origin.** Same-version repair copies the exact predecessor parent's
-stored D140 date, including unknown. A dated new version takes the earliest
-eligible origin from a non-deleted earlier version of its lineage, capped by
-its own date (D140). Ties use version number, then ordinal. With no match
-it uses its own date. An undated version keeps an unknown origin. For
-retained whole chunks compare the date-free keys for the slots E2 consumed.
+stored D140 date, including unknown. First-ingest replay uses the new-version
+date rule and can recover equivalent committed date decisions. A dated new
+version takes the earliest eligible origin from a non-deleted earlier version
+of its lineage, capped by its own date (D140). Ties use version number, then
+ordinal. With no match it uses its own date. An undated version keeps an
+unknown origin. For retained whole chunks compare the date-free keys for
+the slots E2 consumed.
 
 For a new fragment, also look for its exact byte span in the earlier
 version's original parent, even if the parent hash changed. Match stable
@@ -191,23 +210,43 @@ Reuse of paid products follows §2.
 D143 gaps, admissions and frontiers name the packing basis. A replacement
 gets its own layer decisions. Retire unentered predecessor gaps when their
 basis is superseded. Already-admitted facts work on a published claim basis
-drains to its frontier before that claim basis is replaced. The D143 rules
-for missing layers in living and snapshot lineages still apply.
+drains to its frontier before that claim basis is replaced.
+
+If claims are off when a passage repair switches a version with published
+claims, record a claims gap for the new passage basis in the same transaction.
+This gap is a repair obligation. D143's enable seed and advance admit it
+by basis, including for a historical living version. The ordinary
+head-only target and discharge rules apply to first extraction. Check the
+layer, published passage basis, liveness and ordering under the D143
+fences. The obligation stays open until claims publication or a superseding
+passage cutover transfers it. Archive pauses it and unarchive resumes it.
+Version deletion cancels it and forget erases it.
+[Layer advance](../../src/rememberstack/spine/processing_layers.py#L275-L354).
 
 Scope the D90 fan-out record, entity units, D118 staging membership and all
 admission and completion checks to the exact basis as well as their existing
 generation pins. Materialize the replacement's expected claim and entity
 sets (or explicit empty completion) from its own completed occurrences.
-An application can enter the existing entity stream only through matching
-staging and a materialized unit on the same basis. Admission and final
-apply require current testimony carried by that eligible published basis.
-Serialize the final check under the lineage fence before writing facts.
-If an admitted membership loses eligibility, retire it without applying it
-so it releases its stream position. Complete a basis using its own units and
-their application receipts. Claim-keyed normalization outputs and receipts can satisfy new
-memberships. Keep the entity stream's ordering and semantic generations.
+Admission and final apply require a matching unit and a staging membership
+on a basis that carries current testimony. A publication or repointing
+records affected membership retirements under the lineage fence and wakes
+the existing entity work. Under D118's canonical entity lock, recheck the
+application's memberships under its lineage fence before head selection or
+final apply. An unapplied application with an eligible membership keeps
+its seat. When the last eligible membership is retired, clear its stream
+sequence and invalidate its prepared attempt. Late provider responses
+fail the attempt check. Publication takes the lineage fence and leaves
+stream transitions to the entity worker.
+
+For completion, each expected membership has its actual application
+receipt or a durable retirement for that basis. Preserve applied receipts
+and claim-keyed normalization outputs. If repointing restores eligibility,
+open the basis's membership and unit again as needed. Unapplied work that
+released its position re-enters at a new sequence and revalidates its
+inputs. An applied receipt satisfies the restored membership.
 [D90 fan-out guard](../../src/rememberstack/spine/work_ledger.py#L1538-L1547),
-[D118 admission and receipt retirement](../../src/rememberstack/spine/fact_applications.py#L363-L399).
+[D118 head](../../src/rememberstack/spine/fact_applications.py#L363-L414),
+[completion](../../src/rememberstack/spine/fact_applications.py#L527-L540).
 
 A durable deployment activation fence protects the affected routes. Before
 enabling split writes, close database writer admission for incompatible
@@ -261,12 +300,22 @@ oversized ready grid use the same path. Before passage cutover, replay with
 the same qualified fingerprint resumes the failed stage on its pending
 basis. If an activated qualified envelope differs, reserve a new
 pending basis and revoke the previous pending basis's write admission in
-one transaction under the fences. Plan from the verified published grid,
-or the failed legacy grid if the reading has yet to publish. If that grid
-now fits, keep its cuts and IDs and retry unfinished delivery. Retain the
-serving pointers and indexes until a verified cutover. Link failed work to
-its replacement. Recover any qualifying attestations from obsolete staging
-under §2.
+one transaction under the fences. Use the verified published grid or the
+verified failed legacy grid where available. If that grid now fits, reuse
+its cuts and IDs for unfinished delivery. On first ingest without either,
+recreate the legacy candidates from pinned E0 artifacts, generations,
+eligibility and rendering facts. Verify any committed pending grid with
+those pins and the old envelope. Plan from the reproduced candidates
+under the new envelope.
+
+Link failed work to its replacement. Use the verified obsolete grid as a
+same-version reuse source under §2. Carry equivalent committed vectors,
+frozen Selection checkpoints and grounded Claimify results, including
+completed empty results and remapped occurrences. Require the same input,
+date, producer and grounding checks as on other reuse. These products
+stay private until their replacement basis publishes.
+[Selection checkpoint](../../src/rememberstack/spine/selection_catalog.py#L140-L201),
+[Claimify commit](../../src/rememberstack/spine/claim_catalog.py#L303-L396).
 
 ### Publication
 
@@ -295,11 +344,23 @@ Retained coordinates and evidence follow D159 erasure.
 
 **Testimony currency.** A snapshot lineage counts carriage on every live
 version with published claims. A living lineage counts carriage on its
-standing version (the last one settled by guarded reconciliation) and newer
-versions with completed published claims awaiting that reconciliation.
-Apply D143's completeness guard even with both layers on by default. While
-newer version B serves sources with claims pending or disabled, A still stands.
-Once B settles, A's repaired occurrences are historical.
+standing version and on newer versions with completed published claims
+awaiting reconciliation. Store the standing version as part of D54
+reconciliation. Under the lineage fence, a claims-mode or full reconcile
+can advance standing to its own live version once its selected claims
+are complete and D143's ordering and earlier facts drain allow it. Do
+this even with both layers enabled by default. The version number must
+advance, except for repointing on removal. Use the settling version's
+source time and sync cycle for the D54 diff, recount and zero-support
+policy. Commit them with the standing pointer.
+
+If A stands, B completes claims, and C takes the source head with claims
+pending or disabled, B's ordered reconcile settles B in either schedule.
+C gets its own settlement when its eligible claims tail or full reconcile
+completes. A repair of an older version can publish its historical
+occurrences through the repair gap. On activation, recheck selected
+legacy bases with completed D143 tails under this rule. A legacy
+reconcile success alone cannot establish that its guard settled testimony.
 
 Under the lineage fence, diff the predecessor and successor `chunk_claims`.
 If repair withdrew a reuse source during extraction, recheck reuse or
@@ -315,8 +376,7 @@ applies if support reaches zero. Commit occurrence publication, currency,
 fact recount, review and evidence-change delta together. Complete the claims
 barrier and open the applicable D143 tail in the same commit. Discharge
 historical repair's facts gap so repointing can reopen it if that version
-becomes standing. Ordinary supersession follows D54/D143 using completed
-published claim occurrences.
+becomes standing.
 [D54 completion](evidence_lifecycle_design.md#5-reconciliation--one-flow-for-both-problems),
 [claim default](../../src/rememberstack/spine/migrations/versions/p0_02_0004_claims_facts_evidence.py#L40-L46),
 [D143 guard](../../src/rememberstack/spine/lifecycle.py#L158-L197).
@@ -348,17 +408,44 @@ fingerprints under D140's period fence. If A drops a claim B still carries,
 currency and counts can stay the same while the union loses A's interval.
 [D140 window review](effective_time_and_section_references_design.md#82-adjudication-input-and-window-review).
 
-**Passage reads.** Switch the published passage pointer and its active
-`chunk_search` rows atomically, moving retained vectors to private storage.
-When E2 is required, this is the claims cutover transaction. Representations
-awaiting verified cutover retain their legacy reads. P1 nomination and
-confirmation, `memory_v1` chunk views, document search, reference links and
-adjacency use the published passage basis through hydration in one read
-snapshot. Block links choose the first published piece covering the block
-by source order. Character links choose the containing piece. A superseded
-ID is invisible to live adjacency.
+#### Passage cutover and reads
+
+Build a private `chunk_search` relation with both HNSW and BM25 indexes for
+a batch of ready D162 passage cutovers, including first publication of a
+split grid. Copy rows from the serving relation, omitting the batch's
+retired rows and adding its replacements. Use a bounded build lease per
+physical projection to freeze ordinary projection writes, which wait in
+durable work. Expiry or an invalidated batch releases those writes to the
+serving projection. Forget can invalidate the build and erases affected
+rows from all copies. Ordinary fitting-grid writes bypass the build.
+
+Take the projection fence before the layer and lineage fences for writes
+that need them. Revalidate the lease, serving generation and each basis.
+Switch the projection selector and passage pointers in one transaction,
+with claims publication where E2 is required. Readers resolve and pin the
+physical relation before planning in the same snapshot as the passage
+basis, including for document search and `memory_v1` SQL ranking. Hold
+the pin through nomination, scoring, confirmation and hydration. Retire
+the predecessor after its readers drain. If retirement wins the pin race,
+restart the read snapshot under its deadline. An aborted switch leaves
+the old heap and indexes serving with their original ranking population.
+Retain reusable vectors in private storage.
+[P1 projection](postgres_p1_search_projection_design.md#7-writes-and-readiness),
+[BM25 physical totals](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/scoring/snapshot.c#L178-L204).
+
+Block links choose the first published piece covering the block. Character
+links choose the containing piece. For `adjacent_chunks(claim.chunk_id)`,
+a chunk ID used by a published claim as an occurrence or immutable origin
+can also resolve when its passage grid was replaced. Use its retained
+half-open chunk span to find the intersecting published pieces of that
+same visible version and representation under the exact-handle access
+rules. Return the covering interval in document order with the usual
+window on its two sides. Lookup, expansion and hydration use one snapshot.
+The citation keeps its original ID, text and coordinates. A retired ID
+without published claim provenance has the ordinary missing-handle result.
 [P1 nomination](../../src/rememberstack/adapters/postgres_p1.py#L891-L930),
-[adjacency](../../src/rememberstack/surfaces/query_engine.py#L2882-L2917).
+[adjacency contract](adjacent_chunks_retrieval_design.md),
+[citation guide](../../website/src/app/docs/guides/cite-sources/page.mdx#positions-and-surrounding-text).
 
 ## 4. Provider rejection and retry
 
@@ -368,6 +455,11 @@ and points to chunk repair. Fill batches in grid order, flushing before the
 next item would exceed any qualified request limit (§1). Preserve structured
 input and length errors before capacity retries. Bisect a deterministically
 rejected batch to isolate single-input failures and checkpoint valid siblings.
+OpenRouter and other indexed protocols must return each zero-based request
+position exactly once, with a non-Boolean integer index on every item.
+Validate the mapping, count and dimensions before matching or attesting
+any vector. Reject a malformed batch through the invalid-response path.
+A separately validated subrequest can still checkpoint its successful inputs.
 A confirmed deterministic singleton rejection fails the job with
 `embedding.input_too_large` or `embedding.input_rejected`, according to the
 evidence. These failures are non-retryable. Report chunk and representation
@@ -424,14 +516,17 @@ frozen manifest, grid, exact provider binding, reader and schema revisions.
 | Gate | Pass condition |
 | --- | --- |
 | Packing | Fitting output is byte-identical across converters. Test header-only overflow, YAML, OCR tables, long turns, CRLF and scalar fallback. Give inventory, fresh ingestion and repair the same oversized candidate with equal-tier cuts at 400 and 600 tokens that both fit and an anchor at 520. All three cut at 400 first, then respect the anchor. In an oversized candidate with eligible prose on both sides of a parser-skipped HTML block labelled `code`, preserve every byte in order, cut at both eligibility changes and give each piece a single eligibility. Verify clipped origins and that E2 skips the ineligible pieces. |
-| Provider conformance and replay | Prove full delivery at and below the ceiling, including exact fallback for an inconclusive bound and a framed minimal piece. Verify splitting above the ceiling. Give E1 items that fit individually and exceed the request ceiling together. It must send only fitting batches. Repeat a failed repair at the same fingerprint, then replay with a qualified second envelope while staging is durable. Reject obsolete writes, preserve the published grid and reuse qualifying staged vectors. |
+| Binding and provider conformance | Verify stock Compose and order-only routing use legacy admission. Verify a closed binding activates and effective route drift blocks paid D162 admission. Prove full delivery at and below the ceiling, including exact fallback for an inconclusive bound and a framed minimal piece. Verify splitting above the ceiling. Give E1 fitting items that together exceed the request limit. It must send only fitting batches. |
+| Replay | Resume at the same fingerprint, then replay at a different qualified envelope after partial durable work. Cover both repair and a first ingest with vectors, Selection and grounded Claimify checkpoints before first publication. Change a cut and assert zero paid calls for every equivalent committed input. Reject obsolete writes and keep any prior publication serving until cutover. |
 | Extraction and dates | Across two dated versions, test legacy → split and split → fitting with an untouched parent spanning a child and the oversize elsewhere. Assert the same origin dates and claim IDs and zero paid calls for unchanged inputs. Edit one line inside a previously unsplit oversized parent and test an untouched fragment beyond an unchanged anchor with matching context. Run the earlier repair before and after ingest of the edit. Check inherited origins and relative-date claims in both orders. |
-| Predecessor and vectors | Test two legacy generations and an older sidecar. Ambiguity preserves existing reads. Recover an unstamped P1 vector by predecessor ID with full-delivery provenance and reuse it after cutover. In the same repair, replace a matching-hash vector whose historical route truncated or cannot prove delivery. Append a dense paragraph that makes a previously fitting candidate split at the block seam. With identical D80 input and full-delivery proof, assert zero embedding calls for the preserved block despite its fragment identity. |
-| Claims and facts publication | Repair A while B serves and is still extracting, after B publishes occurrences, and after its guarded reconcile. Include B initially sources-only. Check reattachment, last-occurrence loss, currency, recount and review. After an E1-only cutover, views and scoped reads still return the published claim evidence. After claims cutover, live reads return the successor's occurrences and history retains the origin. Repair a basis with a completed facts tail and a new application for the same entity. Only the replacement unit admits and completes it. Reused claims keep their receipts and new work runs once. |
-| Historical repair and recovery | After B reconciles in a living lineage, repair A so it gains an A-only claim. Read it in history immediately at cutover. Check that it never appears as current testimony, admits a current fact application or counts as fact support while B stands. Delete B with both a retired-only and a pending-only attachment on A. A claim on A's selected complete basis regains currency. The other two stay out of current testimony and fact support. Repeat with B removed during an archive and check the same result on unarchive. |
+| Predecessor and vectors | Test two legacy generations and an older sidecar. Ambiguity preserves existing reads. Recover an unstamped P1 vector by predecessor ID with full-delivery provenance and reuse it after cutover. Replace a matching-hash vector whose historical route truncated or cannot prove delivery. Append a dense paragraph with a fitting block seam before the probe midpoint and no anchor at that seam. Cut at the seam and assert zero embedding calls for the preserved block with identical D80 input and delivery proof. |
+| Claims publication and adjacency | Repair A before, during and after B's claims publication and reconcile. Check reattachment, last-occurrence loss, recount and review. Capture a claim before switching claims off and call `adjacent_chunks(claim.chunk_id)` immediately after E1-only cutover. Verify the full covering interval and flanks in that reading, including a target split across several pieces. Re-enable claims and repeat the documented call from a scoped claim read before replacement extraction completes. Check citation coordinates and history through claims cutover. |
+| Ordered testimony | Start with A standing and B's claims published, then advance the source head to sources-only C before and after B's reconcile in separate runs. B settles in both. Compare currency and fact support, including withdrawal of A-only support and retention of B's testimony until C settles. |
+| Historical repair and recovery | With B standing, repair A while claims are off. Re-enable claims with A still historical. Verify its repair obligation publishes the new claims basis and an A-only claim is readable in history without current fact admission or support. Delete B with both a retired-only and a pending-only attachment on A. Only A's selected complete basis restores testimony. Repeat with B removed during an archive and verify unarchive. |
+| Fact application retirement | A replacement gets its own facts units and can reuse receipts from a completed predecessor. Retire one of two eligible memberships for an unapplied application and verify it keeps its sequence. Retire the last membership, including during a prepared attempt, and verify the entity stream advances and the retired basis can complete. Repoint to restore eligibility and verify the unapplied work re-enters and applies once. Check that an already-applied receipt satisfies a restored membership. |
 | Fact windows | In a snapshot lineage, the same claim supports a fact through editions A and B with distinct in-force intervals. Repair A in the same representation so it drops the claim. Assert unchanged currency and support count, loss of A's interval, a changed fingerprint and a D140 review. A decision prepared with the old union must fail validation or leave a stale basis for the queued review. |
-| Fences and ranking | Check interrupted E1/E2, obsolete workers and attempts, archive/forget and layer switches. During staging, ordered HNSW/BM25 results and scores, reference links and adjacency remain identical. Run D142's indexed-vs-exact recall, plan and latency gates on a mixed corpus. [D142 checks](../../benchmarks/p1_ranked/README.md) |
-| Error handling | Genuine 429s retry, deterministic rejection is typed and successful siblings are retained. Malformed singleton output blocks both layouts. Check the incident's actual rendered sizes. |
+| Fences and ranking | Check interrupted E1/E2, obsolete workers and attempts, archive/forget and layer switches. On a quiescent fixture, compare ordered HNSW/BM25 responses, scores, reference links and adjacency before staging, during a held-open cutover and after rollback under the same D142 planner settings. Commit a cutover and verify old pinned readers finish on their projection and new readers rank on the replacement. Run D142 recall, plan and latency gates on a mixed corpus. Measure build time, extra space and queued-write latency at corpus scale. [D142 checks](../../benchmarks/p1_ranked/README.md) |
+| Error handling | Genuine 429s retry, deterministic rejection is typed and valid siblings are retained. Check valid shuffled indices, missing indices and a duplicate-index batch with correct count and dimensions. Invalid batches attest nothing. Malformed singleton output blocks both layouts. Check the incident's actual rendered sizes. |
 
 Apply additive schema and compatible readers per D160. Activate workers
 through §3's fence, run dry inventory, then canary the two affected hosted

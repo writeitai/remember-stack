@@ -241,6 +241,9 @@ profile jobs, K compilation) revalidate the inputs they rendered from at publica
 hidden document. Whatever slips through is found by the next sweep. A sweep "finds something"
 only when it removes forgotten residue; an ordinary rebuild of a clean page or label is not
 residue.
+Under [proposed D162](split_oversized_chunks_design.md#passage-cutover-and-reads),
+forget can invalidate a passage projection build and checks every physical
+projection and private staging store for residue.
 
 The job never waits on another job and holds no lock while it waits: it reschedules itself with
 the work ledger's `not_before`. Its work item has no attempt cap: a failed sweep, or a crashed

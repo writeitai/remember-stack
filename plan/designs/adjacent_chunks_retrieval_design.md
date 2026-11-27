@@ -11,16 +11,15 @@
 
 1. **Chunk Neighborhood Determinism:**
    * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_all_versions_live` (D140): the chunk may belong to any non-deleted ready version of a live lineage — a time-scoped search can return a passage of a version that is not the lineage's newest — and is read in that version's current representation.
-   * Expanding context stays within the target's document, version and representation. Under [proposed D162](split_oversized_chunks_design.md#publication), lookup, expansion and SQL hydration share the same snapshot of that representation's published grid.
+   * Expanding context stays within the target's document, version and representation. Under [proposed D162](split_oversized_chunks_design.md#passage-cutover-and-reads), lookup, expansion and hydration share one snapshot of the published grid. A visible retained handle used by a published claim resolves to the published pieces intersecting its original span in that reading.
 2. **Symmetric Windowing (`window: int = 1`):**
    * The retrieval primitive accepts `chunk_id: UUID` and a symmetric `window: int = 1` (constrained to `1 <= window <= 2`).
-   * A `window=1` query returns up to 3 chunks: `[ordinal - 1, ordinal, ordinal + 1]` in document order.
-   * A `window=2` query returns up to 5 chunks: `[ordinal - 2, ..., ordinal + 2]` in document order.
+   * Return the target and up to `window` chunks on each side, in document order. With D162 a retained claim handle can resolve to an interval of pieces. The same window applies outside the interval's two edges.
    * Edges of documents truncate naturally (e.g. if target chunk is ordinal 0, only ordinal 0 and 1 are returned).
 3. **Consistent Wire Contract:**
    * The operation returns a standard `Envelope` with `grain = Grain.EVIDENCE`.
    * Result chunks are instances of `ChunkEvidenceResult` ordered by `ordinal ASC`.
-   * If `chunk_id` does not exist or fails visibility/provenance gates, the operation returns an empty `Envelope` with `Negative(kind=NegativeKind.KNOWN_EMPTY)`.
+   * If `chunk_id` does not exist or fails visibility/provenance gates, the operation returns an empty `Envelope` with `Negative(kind=NegativeKind.UNKNOWN_ENTITY)`.
 4. **Simplicity Over Complex Grammar:**
    * The primitive avoids complex sandbox SQL or multi-turn coordination by providing a direct, typed endpoint across HTTP, SDK, CLI, and benchmark harness.
    * The path uses D140's `chunks_all_versions_live` view and an ordered lookup over the selected representation's chunks.
@@ -52,8 +51,12 @@ def adjacent_chunks(
    FROM memory_v1.chunks_all_versions_live
    WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id
    ```
-   If no row matches, return an empty `Envelope` with `NegativeKind.KNOWN_EMPTY`.
-3. Query surrounding chunk identifiers:
+   Under D162, if no row matches, check visible retained claims provenance for the supplied
+   ID and resolve the target span to its first and last covering ordinals in the same
+   version and representation. Otherwise the target has a single ordinal. If neither
+   lookup resolves, return an empty `Envelope` with `NegativeKind.UNKNOWN_ENTITY`.
+3. Query surrounding chunk identifiers from the first target ordinal minus `window`
+   through the last plus `window`:
    ```sql
    SELECT chunk_id
    FROM memory_v1.chunks_all_versions_live

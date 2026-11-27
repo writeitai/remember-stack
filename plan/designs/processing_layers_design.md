@@ -110,7 +110,9 @@ while it is enabled and has an open gap of a live version. Like `obs_flush_versi
 rows carry no foreign key; archive and forget delete them explicitly (§6.3).
 For [proposed D162 repairs](split_oversized_chunks_design.md#dispatch-and-writes),
 each gap, admission and frontier also names its packing basis. A completed
-predecessor tail cannot settle the replacement's gaps.
+predecessor tail cannot settle the replacement's gaps. A sources-only
+cutover of a version with already-published claims records an obligation
+to repair claims on the replacement basis.
 
 ### 3.3 One fence
 
@@ -213,10 +215,12 @@ its occurrences are complete, computes the stale set and
 applies the transitions **in one transaction under the lineage lock**; otherwise it skips the
 step. The current version's own reconcile computes supersession lineage-wide when it runs. In a
 deployment without a configuration row the step runs exactly as today.
-For [proposed D162 repairs](split_oversized_chunks_design.md#publication), the
-guard also applies with both layers enabled by default. Supersession uses
-completed published occurrences of the new version. While it is pending,
-repair checks carriage on the standing testimony basis.
+Under [proposed D162](split_oversized_chunks_design.md#publication), the
+guard also applies with both layers enabled by default. A reconcile settles
+its own live version when its published claims are complete and the D143
+order permits it. It can advance standing while the newer source head is
+still waiting for claims. Historical repairs use standing testimony to
+determine current carriage.
 
 ### 4.3 The claims tail waits for earlier fact work (configured deployments)
 
@@ -396,6 +400,11 @@ predecessor's frontier, a deletion, or `setup` — with no polling job and no ne
   version only**. Older unentered gaps are discharged (their stages read `skipped`), so content that
   only older versions carried is never extracted (claims) or turned into facts (facts): a living
   lineage's history in a layer it did not process starts at its current version.
+  Under [proposed D162](split_oversized_chunks_design.md#dispatch-and-writes),
+  advance and the enable seed also admit open claims repair obligations by
+  basis under the same fences, including for historical versions. The
+  original frontier still orders other versions. The head-only discharge
+  rule applies to ordinary unentered gaps.
 - **Deletion that repoints a living lineage** to an older version reopens that version's discharged
   gaps (step 1, even while its layers are disabled), so it is processed like any current version. Its claims are extracted as ordinary
   ingestion of that version would extract them: reuse comes from earlier live versions only, and
@@ -468,6 +477,8 @@ archive reaches a reconcile in either mode, both of which run the archived-testi
 deletes the version's gaps and advances the surviving lineage (§5.2) in the same transaction, so
 an archived head never blocks its successors; a boundary never records a gap for an archived or
 forgotten version (§4.1). Forget's sweep deletes any gap rows that remain.
+Under proposed D162, a claims repair obligation survives archive as paused
+work, resumes on unarchive and is erased by forget.
 
 ## 7. Retrieval
 

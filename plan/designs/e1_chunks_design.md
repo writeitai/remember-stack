@@ -207,10 +207,11 @@ blocks ≈ paragraphs, and the machinery is uniform.
 blocks within one section, packed to a whitespace-token target. A single
 block over that target becomes its own candidate.
 [D162, proposed](split_oversized_chunks_design.md) adds a hard limit on the
-rendered embedding input. On adoption, candidates that exceed it become
-contiguous source pieces, including within-block cuts where needed. Fitting
-grids keep their original cuts and identities. The size contract specifies
-the split, identity, selective migration and recovery rules.
+rendered embedding input. Candidates that exceed it become contiguous
+source pieces. Fitting whole-block runs take priority over optional
+within-block cuts. Fitting grids keep their original cuts and identities.
+The size contract specifies the split, identity, selective migration and
+recovery rules.
 
 - **One deepest owner per chunk.** Section boundaries stay on the block grid (§3).
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
@@ -398,9 +399,9 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
   `chunk_content_hash` (§4), `extraction_input_hash` (§7), `section_id`, offsets; **D80**
   location-facts snapshot ref / bounded optional header, `embedding_text_hash`,
   `embedding_input_policy_version` and current embedder stamps. The normalized body and
-  vector serve from the sole passage search projection, `chunk_search`.
-  D162 keeps pending and superseded attestations in
-  private storage. Exact bodies remain in the artifact (D37/D94).
+  vector serve from the selected `chunk_search` projection. D162 keeps
+  pending and reusable superseded attestations in private storage.
+  Exact bodies remain in the artifact (D37/D94).
   Detail in `e1_embedding_input_policy.md` §7.
 - `document_sections`: `block_start`/`block_end` ordinals (the grid representation, §3);
   char spans derived.

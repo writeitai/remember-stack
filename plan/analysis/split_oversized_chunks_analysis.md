@@ -50,8 +50,8 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
 
 | Source routes | Inputs to the same paths above |
 | --- | --- |
-| Text, Markdown, logs, source code and YAML/config | `text` returns the full UTF-8 reading up to 1 MB, including long lines and indentation. Its larger-file head/tail profile has fenced regions of up to 50 or 20 lines at 500 characters each. The passthrough route also produces a Markdown reading. Search-only code/config/log ranges select model-free, flat-root E0 structuring. E1 cuts at block eligibility transitions, and E2 records ineligible decisions without model calls. [Text converter](../../src/rememberstack/adapters/converters/text.py#L56-L149), [E0 dispatch](../../src/rememberstack/workers/e0.py#L1429-L1438), [flat root](../../src/rememberstack/workers/e0.py#L1659-L1681), [E1 cuts](../../src/rememberstack/core/chunker.py#L221-L240), [E2 eligibility](../../src/rememberstack/workers/e2.py#L524-L553) |
-| Conversation, email and transcripts | Packaging produces text with message or turn boundaries when the source provides them. A single turn, pasted code block, quoted email or inline image reading can still yield a giant block. D137 merges runs of single-block leaves into the following leaf when available and coalesces them in place otherwise. The block grid stays intact. [benchmarks/locomo/protocol.py:581–629](../../benchmarks/locomo/protocol.py#L581-L629), [adapters/converters/email_message.py:65–110](../../src/rememberstack/adapters/converters/email_message.py#L65-L110), [core/structure_skeleton.py:665–703](../../src/rememberstack/core/structure_skeleton.py#L665-L703) |
+| Text, Markdown, logs, source code and YAML/config | `text` returns the full UTF-8 reading up to 1 MB, including long lines and indentation. Its larger-file head/tail profile has fenced regions of up to 50 or 20 lines at 500 characters each. The passthrough route also produces a Markdown reading. Search-only code/config/log ranges select model-free, flat-root E0 structuring. E1 cuts at block eligibility transitions, and E2 records ineligible decisions without model calls. [Text limits](../../src/rememberstack/adapters/converters/text.py#L26-L32), [text converter](../../src/rememberstack/adapters/converters/text.py#L56-L149), [E0 dispatch](../../src/rememberstack/workers/e0.py#L1429-L1438), [flat root](../../src/rememberstack/workers/e0.py#L1659-L1681), [E1 cuts](../../src/rememberstack/core/chunker.py#L221-L240), [E2 eligibility](../../src/rememberstack/workers/e2.py#L524-L553) |
+| Conversation, email and transcripts | Packaging produces text with message or turn boundaries when the source provides them. A single turn, pasted code block, quoted email or inline image reading can still yield a giant block. In fallback section trees, D137 merges runs of single-block leaves into the following leaf when available and coalesces them in place otherwise. The block grid stays intact. [benchmarks/locomo/protocol.py:581–629](../../benchmarks/locomo/protocol.py#L581-L629), [adapters/converters/email_message.py:65–110](../../src/rememberstack/adapters/converters/email_message.py#L65-L110), [fallback sections](../../src/rememberstack/core/structure_skeleton.py#L640-L703) |
 | PDF, OCR, image, Office, HTML/EPUB and notebooks | PDF verifies the OCR pages and retains their Markdown and locators. OCR paragraphs and tables can be large. The other converters can emit the same large block shapes, including notebook code cells and image readings. Page, slide and cell bounds govern conversion or source coordinates. They are independent of a chunk's embedding size. [adapters/converters/pdf.py:112–152](../../src/rememberstack/adapters/converters/pdf.py#L112-L152), [adapters/converters/mistral_ocr.py:478–535](../../src/rememberstack/adapters/converters/mistral_ocr.py#L478-L535), [adapters/converters/office.py:143–158](../../src/rememberstack/adapters/converters/office.py#L143-L158), [adapters/converters/notebook.py:63–95](../../src/rememberstack/adapters/converters/notebook.py#L63-L95), [adapters/converters/__init__.py:147–187](../../src/rememberstack/adapters/converters/__init__.py#L147-L187) |
 | Data profiles, cards, media and custom converters | Spreadsheet, delimited and dataset profiles and archive/binary/media cards still yield Markdown. Profile samples and metadata can be lexically dense. Current converter limits reduce exposure without proving a provider input bound. Custom routes installed via the provider port also flow through E0 and E1. [core/format_registry.py:166–229](../../src/rememberstack/core/format_registry.py#L166-L229), [adapters/converters/profile.py:248–276](../../src/rememberstack/adapters/converters/profile.py#L248-L276), [profiles/selfhost.py:1646–1652](../../src/rememberstack/profiles/selfhost.py#L1646-L1652) |
 
@@ -145,16 +145,19 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
   whole block and the same D80 hash, even with trailing CRLF and the final
   multi-chunk count. The current carry-forward query keys on the stored
   content and input hashes. A fragment tag would miss the old row.
-  Deriving the complete block run's key for vector lookup avoids that cost
-  while retaining delivery proof and the original fragment identity.
+  Deriving the run's key enables lookup once the run is preserved. The
+  latter-half probe rule can miss the seam of a short unchanged block, so
+  check fitting complete-block cuts before probing within a block.
   [Vector lookup](../../src/rememberstack/spine/chunk_catalog.py#L422-L440),
   [D80 input](../../src/rememberstack/core/embedding_input_policy.py#L188-L234).
 - The ledger's route predicate ignores component versions, so a new identity
   alone cannot fence old workers. Re-extraction also checks carriage only in
   the completing basis. E0 can serve B before its extraction finishes. D143
-  checks that B's occurrences are complete before using them for living
-  supersession. A repair must use that same completed testimony authority and
-  change currency with occurrence publication. The current SQL occurrence
+  checks the current source head before taking a supersession step. If B
+  finishes claims and C takes the head with claims off, B's reconcile can
+  return early forever. Settling B at its own ordered reconcile makes
+  testimony and fact recount independent of the source-head update. The
+  current SQL occurrence
   view follows live passages, while scoped hydration follows the representation
   alone. Each gives the wrong answer when the claim and passage grids differ.
   [Claim predicate](../../src/rememberstack/spine/work_ledger.py#L2176-L2192),
@@ -187,12 +190,56 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
 - D90 stops at an existing fan-out row for the version and normalizer. D118
   uses the same scope to match staging with entity units. Basis-local
   membership lets a replacement finish its own tail with reused claim-level
-  normalization and application receipts. Reopening the old ledger row alone
-  also leaves a failed embedding on its old envelope. Superseding a pending
-  attempt on an envelope change preserves serving data and reusable vectors.
+  normalization and application receipts. The stream selects an admitted
+  unapplied head even after its staging row disappears, so terminal
+  membership retirement and release of an unused stream position both need
+  durable transitions. A shared application can still have eligible work.
   [Fan-out guard](../../src/rememberstack/spine/work_ledger.py#L1538-L1547),
-  [Application admission](../../src/rememberstack/spine/fact_applications.py#L363-L399),
-  [Dead-letter replay](../../src/rememberstack/spine/work_ledger.py#L1026-L1040).
+  [Stream admission and head](../../src/rememberstack/spine/fact_applications.py#L363-L414),
+  [Completion](../../src/rememberstack/spine/fact_applications.py#L527-L540).
+- D143 normally discharges unentered claims gaps on non-head living versions.
+  That is appropriate for versions that never published claims. A
+  sources-only repair can have an older claims basis still serving, so it
+  owes that specific version a claims replacement when claims are enabled.
+  [Discharge and admission](../../src/rememberstack/spine/processing_layers.py#L315-L354).
+- A claim's primary citation normally names its immutable origin chunk.
+  The adjacency query only accepts a live passage ID. The old chunk's range
+  already determines its covering pieces on the new grid of the same
+  reading, so the lookup can preserve the citation and use that range.
+  [Evidence result](../../src/rememberstack/model/envelope.py#L336-L360),
+  [Adjacency lookup](../../src/rememberstack/surfaces/query_engine.py#L6562-L6583).
+- Dead-letter replay reopens the same job. On a first ingest there may be no
+  published or failed legacy grid to replay. The pinned E0 inputs suffice
+  to reproduce candidates. Committed vectors, Selection checkpoints and
+  grounded Claimify outputs can carry across the new cuts where their input
+  and provenance checks match.
+  [Dead-letter replay](../../src/rememberstack/spine/work_ledger.py#L1026-L1040),
+  [Selection freeze](../../src/rememberstack/spine/selection_catalog.py#L140-L201),
+  [Grounded extraction commit](../../src/rememberstack/spine/claim_catalog.py#L303-L396).
+
+## Serving rank and provider admission
+
+- The pinned BM25 extension adds entries during insert and scores against
+  physical index totals. Its abort hook does not remove ordinary inserted
+  entries from those totals. A repeatable-read snapshot can still see the
+  old rows with different scores, and filtering by published chunk IDs
+  cannot undo that change or undo writes to the HNSW graph. A private
+  projection build costs one rebuild per batch of split publications, with
+  other projection writes waiting during the build. Readers keep the old
+  population through both build and abort.
+  [Image pin](../../Dockerfile.postgres#L1-L6),
+  [Index insertion](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/access/build.c#L2107-L2140),
+  [Scoring totals](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/scoring/snapshot.c#L178-L204),
+  [Abort hook](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/mod.c#L1428-L1438).
+- Stock Compose leaves embedding routing open. An order alone still permits
+  marketplace fallback, even if a pin is also configured. Keeping stock
+  routing on the compatibility path avoids silently sending data to a
+  different provider. Qualify the effective closed binding before D162
+  starts paid ingestion. The response decoder also needs to verify that
+  indices cover the input positions exactly before attesting any vector.
+  A duplicate index can pass count and dimension checks.
+  [Compose settings](../../compose.yaml#L28-L36),
+  [Routing and decode](../../src/rememberstack/adapters/openrouter.py#L1001-L1077).
 
 ## Benchmark fixture audit
 

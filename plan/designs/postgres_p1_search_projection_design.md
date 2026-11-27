@@ -213,13 +213,13 @@ the lexical channel can become ready independently. The row is semantic-ready
 only when its non-null vector attestation matches the deployment's active
 embedding configuration.
 
-For [proposed D162 split grids](split_oversized_chunks_design.md#publication),
-stage bodies and vectors outside `chunk_search`. Broad index nomination uses
-that table before authority confirmation. Swap its HNSW/BM25 population and
-the published passage basis in one transaction. Retained vectors stay off
-both indexes. The published basis governs confirmation and SQL hydration in
-the ranked-read snapshot. Claim nomination, confirmation and evidence
-hydration consult the published claims basis in that same snapshot.
+For [proposed D162 split grids](split_oversized_chunks_design.md#passage-cutover-and-reads),
+stage bodies and vectors outside the serving `chunk_search` relation. Build
+the replacement HNSW/BM25 population privately. Publish its selector with
+the passage basis in one transaction. Readers pin the physical relation and
+passage basis through ranking, confirmation and SQL hydration. Claim
+nomination, confirmation and evidence hydration use the selected claims
+basis in that snapshot.
 
 Projection lag may reduce recall; it must never expose an ineligible record.
 Archive, invalidation, supersession, and forget are enforced by the
@@ -699,6 +699,8 @@ conjunction is pinned against the migrated independent reference.
 HNSW and BM25 indexes are maintained by ordinary PostgreSQL DML. Autovacuum and
 standard PostgreSQL telemetry own routine cleanup; there is no P1 compaction
 ticker, fragment ledger, or application-managed index tail.
+Under proposed D162, a split cutover publishes a private projection built
+under §7. Plan attestation uses the selected relation's expected indexes.
 
 Each indexed vector column has one fixed dimension and compatible distance
 operator. Authority predicates in confirmation need conventional indexes on

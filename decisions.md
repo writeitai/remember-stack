@@ -1781,8 +1781,9 @@ config choice.
 > **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
 > A repaired packing grid publishes its completed claim occurrences and currency
 > together. Eligible published carriage governs additions, withdrawals and automatic
-> restoration. A living lineage keeps its standing testimony while a newer source
-> version's claims are pending. Counting still uses distinct lineages.
+> restoration. A living lineage advances standing through ordered reconciliation
+> of completed claims, independently of the source head. Counting still uses
+> distinct lineages.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
@@ -6241,8 +6242,9 @@ absence-based closures indefinitely.
 ## D118. Immutable claims, mutable facts, one world-time window
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Repair qualifies admission and completion by packing basis. Completed
-> applications keep their semantic identity and receipts.
+> Repair qualifies admission, completion and membership retirement by packing
+> basis. An unapplied application releases its stream position when its last
+> eligible membership retires. Completed applications keep their receipts.
 
 > Processing amendments D120–D123 clarify assertion identity, project concise
 > model inputs and add source-backed context nomination. D118's one world window,
@@ -6654,6 +6656,11 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 [analysis](plan/analysis/clean_temporal_facts_and_retrieval_flow_analysis.md).
 
 ## D130. Adjacent chunks retrieval primitive (`adjacent_chunks`)
+
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> A retained handle used by a published claim can resolve to the pieces
+> covering its chunk span in the same reading. The window applies to
+> both edges of that interval.
 
 **Status:** accepted (superseded in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-21.
 
@@ -7397,6 +7404,10 @@ only through D118 adjudication.
 
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Split cutovers publish a privately built passage search projection. Each
+> operation uses its selected physical index population through hydration.
+
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
 > this entry, including prerelease upgrade policy and the RC-only compiler
@@ -7626,7 +7637,9 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
 > Repair tracks gaps and completion by packing basis. A sources-only passage
 > cutover keeps completed claim occurrences serving until successor extraction.
-> Current fact applications require eligible published carriage.
+> Re-enable admits owed claims repairs even for historical versions. A living
+> version can settle completed claims after a newer version takes the source
+> head. Current fact applications require eligible published carriage.
 
 > **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
 > sources-only document tree with no entities, fact metadata or K links, identical
@@ -8785,19 +8798,21 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Decision.** E1 keeps the anchored whole-block pack for fitting inputs.
 When the full prepared input exceeds a qualified endpoint ceiling, the
-chunker partitions that span at deterministic structural or Unicode scalar
-boundaries, with required cuts at labelled eligibility changes. Each piece
-keeps exact source coordinates. Every nonempty input needs a verified vector.
-Batches fit the qualified request limits.
+chunker prefers fitting whole-block runs and otherwise cuts at deterministic
+structural or scalar boundaries. Labelled eligibility changes require cuts.
+Each piece keeps exact source coordinates. Every nonempty input needs a
+verified vector. Paid D162 ingestion requires a qualified effective binding.
+Batches fit the qualified request limits and return a verified input mapping.
 
 **Reuse boundary.** Only representations with an offending chunk receive
 the split packing and delivery generation. Fitting grids retain IDs,
 hashes and qualifying paid products. A fragment covering complete blocks
 can reuse an attested whole-block vector for the same D80 input in either
 direction. Repair replaces a failed pending basis when the qualified
-envelope changes. Claims publication and tail
-completion follow their own packing basis. The selected completed claims
-basis governs currency, automatic restoration and fact period inputs.
+envelope changes and reuses equivalent committed products. A private
+search projection isolates passage cutovers and aborts. Claims publication
+and tail completion follow their own packing basis. Selected completed
+claims govern standing testimony, restoration and fact period inputs.
 LoCoMo and BEAM keep pinned readers and schema until the exact candidate
 passes frozen input, grid and complete tool-response parity.
 
