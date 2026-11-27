@@ -54,6 +54,17 @@ both kinds of multiplicity error.
 [Broad confirmation](../../src/rememberstack/adapters/postgres_p1.py#L1675-L1691) ·
 [Final confirmation](../../src/rememberstack/surfaces/query_engine.py#L6231-L6249)
 
+Source membership and D140 time scope can succeed through different links.
+A claim in a visible historical edition can supply source membership even
+when that edition is out of scope. A second claim can supply in-scope support
+through a surviving occurrence in an undeclared lineage after its origin
+version is deleted. That claim is absent from history, and carried source
+membership requires declared periods. Joining the two checks on one evidence
+link would drop the fact.
+[Source membership](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L322-L330) ·
+[Carried membership](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L163-L179) ·
+[D140 time check](../../src/rememberstack/core/text_scope.py#L256-L303)
+
 Scoped nomination ranks by distinct requested anchor coverage, then vector
 distance. Final confirmation counts distinct requested anchors again and
 sorts each confirmed batch by coverage before the result cap. Two stored
@@ -69,7 +80,7 @@ readability probes, including in the carried branch's shared origin-absence
 check. A carried occurrence must be in the claim's own document because
 `chunk_claims` carries no document key. The production history predicate
 also admits ready origins in superseded versions or replaced readings.
-[Historical claim SQL](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L257) ·
+[Historical claim SQL](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L258) ·
 [Carried claim SQL](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174)
 
 The origin fence belongs in the bounded native path. A reduced PostgreSQL
@@ -95,6 +106,24 @@ key. Retained range-leaf costs apply to `chunk_claims` and `chunks`. Sparse
 statistics may have contributed to the hosted misestimate. A forced
 nested-loop plan timed out. Refreshed statistics would still leave the
 join order cost-based. The fences bind the inputs under default planning.
+
+## Retained-store oracle
+
+The conv-26 and conv-30 captures used PostgreSQL 19. LoCoMo backups archive
+stopped volumes, which are tied to their PostgreSQL major. A one-time logical
+copy into a disposable PostgreSQL 18 schema keeps the stored rows and vectors
+available for the deployed-schema comparison.
+[Conv-26 metadata](retrieval_filtering_20261112/conv26/metadata.json#L2) ·
+[Conv-30 metadata](retrieval_filtering_20261112/conv30/metadata.json#L2) ·
+[Volume backup](../../benchmarks/locomo/sharding/store_backup.py#L1248-L1263) ·
+[PostgreSQL storage compatibility](postgres18_reference_server.md#failure-recovery-and-boundaries)
+
+pgvector draws a random graph level for each HNSW index entry. Independent
+builds can therefore change the ordered candidates before the gate sees them.
+Physical copies of one prepared PostgreSQL 18 fixture preserve the index.
+Comparing the raw cursor batches verifies that both gates saw the same inputs.
+[pgvector graph construction](https://github.com/pgvector/pgvector/blob/v0.8.6/src/hnswutils.c#L245-L253) ·
+[D142 fact cursor](../../src/rememberstack/adapters/postgres_p1.py#L1693-L1717)
 
 ## Migration evidence
 
@@ -123,6 +152,13 @@ chance to acquire locks between attempts.
 [Runner configuration](../../src/rememberstack/spine/migrations/env.py#L57-L81) ·
 [Session lock timeout](../../src/rememberstack/spine/migrations/env.py#L98-L114) ·
 [Interactive lock limit](../../src/rememberstack/surfaces/query_sandbox/limits.py#L48-L52)
+
+The first backoff lasts 250 ms, so API dispatch can race the next exclusive
+view lock request. The existing migration test pauses the runner at the
+retry log, after the failed connection closes and before the next attempt.
+Use that synchronization to run the saved query with the shipped timeouts.
+[Retry delay](../../src/rememberstack/spine/migrations/env.py#L30-L33) ·
+[Retry barrier](../../src/tests/spine/test_migrations.py#L244-L284)
 
 Stock `setup` applies migrations and then publishes the new manifest hash,
 suspending active saved queries in the same transaction. A previous-release

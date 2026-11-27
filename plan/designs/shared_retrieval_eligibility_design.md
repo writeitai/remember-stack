@@ -418,7 +418,7 @@ check inside `NOT EXISTS (... OFFSET 0)`. It requires current testimony in
 a periodised live document and an occurrence in a non-deleted version's current
 ready reading. Bind the occurrence by deployment and claim ID, then its chunk
 by deployment and chunk ID with `ch.doc_id = claim.doc_id` inside the probe.
-[Deployed history](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L257) ·
+[Deployed history](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L258) ·
 [Deployed carried membership](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174)
 
 Resolve each stored endpoint in its own `LATERAL (... OFFSET 0)` lookup
@@ -460,6 +460,10 @@ Pass when a supporting occurrence qualifies, or when there are zero raw
 deployment and stance, so the planner cannot hash unrelated evidence.
 Support outside the scope, including in a deleted version or replaced
 reading, still disables the either-stance branch. Empty evidence fails.
+Source membership and time scope are independent tests on the fact. One
+evidence link can provide source membership while another supplies the
+in-scope occurrence.
+
 The pinned-belief ledger path and reconstructed identity use their existing
 authorities. The pending-lineage counterfactual in §4.2 supplies freshness
 metadata only.
@@ -716,12 +720,26 @@ or concurrency qualification.
 
 ### 9.1 D163 fact-path qualification
 
-**Equivalence oracle.** Restore LoCoMo conv-26, conv-30 and conv-47 and a
-hosted-shaped fixture at the deployed v0.22.4 schema, `p9_55_0076`. Run that
-gate and D163 on paired copies with identical data, vectors, filters and read
-instants. Capture the SQL gate rows before result limits or client-side
-deduplication. Require empty `EXCEPT ALL` differences in both directions so
-duplicate rows count.
+**Equivalence oracle.** Verify and restore the LoCoMo conv-26, conv-30 and
+conv-47 backups in isolation on their recorded PostgreSQL versions. For each
+PostgreSQL 19 restore, transfer the stored application rows and vectors once
+via text `COPY` with explicit columns into a disposable PostgreSQL 18 database
+at the source Alembic revision with matching partition bounds. Record the
+backup and source revision. Verify row counts and key-ordered hashes of the
+copied columns, including vectors. Bring each PostgreSQL 18 fixture to the
+deployed v0.22.4 schema (`p9_55_0076`) with Alembic and prepare the hosted-shaped
+fixture at the same head.
+[Retained-store evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#retained-store-oracle)
+
+Take two physical copies of each fixture's stopped PostgreSQL 18 cluster with
+its HNSW indexes intact. Run the deployed gate on one copy and upgrade the
+other to D163.
+Use identical query vectors, filters, read instants and cursor settings. For
+the broad path, require matching ordered raw `(fact_id, distance)` batches per
+fact kind before eligibility filtering to qualify the ordered top `k` comparison.
+
+Capture the SQL gate rows before result limits or client-side deduplication.
+Require empty `EXCEPT ALL` differences in both directions so duplicate rows count.
 Compare `(fact_kind, fact_id)` at each eligible cut, including broad batch
 confirmation and agreement between stages on the same inputs. Include
 `distance` in scoped and keyed nomination and `coverage` when entity-scoped.
@@ -743,6 +761,13 @@ Run the baseline to completion with a recorded diagnostic timeout if needed.
   deletion, archive/forget and carried claims with a missing origin or
   several occurrences. Test a sole carried occurrence in a different
   document in the same deployment, with a same-document positive control.
+- For each kind, include a fact with two `supports` links. One has a visible
+  historical origin in a periodised lineage with all its occurrences outside
+  the read scope. The other has a deleted origin version but a reused occurrence
+  in the current reading of a live version of the same undeclared lineage.
+  Check that the first link alone qualifies for source membership and the
+  second alone supplies in-scope support. Require the fact to pass scoped and
+  keyed nomination, broad batch confirmation and final confirmation.
 - Include absent evidence, contradiction-only evidence, and raw support
   outside scope with an in-scope contradiction. Check D118 time filters,
   high-ranked ineligible facts and pending-lineage freshness. Keep the D159
@@ -796,12 +821,15 @@ previous-release API and require its expected rows and the previous hash.
 
 In each direction, hold a reader's lock on `v_memory_entity_survivor` and
 require its replacement to report `55P03` at the three-second lock timeout.
-During retry backoff, run the same saved query through a second
+Use a test-only event barrier at the retry log to pause before the next lock
+attempt, with the shipped timeouts. While the retry is paused and the first
+reader still holds its lock, run the same saved query through a second
 previous-release reader under the normal 250 ms interactive lock limit.
-Require the expected rows and previous hash before releasing the first
-reader. Verify that the retry reaches its target from the last committed
-revision with zero `40P01` deadlocks. Check definitions, grants, comments
-and gate rows at each head.
+Require the expected rows and previous hash, then release the first reader
+and unblock the retry. Verify that it reaches its target from the last
+committed revision with zero `40P01` deadlocks. Check definitions, grants,
+comments and gate rows at each head.
+[Existing retry synchronization](../../src/tests/spine/test_migrations.py#L244-L284)
 
 At the upgraded head, drain the previous-release readers and run stock
 `setup`. Verify that the new hash and the query's `pending_revalidation`
