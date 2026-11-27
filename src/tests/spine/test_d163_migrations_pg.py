@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import timedelta
@@ -258,7 +259,7 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
                 "sandbox_settings": {"jit": "off"},
                 "sandbox": qualification._sandbox_queries(sampler, samples=0),
                 "beam": qualification._beam_queries(sampler),
-                "beam_ordered": qualification._beam_ordered_rows(
+                "beam_ordered_at_case_time": qualification._beam_ordered_rows(
                     sandbox, evaluated_at=case.evaluated_at, timeout_ms=20_000
                 ),
             }
@@ -357,6 +358,53 @@ def test_beam_oracle_uses_the_case_clock_at_exclusive_validity_end() -> None:
             assert live["facts_sample"]["error_code"] == "execution_error"
             ordered.append(before)
         assert ordered[0] == ordered[1]
+
+
+def test_beam_oracle_preserves_the_shipped_cutoff_with_tied_predicates() -> None:
+    with scratch_database(TARGET_HEAD) as engine:
+        corpus = seed_corpus(engine)
+        with engine.begin() as connection:
+            existing = connection.exec_driver_sql(
+                "SELECT count(*) FROM relations"
+            ).scalar_one()
+            _expand_facts(connection, kind="relation", size=existing + 24)
+            connection.execute(
+                text("""
+                    WITH added AS (
+                        INSERT INTO predicates (deployment_id, predicate, description, tier)
+                        SELECT deployment_id, 'other:cutoff-' || relation_id, 'Cutoff fixture', 'other'
+                        FROM relations WHERE fact_label='multi_source' AND relation_id<>:seed
+                        RETURNING deployment_id, predicate
+                    )
+                    UPDATE relations AS fact SET predicate=added.predicate FROM added
+                    WHERE added.deployment_id=fact.deployment_id
+                      AND added.predicate='other:cutoff-' || fact.relation_id
+                """),
+                {"seed": corpus.facts["relation", "multi_source"]},
+            )
+        with _connect(engine) as connection:
+            _provision_query_role_password(connection=connection, engine=engine)
+        sandbox = _executor(engine, corpus, qualification.MANIFEST_BY_HEAD[TARGET_HEAD])
+        broad = qualification._broad_view_rows(
+            sandbox, evaluated_at=corpus.case.evaluated_at, timeout_ms=20_000
+        )["sandbox/facts_current"]
+        counts = Counter(json.loads(row)["predicate"] for row in broad)
+        assert sorted(counts.values(), reverse=True)[24:] == [1, 1]
+
+        shipped = dict(qualification._OPEN_QUERY_SQL)["facts_predicates"]
+        with sandbox._transaction(
+            limits_ms=qualification.INTERACTIVE_LIMITS, statement_timeout_ms=20_000
+        ) as cursor:
+            pinned = qualification._pinned_facts_current(
+                cursor, corpus.case.evaluated_at
+            ).as_string(cursor)
+            cursor.execute(f"WITH facts_current AS ({pinned}) {shipped}".encode())
+            expected = cursor.fetchall()
+        assert len(expected) == 25
+        replay = qualification._beam_ordered_rows(
+            sandbox, evaluated_at=corpus.case.evaluated_at, timeout_ms=20_000
+        )
+        assert replay["facts_predicates"] == expected
 
 
 def test_d163_upgrade_and_downgrade_with_previous_readers(

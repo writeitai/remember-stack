@@ -1,6 +1,5 @@
 """Fail closed when run identity, BEAM results or the latency workload drifts."""
 
-from copy import deepcopy
 from datetime import datetime
 from datetime import UTC
 from types import SimpleNamespace
@@ -47,7 +46,7 @@ def _capture(*, head: str) -> dict[str, Any]:
         "ordered": {
             "final/broad": [("observation", "fact", {"returned": 1, "total": 2})]
         },
-        "beam_ordered": {
+        "beam_ordered_at_case_time": {
             "facts_predicates": [["first", 2], ["second", 2]],
             "facts_sample": [["relation", "fact", "first", "label"]],
             "claims_live_sample": [],
@@ -86,13 +85,11 @@ def test_compare_detects_beam_order_and_outcome_changes() -> None:
     target = _capture(head=qualification.TARGET_HEAD)
     connection = MagicMock(spec=Connection)
     connection.execute.return_value.one.return_value = (0, 0)
-    target["beam"]["facts_predicates"]["rows"] = []
     assert all(
         qualification.compare(connection, baseline, target)["beam_matches"].values()
     )
 
-    target = deepcopy(target)
-    target["beam_ordered"]["facts_predicates"].reverse()
+    target["beam_ordered_at_case_time"]["facts_predicates"].reverse()
     target["beam"]["facts_sample"]["error_code"] = "statement_timeout"
     assert qualification.compare(connection, baseline, target)["beam_matches"] == {
         "facts_predicates": False,
@@ -101,10 +98,26 @@ def test_compare_detects_beam_order_and_outcome_changes() -> None:
     }
 
 
+def test_compare_detects_a_different_tied_predicate_at_the_beam_cutoff() -> None:
+    baseline = _capture(head=qualification.BASELINE_HEAD)
+    target = _capture(head=qualification.TARGET_HEAD)
+    leaders = [[f"predicate-{rank}", 26 - rank] for rank in range(24)]
+    baseline["beam_ordered_at_case_time"]["facts_predicates"] = [*leaders, ["first", 2]]
+    target["beam_ordered_at_case_time"]["facts_predicates"] = [*leaders, ["second", 2]]
+    connection = MagicMock(spec=Connection)
+    connection.execute.return_value.one.return_value = (0, 0)
+
+    assert qualification.compare(connection, baseline, target)["beam_matches"] == {
+        "facts_predicates": False,
+        "facts_sample": True,
+        "claims_live_sample": True,
+    }
+
+
 def test_compare_requires_fixed_instant_beam_rows() -> None:
     baseline = _capture(head=qualification.BASELINE_HEAD)
     target = _capture(head=qualification.TARGET_HEAD)
-    target.pop("beam_ordered")
+    target["beam_ordered"] = target.pop("beam_ordered_at_case_time")
     connection = MagicMock(spec=Connection)
     with pytest.raises(AssertionError, match="fixed-instant BEAM rows"):
         qualification.compare(connection, baseline, target)

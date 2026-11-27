@@ -886,8 +886,10 @@ typed completion for the original statements under the existing interactive
 sandbox limits as corpus size, evidence fanout and partitions grow independently.
 A paired timeout records matching deadline behavior. Full row equivalence still
 requires the complete diagnostic export. Use that same fixed instant for the
-ordered BEAM fact rows. Record the typed outcome for the shipped `label` query
-and time the corrected `fact_label AS label` sample. Use the query login's
+ordered BEAM fact rows. Keep the shipped ordering and limits and compare the
+rows in the order BEAM receives them, including when equal counts span the
+aggregate's 25-row cutoff. Record the typed outcome for the shipped `label`
+query and time the corrected `fact_label AS label` sample. Use the query login's
 effective JIT settings and pace interactive requests under the rolling quotas.
 Report admission failures and time only executed queries.
 [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)

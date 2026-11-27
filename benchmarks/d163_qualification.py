@@ -557,7 +557,7 @@ def compare(
             for view in BROAD_VIEWS
         ):
             raise AssertionError("recapture both releases with all broad sandbox cuts")
-        if beam_names != record.get("beam_ordered", {}).keys():
+        if beam_names != record.get("beam_ordered_at_case_time", {}).keys():
             raise AssertionError("recapture both releases with fixed-instant BEAM rows")
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
@@ -584,7 +584,8 @@ def compare(
             for view in BROAD_VIEWS
         },
         "beam_matches": {
-            name: baseline["beam_ordered"][name] == target["beam_ordered"][name]
+            name: baseline["beam_ordered_at_case_time"][name]
+            == target["beam_ordered_at_case_time"][name]
             and _beam_completed(name, baseline["beam"][name])
             and _beam_completed(name, target["beam"][name])
             for name, _ in _OPEN_QUERY_SQL
@@ -688,6 +689,7 @@ def _pinned_facts_current(cursor: psycopg.Cursor, evaluated_at: datetime) -> sql
 def _beam_ordered_rows(
     sandbox: QuerySandboxExecutor, *, evaluated_at: datetime, timeout_ms: int
 ) -> dict[str, list[Any]]:
+    """Replay BEAM's ordering and limits at the paired fact-view instant."""
     rows = {}
     with sandbox._transaction(
         limits_ms=INTERACTIVE_LIMITS, statement_timeout_ms=timeout_ms
@@ -696,9 +698,6 @@ def _beam_ordered_rows(
         for name, query in _OPEN_QUERY_SQL:
             if name == "facts_sample":
                 query = _BEAM_SAMPLE_CORRECTED
-            if name == "facts_predicates":
-                # Make tied counts deterministic before the diagnostic limit.
-                query = query.replace("ORDER BY 2 DESC", "ORDER BY 2 DESC, 1")
             statement = sql.SQL(cast("LiteralString", query))
             if name in {"facts_predicates", "facts_sample"}:
                 statement = sql.SQL("WITH facts_current AS ({}) {}").format(
@@ -1415,7 +1414,7 @@ def main() -> None:
                         )
                     )
                     result["sandbox_oracle_timeout_ms"] = timeout_ms
-                    result["beam_ordered"] = _beam_ordered_rows(
+                    result["beam_ordered_at_case_time"] = _beam_ordered_rows(
                         sandbox, evaluated_at=case.evaluated_at, timeout_ms=timeout_ms
                     )
                     result["sandbox"] = _sandbox_queries(sampler, samples=0)

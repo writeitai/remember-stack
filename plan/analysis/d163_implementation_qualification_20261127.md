@@ -94,15 +94,17 @@ The broad export runs as the query login and uses the recorded diagnostic
 `--timeout` to read every row before the response caps. It reads the installed
 `facts_current` definition from the catalog and replaces its statement clock
 with the case instant in the diagnostic SQL. This fixes both membership and
-the returned `evaluated_at` value. The ordered BEAM diagnostic uses the same
-pinned definition. It orders equal counts by predicate before the aggregate's
-limit and uses `fact_label AS label` for the fact sample. Capture also runs
-the shipped SQL under the interactive limits and records
-typed outcomes and executed plans, including planning time and buffer use.
-A canceled plan reports its typed error. Compare checks completion and
-truncation on both sides and requires a plan for each completed read.
-Matching statement timeouts still require equal complete exports.
-Regenerate both captures to include the fixed-instant BEAM rows.
+the returned `evaluated_at` value. The BEAM replay uses the same pinned
+definition. The aggregate keeps the shipped `ORDER BY 2 DESC LIMIT 25` so the
+comparison checks the rows in the order BEAM consumes them, including the
+predicate selected when a tie spans the cutoff. The fact sample uses
+`fact_label AS label` at the same instant. Capture also runs the shipped SQL
+under the interactive limits at the live statement clock and records the
+typed outcomes. The broad-view checks record executed plans, including
+planning time and buffer use. A canceled plan reports its typed error.
+Compare checks completion and truncation on both sides and requires a plan
+for each completed broad read. Matching statement timeouts still require
+equal complete exports. Regenerate both captures for the corrected BEAM replay.
 
 [Oracle and latency harness](../../benchmarks/d163_qualification.py) ·
 [Staged restore](../../benchmarks/d163_staged_restore.py)
@@ -390,6 +392,49 @@ wait time and a rejected sample stay outside the percentiles.
 Ruff formatting and lint, Pyright, the import contracts and the test inventory
 passed. The selected suites passed 196 unit tests and 183 PostgreSQL tests,
 with the expected D122 reuse failure.
+
+### PR #684 round-two verification
+
+The paired replay keeps the shipped aggregate's count order and 25-row limit
+at the fixed instant. A PostgreSQL fixture with 26 predicate groups exercises
+a tie across the cutoff. The comparison rejects a different tied predicate
+at row 25 even when the other rows and typed outcomes agree. Captures on
+physical PostgreSQL 18.6 copies matched all ordered BEAM rows, ordered raw
+HNSW batches and ordered native final facts across the four time modes.
+The 112 SQL cuts contained 1,060 rows per release, with zero differences.
+
+The scale rerun used PostgreSQL 18.6 on a 2-vCPU, 4-GiB ARM64 VM with
+refreshed statistics. P1 inherited `jit=on`, `jit_above_cost=100000`,
+`jit_inline_above_cost=500000`, `jit_optimize_above_cost=500000` and
+`max_parallel_workers_per_gather=2`. The 300,000-chunk copy kept the 3M
+fixture's facts, evidence, claim occurrences and fixed case. The 121-leaf
+copy added empty monthly leaves to that 300,000-chunk workload. The harness
+matched candidate IDs and evidence fingerprints. Each workload ran 40 warm
+samples. Times are p50 / p95 seconds.
+
+| Chunks and range leaves | Observation batch | Relation batch | Native broad | Native scoped |
+| --- | ---: | ---: | ---: | ---: |
+| 300,000, 10 | 0.785 / 0.814 | 0.793 / 0.821 | 1.709 / 2.029 | 0.348 / 0.375 |
+| 3,000,000, 10 | 0.731 / 0.780 | 0.868 / 1.060 | 1.693 / 2.370 | 0.424 / 0.806 |
+| 300,000, 121 | 3.225 / 4.321 | 3.098 / 3.812 | 6.124 / 7.255 | 1.203 / 1.244 |
+
+All three strata met their targets. The 804 observation inputs and 535
+relation inputs returned 802 and 532 eligible rows, respectively. Both
+native modes completed all 40 timed calls on each stratum and returned 50
+facts in their final samples.
+
+In both plan modes, increasing from 300,000 to 3 million chunks held the
+chunk and occurrence leaf loops at 16,070 and 4,020 for observations and
+10,750 and 2,695 for relations. At 121 leaves the counts rose to 194,447 and
+93,274 for observations and 130,075 and 62,312 for relations. Planning took
+11.3–21.8 ms at ten leaves and 68.5–102.4 ms at 121 leaves. Across the
+strata, the plans recorded 22,241–23,044 shared hits for observations and
+15,032–15,566 for relations, with zero shared reads.
+
+Ruff formatting and lint, Pyright, the import contracts and the test inventory
+passed. The selected suites passed 176 benchmark tests and 101 PostgreSQL
+tests, including the keyed-probe plan checks with sparse and refreshed
+statistics.
 
 ### Synthetic latency
 
