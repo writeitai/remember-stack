@@ -218,7 +218,8 @@ stage bodies and vectors outside `chunk_search`. Broad index nomination uses
 that table before authority confirmation. Swap its HNSW/BM25 population and
 the published passage basis in one transaction. Retained vectors stay off
 both indexes. The published basis governs confirmation and SQL hydration in
-the ranked-read snapshot.
+the ranked-read snapshot. Claim nomination, confirmation and evidence
+hydration consult the published claims basis in that same snapshot.
 
 Projection lag may reduce recall; it must never expose an ineligible record.
 Archive, invalidation, supersession, and forget are enforced by the

@@ -102,8 +102,9 @@ Selection-input bases of every owning unit in its eligible preceding region,
 including units that emitted no cards, and the reference-policy generation.
 Those Selection bases include any neighbor source used to define their cards.
 [Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
-uses the actual same-owner slots of each producer for keys and span remapping.
-Producer order and the eight-chunk lookback stay in document order.
+uses the actual same-owner slots of each producer for equivalence and span
+remapping across layout changes in either direction. Producer order and the
+eight-chunk lookback stay in document order.
 
 Hashing only cited/admitted cards is incorrect: an edited chunk may introduce a
 competing referent even though the old cited card is unchanged. Hashing the entire

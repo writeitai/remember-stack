@@ -376,6 +376,11 @@ occurrences, each with its own `evidence_spans` and locators). Under a scope:
 This refines D134 §4's "the returned evidence is the claim's origin" for scoped reads of
 periodised lineages; unscoped reads and undeclared lineages keep the origin rule.
 
+With a [proposed D162 claims publication](split_oversized_chunks_design.md#publication),
+both scope checks and hydration use occurrences from the version's selected
+claims basis in one snapshot. Live evidence uses its published occurrence.
+The immutable origin remains available through history.
+
 ### 3.5 `search_documents`
 
 `search_documents` keeps D134's **lineage grain**: one result per lineage, judged and
@@ -555,11 +560,10 @@ reuse_identity_hash)`.
    unknown") and the chunk is extracted or reused under today's key rules.
 
 [Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
-also admits the date of a verified byte-identical parent span when a new
-fragment matches an earlier legacy occurrence. These date candidates come from
-the earlier original grid, so repacking that version cannot change the match.
-Same-version repair copies the parent's committed origin, including unknown.
-Extraction reuse still requires equivalent consumed windows and checked spans.
+also admits equivalent consumed windows in either direction of a split/legacy
+transition. Match a new fragment and its context by exact bytes and relative
+origins inside the earlier original grid even when the parent was edited.
+Same-version repair copies the predecessor's committed date, including unknown.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the

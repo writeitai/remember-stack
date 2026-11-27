@@ -260,11 +260,13 @@ A prior vector may be reused without a provider call only when its
 attestation match exactly. The worker may then restamp the same row inside an
 explicit unready maintenance operation; it must never claim that a vector was
 produced from different text.
+[Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
+also requires evidence the original binding processed the complete input.
 
 | Change | Action |
 |---|---|
 | Body bytes change | Re-render; new hash ⇒ provider embed under the configured current state |
-| Proposed D162 sizing envelope changes | Audit the selected grids. Repack only grids with over-ceiling inputs under the new envelope. D80 rendering and vector attestation retain their generation. |
+| Proposed D162 sizing envelope changes | Audit selected grids. Repack only over-ceiling inputs. Replay supersedes a pending basis pinned to a different envelope. Qualifying vectors remain reusable under the existing D80 generation. |
 | Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
 | Policy version changes | Mark semantic channel unready; re-render all in-scope chunks; reuse an exactly attested vector or re-embed; verify and publish |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
@@ -340,7 +342,9 @@ pack chunks
   optional bounded header, `embedding_text_hash`, policy version, location
   elements for E2). Does **not** require one `processing_state` row per pure function.
 - **Embed:** durable unit is **chunk embed work** coalesced into **provider batches**
-  (size from embedder capabilities; starting hypothesis 64–128 texts). Normative
+  (size from embedder capabilities; starting hypothesis 64–128 texts). Under
+  proposed D162, batches must also fit the binding's qualified request-wide
+  limits. Normative
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
 - **Document readiness:** all in-scope chunks have prepare stamps and successful

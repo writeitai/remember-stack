@@ -316,12 +316,13 @@ self-healing gap (a named spike, not papered over):
    — fact IDs and outcomes, never raw claim IDs (the K stale-storm guard).
 
 **Packing repair (proposed D162).** At the completed extraction barrier, diff
-the predecessor and successor `chunk_claims` under the lineage fence. Only
-the loss of the last eligible published occurrence withdraws current
-testimony. Publish the new occurrences, D54 ledger/cache updates and fact
-recount together. Apply the transcription review policy to zero support.
-Each claim keeps its original source coordinates, even when only another
-version still carries it. [Repair contract](split_oversized_chunks_design.md#publication).
+the predecessor and successor `chunk_claims` under the lineage fence. In a
+living lineage, the last completed published testimony basis governs this
+check even if a newer source version is already serving. Only the loss of the
+last eligible published occurrence withdraws current testimony. Publish the
+new occurrences, D54 ledger/cache updates and fact recount together. Apply
+the transcription review policy to zero support. Preserve each claim's
+immutable origin. [Repair contract](split_oversized_chunks_design.md#publication).
 
 **Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
 not reached a version yet, the version's reconcile runs at component version

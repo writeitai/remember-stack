@@ -332,8 +332,8 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
   when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
   under `structurer_version`. [Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
-  derives split-grid keys and remapping from the source slots E2 actually
-  consumes. It verifies those slots when carrying forward legacy results.
+  derives split-grid keys from the slots E2 consumes. It compares those
+  slots in both directions when a split and a legacy grid exchange results.
   LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own content hash + neighbor content hashes + stable header
@@ -352,8 +352,8 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   blockizer/structurer/extractor versions, indexed per
   lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
   and replayed, never recomputed; deleting the origin version later does not change it.
-  D162 also verifies unchanged fragment text against its earlier unsplit
-  occurrence to inherit the existing D140 date across the first split. The
+  D162 also verifies exact fragment spans and their context in the earlier
+  original grid to inherit the D140 date across the first split. The
   E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
   in unchanged text stay resolved against the time the text was written, and a dated new
   version reuses its unchanged chunks (with the version's own date in the key, nearly every
@@ -381,8 +381,8 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   creates fresh work without changing packing or the embedding model/policy.
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
-  D162 repair verifies an interrupted predecessor attestation by exact ID,
-  including after the vector moves out of the serving projection.
+  D162 repair also requires evidence of full delivery by the original
+  binding. Recover an interrupted or retained attestation by exact ID.
   See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.

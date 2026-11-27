@@ -29,6 +29,10 @@ claim normalize grain
 expected-set insert — with a **durable version↔unit membership** because entity
 ids are not version-scoped
 
+For [proposed D162 repair](split_oversized_chunks_design.md#dispatch-and-writes),
+the fact tail's version scope also includes its packing basis. Its fan-out
+record, staging, units and completion use that basis, including the empty path.
+
 ## 1. Decision
 
 1. **Primary work unit** for stage `adjudicate_observations` under the entity

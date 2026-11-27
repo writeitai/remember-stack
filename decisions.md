@@ -1781,8 +1781,8 @@ config choice.
 > **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
 > A repaired packing grid publishes its completed claim occurrences and currency
 > together. The same-version re-extraction check uses the predecessor and successor
-> occurrences and honours carriage on other eligible published bases. Counting
-> still uses distinct lineages.
+> occurrences. A living lineage uses its last completed published testimony basis
+> even when E0 serves a newer version. Counting still uses distinct lineages.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
@@ -4113,6 +4113,9 @@ for an unused benchmark harness.
 
 ## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Repair scopes fan-out, staging and entity-unit completion to the packing basis.
+
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The empty path opens `adjudicate_supersession` and `embed_claim` only when the facts layer is
 > entered; otherwise it opens the claims tail (`embed_claim`, claims-only `reconcile`).
@@ -6237,6 +6240,10 @@ absence-based closures indefinitely.
 
 ## D118. Immutable claims, mutable facts, one world-time window
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Repair qualifies admission and completion by packing basis. Completed
+> applications keep their semantic identity and receipts.
+
 > Processing amendments D120–D123 clarify assertion identity, project concise
 > model inputs and add source-backed context nomination. D118's one world window,
 > ordered application and validation/forget authority remain in force.
@@ -7615,6 +7622,10 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 
 ## D143. Processing layers can be switched off per deployment and per request
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Repair tracks gaps and completion by packing basis. A sources-only passage
+> cutover keeps completed claim occurrences serving until successor extraction.
+
 > **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
 > sources-only document tree with no entities, fact metadata or K links, identical
 > across claims/facts settings. No facts-setting snapshot rebuild or filtering is
@@ -8770,16 +8781,17 @@ generations, retrieval and rendering use their existing code and identities.
 When the full prepared input exceeds a qualified endpoint ceiling, the
 chunker partitions that span at deterministic structural or Unicode scalar
 boundaries. Each piece is embedded in full and keeps exact source
-coordinates. Every nonempty input needs a valid vector for completion.
+coordinates. Every nonempty input needs a verified vector for completion.
+Batches fit the qualified request limits.
 
 **Reuse boundary.** Only representations with an offending chunk receive
 the split packing and delivery generation. Fitting grids retain IDs,
-hashes and paid products. Repair uses a verified predecessor and runs
-changed inputs once. Cutover switches the passage index and completed
-claim occurrences under the lineage fence, with published carriage
-governing testimony currency. Retained evidence keeps its coordinates.
-The protected LoCoMo and BEAM paths require qualified bindings and frozen
-input, grid, ordered retrieval and evidence parity.
+hashes and qualifying paid products. Repair replaces a failed pending
+basis when the qualified envelope changes. Claims publication and tail
+completion follow their own packing basis. Living currency follows the
+last completed testimony basis, even across a sources-only cutover.
+LoCoMo and BEAM keep pinned readers and schema until the exact candidate
+passes frozen input, grid and complete tool-response parity.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

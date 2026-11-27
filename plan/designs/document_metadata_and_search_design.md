@@ -232,6 +232,9 @@ periodised lineages the returned claim evidence is the claim's **occurrence
 in the selected version** (its chunk, version and per-occurrence spans), not
 its origin — this refines the origin rule above for that case only
 ([effective time design §3.4](effective_time_and_section_references_design.md#34-claims-under-a-time-scope)).
+With a [proposed D162 claims publication](split_oversized_chunks_design.md#publication),
+scope checks and live evidence use the selected published claim occurrence
+in the same snapshot. The immutable origin remains accessible through history.
 
 **Worked example.** "Everything about Project X from emails from Alice":
 

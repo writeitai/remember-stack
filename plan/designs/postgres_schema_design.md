@@ -1641,7 +1641,10 @@ a representation can stage a replacement grid and select one published generatio
 Within-block slices can share E0 block ordinals and have distinct character
 spans. The published passage pointer and indexed rows change in one
 transaction. Pending and superseded vectors live in private, unranked storage.
-Published claim occurrence selection and currency follow the D54 cutover.
+Claim occurrences follow the version's selected completed claims basis,
+which can remain selected across a sources-only passage swap. D54 currency
+changes with claim publication. D143 gaps and D90/D118 staging and unit
+memberships record their basis without changing paid-product identities.
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────

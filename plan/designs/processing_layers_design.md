@@ -108,6 +108,9 @@ need no data migration. A gap row is inserted once per version and layer and kee
 through discharge and reopening until it is deleted. A gap is *open* while `discharged_at` is null; a layer is backfilling
 while it is enabled and has an open gap of a live version. Like `obs_flush_version_state`, gap
 rows carry no foreign key; archive and forget delete them explicitly (§6.3).
+For [proposed D162 repairs](split_oversized_chunks_design.md#dispatch-and-writes),
+each gap, admission and frontier also names its packing basis. A completed
+predecessor tail cannot settle the replacement's gaps.
 
 ### 3.3 One fence
 
@@ -210,6 +213,10 @@ its occurrences are complete, computes the stale set and
 applies the transitions **in one transaction under the lineage lock**; otherwise it skips the
 step. The current version's own reconcile computes supersession lineage-wide when it runs. In a
 deployment without a configuration row the step runs exactly as today.
+For [proposed D162 repairs](split_oversized_chunks_design.md#publication), the
+guard also applies with both layers enabled by default. Supersession uses
+completed published occurrences of the new version. Until then repair checks
+carriage on the last completed testimony basis.
 
 ### 4.3 The claims tail waits for earlier fact work (configured deployments)
 
@@ -294,10 +301,11 @@ the work ledger, never from the mere absence of rows:
   extract barrier is ready — every chunk's Selection and Claimify results are committed, so every
   claim occurrence of the version is attached — or that grid is empty. A version that has not run
   `embed_chunk` is never "complete with zero chunks".
-  For [proposed D162](split_oversized_chunks_design.md#publication), each job
-  and barrier checks its named packing basis. A sources-only repair may publish
+  For [proposed D162](split_oversized_chunks_design.md#publication), completion
+  and frontier checks use the named basis. Sources-only repair publishes
   passages while leaving previously published claim occurrences selected.
-  They switch only when the successor completes admitted claims work.
+  The successor's claims qualify only after admitted extraction completes,
+  including for an empty grid.
 - A version reaches a layer's **frontier** when its products are reusable by later versions:
   - **claims** — its occurrences are complete and its `embed_claim` succeeded, so every claim it
     carries, including claims later versions will reuse by id, has its vector;

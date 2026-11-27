@@ -67,6 +67,10 @@ worker environment and approved provider order. CI compares every required compo
 and effective model binding with the composed current engine; a worker generation
 change cannot leave a stale executable benchmark pin unnoticed.
 
+The [proposed D162 gate](split_oversized_chunks_design.md#benchmark-admission)
+keeps the retained store on its pinned reader and schema until the exact
+candidate passes tool-response parity on copies using recorded public reads.
+
 ### 2.1 Model roles and independent judging
 
 Ingestion LLM work and visual descriptions use low reasoning. Only answering and

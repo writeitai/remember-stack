@@ -193,7 +193,8 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
    configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
    (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
-   generation.
+   generation. Under [proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry),
+   pack in grid order within the qualified item, token and byte limits.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).

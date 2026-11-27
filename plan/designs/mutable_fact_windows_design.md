@@ -246,6 +246,11 @@ Required properties apply equally to relations and observations:
    commit together. A failed transaction leaves none of those effects visible.
    Existing derived-index/profile repair is recoverable from committed work.
 
+For [proposed D162 repair](split_oversized_chunks_design.md#dispatch-and-writes),
+admission and completion require staging and a materialized unit on the same
+eligible packing basis. Application identities and completed receipts are
+reused across bases.
+
 These are application requirements, not a mandate for the removed temporal
 operation graph, endpoint owners, cache certificates or compensation checkpoints.
 Prefer existing domain transcript storage and narrowly scoped preparation/receipt
