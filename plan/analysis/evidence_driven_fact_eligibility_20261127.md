@@ -222,6 +222,50 @@ breaks that invariant, so the oracle needs a specific exception for that chain.
   [Operation clock](../../src/rememberstack/adapters/bounded_postgres_read.py#L65) ·
   [SQL clock](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L267)
 
+## Round-four source checks
+
+- The pinned self-host API derives the SQL query role and database name from
+  the primary URL but accepts separate `query_role_host` and `query_role_port`.
+  Opening a connection to the primary URL proves nothing about that route.
+  A launcher-owned PostgreSQL instance on the verified volumes gives every
+  pool one destination. Identical catalogs can exist in different stores.
+  [Pinned connection factory](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L784-L822)
+- BEAM reloads `questions.json`, skips by arm and ID, and uses ability to
+  select retrieval queries and prompt hints. The CLI model reaches synthesis
+  for each newly answered item. Hashing the ordered input file, pinning the
+  evaluator and capturing its resolved reader settings cover all three inputs.
+  [BEAM resume](../../benchmarks/rs_harness_beam/answer_agent.py#L725) ·
+  [CLI](../../benchmarks/rs_harness_beam/cli.py#L174)
+- Both LoCoMo backup manifests say version 2. The historical one requires six
+  archives, including the separate forget-manifest volume. The current one
+  requires five. The historical tool can stage without services, and
+  `restore --start` invokes setup. The historical graph check requires
+  PostgreSQL 19 and its Compose file specifies a PostgreSQL 19 RC1 image.
+  Recover the image from the recorded storage stack because the backup
+  manifest has no image field.
+  [Historical manifest](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/sharding/store_backup.py#L156-L172) ·
+  [Current manifest](../../benchmarks/locomo/sharding/store_backup.py#L154) ·
+  [Historical Compose](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/compose.yaml#L133-L150)
+- The published prompt and evaluator revisions differ. The pinned ablation
+  defaults to its own prompt and rebuilds the fingerprint from the effective
+  arguments. The saved prompt and options are the inputs that reproduce it.
+  [Published run](../../benchmarks/locomo/README.md#published-results) ·
+  [Historical fingerprint](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/ablation.py#L823-L853)
+- The pending review index orders by impact. An index over the existing JSON
+  fact keys, limited to open withdrawals, serves the exact probe without
+  backfilling columns. Representative counts and ranks use lineage keys
+  alone. Hydrating only the selected ranks lets their claim and document IDs
+  drive point reads while keeping exact totals.
+  [Review index](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L233) ·
+  [Representatives](../../src/rememberstack/surfaces/query_engine.py#L6365)
+- LoCoMo renders SQL response metadata. The request ID and elapsed time vary
+  across identical builds, and D163 changes the SQL surface hash. The
+  executor also emits its wall-clock start time. A same-build control with
+  that clock pinned can identify expected differences while the full render
+  still shows exactly what each reader sees.
+  [SQL result](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061) ·
+  [LoCoMo renderer](../../benchmarks/locomo/protocol.py#L717)
+
 ## Prior qualification and alternatives
 
 - D142's 300k-chunk gate measured BM25 chunk retrieval at 263/267 ms unfiltered

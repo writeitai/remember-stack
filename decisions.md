@@ -8763,15 +8763,17 @@ cost included a repeated deployment-wide survivor walk. Lookups in
 `chunk_claims` by claim ID and `chunks` by chunk ID can still visit each
 retained range leaf. The candidate's evidence supplies those keys.
 
-**Consequences.** Reuse existing indexes and normal join planning. Preserve
-D140 scope, D142 ranking and budgets, #542 count pruning and embedding reuse,
-D153 sharing, D159 archive behavior and D56 ingestion identities. Qualify
-against the deployed `p9_55_0076` authority at fixed snapshots and measure
-work and latency at scale. Commit compatible view replacements separately.
-The LoCoMo and BEAM launcher verifies the pinned engine, live schema and
-store on start and resume, and holds the binding through the last checkpoint.
-LoCoMo pins the store per sample. D163 benchmark evaluation requires explicit
-opt-in under a fresh run identity.
+**Consequences.** Use normal join planning and add one partial, fact-keyed
+index for open support reviews. Read representative rows by key after exact
+totals and ranks. Preserve D140 scope, D142 ranking and budgets, #542 count
+pruning and embedding reuse, D153 sharing, D159 archive behavior and D56
+ingestion identities. Qualify against `p9_55_0076` at fixed snapshots and
+measure work and latency at scale. Commit compatible view replacements
+separately. On benchmark start and resume, bind every API database connection
+to the verified frozen store through the last checkpoint. LoCoMo pins the
+store per sample and resumes with its original storage stack, evaluator and
+reader inputs. BEAM pins the ordered questions, evaluator and effective reader
+settings. D163 evaluation requires explicit opt-in under a fresh run identity.
 
 [D153 §4.3](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
 [Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·
