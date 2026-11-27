@@ -342,7 +342,9 @@ and every handle it carries opens that version:
   non-deleted ready version whose representation is that version's current representation (the
   D65 rule), and never mix versions. `memory_v1.chunks_live` keeps its meaning (served-version
   chunks); the new `memory_v1.chunks_all_versions_live` exposes the current-representation
-  chunks of every non-deleted ready version for scoped reads.
+  chunks of every non-deleted ready version for scoped reads. The
+  [D162 publication gate](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
+  also requires the selected grid to be published for chunk reads.
 - **Source handles** use `source_open(version_id, representation_id)` (D115 already takes a
   version). Under D155 a **P3 path** is the movable, applied corpus folder for
   that selected version/representation. Return it only if the selection is served
@@ -437,7 +439,7 @@ batch exactly filled the cap; an empty or short page may otherwise continue.
 
 - Every chunk, passage, claim occurrence and document result from a periodised lineage
   includes `effective: [{from, until, until_declared}]` for its version.
-- Scoped responses report lineages whose in-force version for the scope is not ready in a new
+- Scoped responses report lineages whose in-force version is pending for the requested read in a new
   envelope field `Freshness.scope_pending`: `{doc_ids: [...] (at most 50), count, complete}`, so an agent
   can tell "nothing is in force" from "the in-force text is still processing". A lineage is
   reported when the request touched it: it was named by a document filter, it is in the
@@ -455,6 +457,18 @@ batch exactly filled the cap; an empty or short page may otherwise continue.
   The probe runs in the request's ranked-read context (D142); `complete` is false when any
   replayed nomination stopped on a work, deadline or ANN-scan bound instead of filling `k`
   or exhausting its stream, and `count` is then a lower bound.
+
+For ranked reads with an admitted passage channel, an in-force version also
+counts as pending while its selected D162 grid awaits E1 publication. Use the
+version's current representation and its selected delivery and packing stamp.
+This includes reserved and dead-lettered deliveries, even with zero chunk
+rows. Use the same indexed predicate for the bounded candidate probe and the
+touched-lineage check in the nomination and confirmation snapshot. Apply
+D140's existing visibility and touch rules. Apply the same D162 publication
+gate when probing readable editions. An empty response with a touched
+unpublished grid returns `boundary` with `Freshness.scope_pending` and
+explains that E1 publication is pending. An exhausted search can return
+`known_empty` for a published empty grid.
 
 ## 4. Section keys
 

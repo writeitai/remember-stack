@@ -116,6 +116,11 @@ first global substring match. Existing D56 same-claim-ID reuse and D119 occurren
 evidence stay mandatory. Header timestamp changes retain their documented broader
 invalidation; shifting chunk boundaries can also change actual input context.
 
+For [D162 reuse across layouts](split_oversized_chunks_design.md#2-coordinates-and-reuse),
+the remap follows the actual same-owner local slots and the supports of the
+cards admitted to Claimify. A neighbouring slot or card support can lie beyond
+intervening child chunks while the preceding eight producers stay equivalent.
+
 ## Relationship to E3 and entity resolution
 
 The grounded, self-contained claim carries the referent into normalization. E3

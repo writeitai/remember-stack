@@ -201,8 +201,9 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 4. **Batch errors.** The legacy path bisects non-outage failures to isolate a singleton for a typed skip.
    [Proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry)
    bisects deterministic rejections and requires a valid vector for each nonempty input.
-5. **Atomic PostgreSQL write.** The legacy path upserts `chunk_search` by
-   `(deployment_id, chunk_id)` and stamps the chunk authority in a batch transaction.
+5. **Batch persistence.** The legacy path commits the `chunk_search` upsert by
+   `(deployment_id, chunk_id)` first, then commits the chunk authority stamp in
+   a separate transaction.
    D162 checkpoints batches off-index and writes final projection rows with first E1
    readiness. A crash after the provider response and before a checkpoint may repeat a billable call.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful

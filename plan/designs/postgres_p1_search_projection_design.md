@@ -206,10 +206,11 @@ Embedding production remains asynchronous:
 3. the worker computes the embedding through the configured provider;
 4. one PostgreSQL transaction updates the natural row, or upserts
    `chunk_search`, with the vector and all attestation fields; and
-5. the work item becomes complete only after that transaction commits.
+5. the work item becomes complete with durable output.
 
-Legacy chunk writes may publish `search_text` before the vector returns to
-serve lexical search. [Proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
+Legacy chunk batches commit the P1 body, vector and projection attestation
+before committing the chunk authority stamp in a separate transaction.
+[Proposed D162](split_oversized_chunks_design.md#3-recover-the-unpublished-version-at-chunk)
 checkpoints batches off-index and installs the full passage projection at
 first E1 publication. A row is semantic-ready only when its non-null vector
 attestation matches the deployment's active embedding configuration.
@@ -660,6 +661,8 @@ nominations:
   from the search results. An empty result is `known_empty` only when every
   contributing channel ended `exhausted`; an empty result after a bound is a
   truncated empty result, never `known_empty`.
+  An empty ranked response with a touched unpublished passage grid is a
+  `boundary` under [D140 and D162](effective_time_and_section_references_design.md#37-results-carry-their-period-and-pending-lineages).
 - The open query space records each invocation, including zero-row ones, in
   `QueryResult.semantic_invocations[]` (requested/candidate/eligible counts,
   termination reason, snapshot, authority time) so the truncation survives an

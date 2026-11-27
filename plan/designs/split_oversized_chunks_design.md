@@ -76,6 +76,12 @@ grid, references and section history select at most one `first_chunk_ids` entry
 per version and section. Pick the first published piece in document order
 that intersects the section's first block.
 
+Build Selection and Claimify passage labels per window on split grids. For an
+eligible gap-only target or neighbour with no clipped block, label its exact
+piece span and render the converter provenance clipped to that span. The
+target label can ground a D122 card. Claimify still requires a Selection keep
+for an origin citation.
+
 Only an actual split gives the CHUNK output a new packing stamp (base
 parameters, split rules and envelope). A restart without new cuts retains its
 stamp. Subsequent work names that stamp and the delivery (§3).
@@ -93,12 +99,20 @@ eligibility, text-origin, E2, reference and normalization policies keep their pi
 - **Selection and Claimify.** Key split grids on the actual E2 slots (target,
   closest same-owner chunks on each side even across a child, explicit empty
   slots). Preserve legacy keys. For reuse across layouts in either direction,
-  verify actual slot bytes, relative origins, eligibility, stable facts, dates
-  and generations. Carry equivalent frozen context. For Claimify also check
-  the same ordered Selection inputs and results from the preceding eight
-  document chunks under D122, including empty results. Remap consumed and
-  cited spans by relative offset and exact substring under D119. Reuse the
-  claim IDs on a unique verified remap. Otherwise use ordinary E2.
+  verify slot bytes, passage slices, relative origins, eligibility, stable
+  facts, dates and generations. Carry equivalent frozen context. Pair slots
+  by role and remap frozen Selection cards through those slots. For Claimify
+  also match the ordered Selection inputs and frozen results of the preceding
+  eight document chunks under D122, including empty results. Replay admission
+  from those results and require equivalent ordered cards. Pair supports by
+  producer position, card ordinal and support order.
+
+  Remap each citation through its corresponding local slot or admitted card
+  support. The next same-owner slot can sit beyond several pieces of a child
+  section. Use D119's relative offsets and exact substring checks. Require one
+  distinct destination per span. The origin must still overlap a Selection
+  keep on the target. Reuse the claim IDs with provenance resolved in the new
+  representation. Use ordinary E2 if verification fails.
   [Legacy keys](../../src/rememberstack/workers/e1.py#L734-L771),
   [consumed slots](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
 - **Text origin.** On first packing a version, apply D140 to equivalent slots.
@@ -149,17 +163,27 @@ verified parent dates before clearing superseded private rows.
 [Ledger key](../../src/rememberstack/spine/work_ledger.py#L1996-L2023),
 [D143 lookup](../../src/rememberstack/spine/processing_layers.py#L1268-L1275).
 
+**Checkpoints and forget.** Store durable vectors, prepared source and D80
+input data, and verified parent spans and dates in off-index PostgreSQL rows
+indexed by their owner `(deployment_id, doc_id)` across deliveries. In every
+write or barrier transaction, check lineage and version liveness, selected
+delivery, packing stamp and lease attempt under the same lineage lock as
+D159 hide. Discard late output after the hide. The
+[D159 sweep](archive_and_forget_design.md#33-the-sweep)
+deletes staged content by document, including obsolete and dead-lettered
+deliveries whose chunk rows are already gone.
+
 **First publication.** Activate the gate with compatible readers and after
 draining and fencing incompatible workers. A D162 grid is pending from its
 first chunk write. Withhold its handles and bodies from current and all-version
-SQL views and body fetches, passage search, adjacency and section links. E0
-readiness governs document and section metadata. Check delivery, packing stamp,
-lease attempt and version liveness under the lineage fence in every write or
-barrier transaction. Keep batch checkpoints off the serving indexes. For a
-proven-private legacy grid, adopt the gate and withdraw partial P1 rows before
-ending isolation. At first E1 completion, install the final P1 projection and
-publish the selected grid in the same transaction as the successful ledger
-transition, including the empty-grid path. D143 continues from that delivery.
+SQL views and body fetches, passage search, adjacency and section links. Scoped
+passage reads use the same gate for [D140 pending disclosure](effective_time_and_section_references_design.md#37-results-carry-their-period-and-pending-lineages).
+E0 readiness governs document and section metadata. For a proven-private
+legacy grid, adopt the gate and withdraw partial P1 rows before ending
+isolation. At first E1 completion, install the final P1 projection, publish
+the selected grid and delete its staged content in the same transaction as
+the successful ledger transition, including the empty-grid path. D143
+continues from that delivery.
 
 ## 4. Provider rejection and retry
 
@@ -220,7 +244,11 @@ a separate run identity and preserves the published 94.09% and attestation.
 | Focus | Implementation release check |
 | --- | --- |
 | Packing | Byte-identical fitting output. Cover header-only overflow, YAML, OCR tables, long turns, CRLF, scalar fallback and a skipped labelled HTML gap. Check exact spans, clipped origins, eligibility and nonblank pieces. With equal-tier cuts at 400 and 600 tokens and an anchor at 520, cut at 400 first, then respect the anchor. |
+| Gap-only evidence | Split an eligible HTML gap beside a neighbour with a clipped block. Require a published D122 card citing the exact gap-only target span with its clipped converter provenance. |
 | Provider | Cover stock and drifted routing, inconclusive bounds, full delivery and framed minimum input, and individually fitting items that exceed a batch limit together. Exercise real 429s and typed rejections, shuffled, missing and duplicate positions, and a good vector beside a zero-norm one. Malformed batches attest nothing. Test malformed singletons in both layouts and a valid sibling checkpoint. |
 | Publication | Dead-letter legacy E1 after a successful batch. Observe its handles through SQL and search, refuse CHUNK recovery, and verify ordinary embed replay preserves them. Check SQL, search and body fetches, adjacency and section links before and after D162 publication. Split a section's first block and check that references and history each return its first piece only. |
+| Scoped passages | Search by document ID with an E0-ready in-force D162 version and a published predecessor. Pending and dead-lettered deliveries yield `boundary` and name the document in `scope_pending`. On a published empty grid with an exhausted search, require `known_empty`. Publish between nomination and the pending check and verify both use the original read snapshot. |
 | Recovery | Audit the two hosted dead letters and canary any with verified privacy. Exercise ambiguous evidence, an old sidecar, changed envelopes on first ingest and replay, an interrupted P1 stamp, stale attempts and a published grid above the ceiling. Widen the envelope for a private legacy grid so it fits without cuts. Replay twice and check that one distinct embed delivery succeeds, IDs stay stable, and readiness and D143 advance on that delivery. |
+| Forget | Checkpoint a partial batch and dead-letter the delivery. Forget, then release an obsolete attempt's reply after the hide. Verify immediate invisibility, rejection of the late write, and zero staged content or P1 rows after repeated sweeps. |
 | D56 and D140 | Test dated legacy → split and split → fitting with unchanged parent runs across a child and an oversized section elsewhere. Compare paid calls by stage, dates, spans and claim IDs. Keep the D122 window case. Check an unchanged fragment beyond an anchor after an edit in both recovery orders. Delete the January 1 version after B inherits its date and before B's oversize replay. Verify that B's pieces keep January 1 and E2 resolves “tomorrow” to January 2. Append the 17,000-digit block to the fitting paragraph with a qualifying internal anchor. Require zero embedding calls for that intact paragraph given the same D80 input and full-delivery proof. Reject matching-hash vectors without that proof. |
+| Cross-layout citations | Hold the local slots and preceding eight Selection inputs and results fixed while a split child shifts ordinals. Exercise a secondary citation to the next same-owner chunk across the child and an admitted card support outside the old ordinal window. In both layout directions require the same claim IDs, exact remapped spans and zero Claimify calls for matching targets. |

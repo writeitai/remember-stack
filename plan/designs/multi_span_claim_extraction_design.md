@@ -34,6 +34,8 @@ where needed. Labels are assigned before inference; they are not inserted into
 stored document bytes and never participate in content-reuse keys. The engine
 retains the map to representation-specific character ranges. It verifies the
 mapping against the immutable representation.
+On a [D162 split grid](split_oversized_chunks_design.md#2-coordinates-and-reuse),
+each eligible gap-only window supplies its exact piece span and clipped provenance.
 
 The model returns a standalone claim and a nonempty ordered list of supplied
 source references, alongside existing attribution and temporal output. It does
