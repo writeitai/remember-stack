@@ -125,8 +125,9 @@ budget enforcement, and DLQ operations: `orchestration_design.md`, D52–D53.)
    D39) → **crossref** (citations). Bodies live in GCS (raw + artifacts buckets); Postgres holds only
    metadata + the queryable section index (D37).
 2. **E1** (design: `e1_chunks_design.md`, D57–D58): the **blockizer** derives the deterministic
-   block sequence from document.md; PageIndex sections snap to the block grid; semchunk packs
-   whole blocks into non-overlapping, section-bounded, anchor-stabilized chunks → context
+   block sequence from document.md. PageIndex sections snap to the block grid. The chunker
+   packs non-overlapping, section-bounded passages at stable anchors. [Proposed D162](split_oversized_chunks_design.md)
+   partitions passages that exceed the embedding input ceiling → context
    (the E1 prefix — exists under the D63 default conventional embedder; a contextual-embedder port config deletes it, D63) → embed
    → P1. Unchanged blocks reuse prior claims/embeddings across document versions (D56).
 3. **E2 → E3** (every chunked document — there is no pre-extraction value gate, D25): coreference

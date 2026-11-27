@@ -18,7 +18,7 @@ Numbers are starting points to measure, not committed constants (CLAUDE.md).
 > **Reading this cold (CLAUDE.md Rule 1).** E0 converts every input to a clean Markdown
 > rendering (`document.md`) plus sidecars; **PageIndex** is the LLM-based structurer that
 > builds a per-document section tree (titles, roles like `results`/`references`, summaries);
-> **semchunk** is the deterministic token-budget text splitter the requirements impose;
+> the **packer** combines ordered blocks into section-bounded source passages;
 > **E2** extracts claims from chunks; a claim's `source_span` must trace back through
 > `document.md` to the source (grounding, D32); **D56 reuse** requires that when a watched
 > document is edited, unchanged content is *not* re-extracted or re-embedded. "**Embedding
@@ -34,8 +34,8 @@ One document, one ordered text, three views over it:
 document.md = [b1][b2][b3][b4][b5][b6][b7][b8][b9][b10]      BLOCKS — deterministic atoms
 sections    = [   §1 Intro    ][     §2 Results    ][§3 Refs] SECTIONS — PageIndex ranges
                  role=intro         role=results     role=refs   over blocks (LLM meaning)
-chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  CHUNKS — token-budget
-                                                              packings of whole blocks
+chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  CHUNKS — non-overlapping
+                                                              section-bounded passages
 ```
 
 | | Blocks | Sections | Chunks |
@@ -43,7 +43,7 @@ chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  CHU
 | produced by | the **blockizer** (deterministic, ours — §2) | PageIndex (**LLM** — may redraw on re-run) | the packer (deterministic — §4) |
 | carry | **identity**: hashes, offsets, source back-pointers | **meaning**: hierarchy, roles, summaries, placement | **the unit**: embedding, extraction, claim anchoring |
 | used for | reuse diff (D56), the grounding chain, edit locality | chunk boundaries, E2 role signal, P1 role filter, P3 placement | P1 index rows, E2 bundles, `claims.chunk_id` |
-| in identity/reuse keys? | **yes — exclusively** | **never** (non-deterministic) | derived (a chunk's key *is* its block-hash sequence) |
+| in content identity? | ordered block hashes | section coordinates excluded | block-hash sequence, or exact fragment bytes under proposed D162 |
 
 In motion: someone edits paragraph `b5`. Only `b5`'s hash changes; the block diff aligns
 everything else; chunk `c2` (b4–b5) is the only chunk whose block sequence changed → it alone
@@ -152,14 +152,13 @@ split as D37.
 
 PageIndex **creates meaning independently** — it reads `document.md` and emits the section
 tree; it neither needs nor sees blocks. Being an LLM tool, its proposed boundaries can land
-anywhere — including mid-paragraph — and chunks are runs of *whole blocks* that must never
-cross a section, so unsnapped boundaries would make the two constraints unsatisfiable. Its
-output is therefore **normalized onto the block grid**:
+anywhere, including mid-paragraph. Packing needs a stable section owner for every block.
+Its output is therefore **normalized onto the block grid**:
 a deterministic post-step snaps every section boundary to a block boundary, and sections are
 *persisted as block ranges* (`blocks 14–31`), never raw char spans. Four reasons:
 
-1. **Forced by constraint consistency.** "Chunks are runs of whole blocks" ∧ "chunks never
-   cross sections" is satisfiable only if sections are unions of whole blocks.
+1. **One owner per block.** Both the ordinary whole-block passage and any
+   size-driven fragment from it get their deepest owner from the same grid.
 2. **LLM output needs a deterministic normalization target.** PageIndex spans can overlap,
    gap, or drift; snapping is where they are sanitized into a well-formed partition (cover,
    nesting, no mid-block cuts). LLM proposes, a deterministic layer disposes — the system's
@@ -202,15 +201,18 @@ section structure unconditionally — a paper gets a rich tree doing real work (
 `references` role for Selection, placement); an email degrades to the synthetic root with
 blocks ≈ paragraphs, and the machinery is uniform.
 
-## 4. Chunks: non-overlapping runs of whole blocks (D58)
+## 4. Chunks: section-bounded packing (D58)
 
-**Packing rules.** A chunk is an ordered run of **whole blocks within one section**, packed
-by **semchunk** (the imposed constraint, kept as the packer) to the token budget:
+**Packing rules.** The v0.22.4 compatibility pack is an ordered run of whole
+blocks within one section, packed to a whitespace-token target. A single
+block over that target becomes its own candidate.
+[D162, proposed](split_oversized_chunks_design.md) adds a hard limit on the
+rendered embedding input. On adoption, candidates that exceed it become
+contiguous source pieces, including within-block cuts where needed. Fitting
+grids keep their original cuts and identities. The size contract specifies
+the split, identity, selective migration and recovery rules.
 
-- **Never split a block** — with two edge rules: an oversized *atomic* block (a big table)
-  becomes its own oversized chunk rather than being split mid-row; a pathological giant
-  paragraph falls back to deterministic sentence-splitting.
-- **Never cross a section boundary** (§3 makes this well-defined).
+- **One deepest owner per chunk.** Section boundaries stay on the block grid (§3).
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
   tables). A chunk boundary is forced wherever eligibility changes between blocks, so every
@@ -228,24 +230,21 @@ by **semchunk** (the imposed constraint, kept as the packer) to the token budget
   are spikes (Codex review F15). **Anchor predicate**: block `b` is an anchor iff
   `uint64(block_hash) mod M == 0` *and* ≥ `min_gap` tokens accumulated since the last anchor
   (suppresses clusters); `M` targets a mean spacing of a few chunk budgets. **Packing**:
-  semchunk packs to budget as usual, but a chunk boundary is *forced* before every anchor —
-  packing after an anchor is independent of everything before it, so an early edit perturbs
-  boundaries only to the next anchor. **Sparse anchors** (> `max_gap` tokens without one):
-  budget-only packing in that stretch — graceful degradation to plain semchunk, worst case is
-  today's behavior. **Dense anchors**: `min_gap` caps forced boundaries so no chunk is
-  pathologically small. Oversized atomic blocks are their own chunks regardless of anchors.
-  Parameters (`M`, `min_gap`, `max_gap`, budget) live in `chunker_version`; their *values* are
-  spike 3. Load-bearing for sectionless documents (the synthetic-root case), where sections
-  provide no containment.
-- **Determinism:** chunks = f(blocks, sections, budget, anchors, `chunker_version`) — a
-  chunker bump is a cheap repack of existing atoms (no re-conversion, no re-blockize), though
-  it does re-key reuse (a deliberate version boundary, like any D7 version bump).
+  packing restarts before every accepted anchor. A preceding edit can move
+  cuts up to the next unchanged accepted anchor or the owner-run boundary.
+  Sparse anchors leave budget-only packing inside that interval. Parameters
+  (`M`, `min_gap`, budget) live in `chunker_version`. Size-driven cuts refine
+  individual candidates and keep these restarts.
+- **Determinism:** the pack depends on the immutable reading, selected sections,
+  eligibility and packing parameters. D162 binds the size envelope only to a
+  grid that actually splits. Its delivery generation is distinct from paid
+  reuse identity.
 - The **token budget** is an eval number, not an argument: recall@k per size class on the
   golden set (spike 1). Starting point: mid-hundreds of tokens.
 
-**Chunk identity:** a chunk's content key *is* its block-hash sequence —
-`chunk_content_hash = hash(ordered block hashes)` — which is what makes §7's reuse rule a
-sequence comparison rather than a semantic judgment.
+**Chunk content identity.** The ordinary `chunk_content_hash` hashes the
+ordered block hashes. D162 fragments use a distinct hash of exact source
+bytes. Both support §7's reuse comparison across shifted offsets.
 
 ## 5. Embedding granularity — multi-granularity by architecture, not tiny chunks (D58)
 
@@ -323,10 +322,10 @@ change.
 
 The lifecycle design owns the *contract* (cost ∝ the edit); this section owns the mechanism:
 
-- **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
-  new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain). A chunk
-  is **reusable iff its constituent block-hash sequence is unchanged**, regardless of where
-  it moved — offsets never participate.
+- **A1 — content alignment.** A new version compares content identities over
+  ordered block hashes, or over exact fragment bytes under D162. Offsets stay
+  out of content identity. Embedding and extraction also apply their own
+  input and provenance checks below.
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
@@ -385,8 +384,8 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 
 Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 
-- `chunks`: `version_id`, `block_start`/`block_end` ordinals, `chunk_content_hash` (= hash of
-  the block-hash sequence), `extraction_input_hash` (§7), `section_id`, offsets; **D80**
+- `chunks`: `version_id`, intersected `block_start`/`block_end` ordinals,
+  `chunk_content_hash` (§4), `extraction_input_hash` (§7), `section_id`, offsets; **D80**
   location-facts snapshot ref / bounded optional header, `embedding_text_hash`,
   `embedding_input_policy_version` and current embedder stamps. The normalized body and
   vector live in the sole `chunk_search` sidecar; exact body remains in the artifact
@@ -409,7 +408,7 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 | D54–D56 (lifecycle) | **completed**: the reuse mechanics deferred by lifecycle §6 are bound here (A1–A3); the D56 key is corrected to stable components only |
 | D8/D9/D48–D50/D94 (retrieval) | **composes**: claims = needle channel, chunks = passage channel; role and `source_shape` filters join normalized authority; one current search attestation, no copied generation scalars |
 | D63/D80 (embed path) | **D80 binds** conventional interchangeable embedders + embedding-input policy; contextual non-goal |
-| requirements (semchunk) | **honored**: semchunk survives as the packer over blocks |
+| D162 (proposed) | **refines**: a hard per-input ceiling, within-block source slices and a selectively published packing generation |
 | D7/D12/D33 | **followed**: blockizer/chunker versioned; embedding-text hashes are replayed state; all derivations deterministic or ledgered |
 
 ## 10. Spikes (measure before locking)
@@ -423,13 +422,10 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
    corpus; the number that validates the whole D56 economy.
 5. **Structurer snap distortion** — how often PageIndex boundaries land mid-block (conversion
    quality signal); structurer re-run stability across versions.
-6. **Oversized-block handling** — frequency and retrieval behavior of atomic-oversize chunks
-   (tables); whether tables need type-specific embedding treatment.
+6. **Oversized inputs** — measure route-specific ceilings and the retrieval
+   quality of structured splits under [D162's qualification gates](split_oversized_chunks_design.md#5-retrieval-release-gates-and-rollout).
 7. **E2 batch size** — quality vs cost of multi-chunk extraction calls (attention dilution in
    very long calls vs bundle-overhead savings).
-7a. **Oversized-block constants** — the token threshold above which an atomic block becomes
-   its own oversized chunk, and the deterministic sentence-splitter (library + version, pinned
-   like the blockizer) for the pathological-giant-paragraph fallback.
 8. **Embedding-input-policy quality (D63/D80/D94)** — model default remains
    `qwen3-embedding-8b` (conventional) and the reference dimension is fixed at
    1,536. The existing golden set may still compare body-only vs compact/full

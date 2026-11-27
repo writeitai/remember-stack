@@ -1639,10 +1639,15 @@ tables hold metadata, offsets, the section link, and the **generated
 context prefix** (LLM-derived, so it is *replayed* on rebuild, not regenerated — D7 — and therefore
 stored as derived metadata, not body text).
 
+Under [proposed D162](split_oversized_chunks_design.md#3-selective-migration-and-replay),
+a representation can stage a replacement grid and select one published generation.
+Within-block slices share the same E0 block ordinals and get distinct character
+spans. The published-grid choice governs current search rows.
+
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
--- chunks — semchunk units, section-aware (never split mid-section, D39). Body = markdown_uri sliced
--- by [char_start,char_end] (NOT stored in the authority row, D37). P1 is keyed by chunk_id. Large
+-- chunks — section-bounded passages (D58). Body = markdown_uri sliced
+-- by [char_start,char_end) (D37). P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (
@@ -1653,9 +1658,9 @@ CREATE TABLE chunks (
   representation_id uuid NOT NULL,             -- LOGICAL FK → document_representations (D65): the reading whose block grid + document.md offsets this chunk is cut from — the basis coordinate on every occurrence
   section_id      uuid,                        -- LOGICAL FK → document_sections; section (role/path signal for E2)
   ordinal         integer NOT NULL,            -- position within the document
-  block_start     integer NOT NULL,            -- first block ordinal packed into this chunk (D57/D58: a chunk = a run of whole blocks)
+  block_start     integer NOT NULL,            -- first source block ordinal (D57/D58)
   block_end       integer NOT NULL,            -- last block ordinal (inclusive)
-  chunk_content_hash text NOT NULL,            -- hash of the chunk's ORDERED BLOCK HASHES (D58) — embedding-reuse + occurrence identity
+  chunk_content_hash text NOT NULL,            -- hash of ordered block hashes or exact fragment bytes (proposed D162)
   extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, the chunk's text_origin_at (D140 — not the version's own date), language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
@@ -1679,7 +1684,7 @@ CREATE TABLE chunks (
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'E1 retrieval units (semchunk, section-aware), one row per (version, position). Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse is embedding_text_hash + policy + embedder generation (D80), not content hash alone. Monthly-partitioned, logical FKs (D23).';
+  'Section-bounded E1 passage occurrences. Normalized search text + current embedding live in private chunk_search (D94); the authority row stores offsets, section link, D80 location-facts/header/hash/policy stamps, version stamps, and D56 extraction reuse keys. Passage vector reuse matches embedding_text_hash, policy, and embedder generation (D80). Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup

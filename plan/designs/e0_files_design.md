@@ -278,7 +278,7 @@ versions of one lineage — a route change is a deliberate version bump.
 reasoning-based retrieval system; **for us it is structure, not a retrieval engine** — we keep the
 chunk + embed + graph hybrid (D8/D9). We use its **tree + section roles + spans** to:
 
-- give E1 **section-aware chunk boundaries** (never split mid-section; one chunk = one topic),
+- give E1 **section-aware chunk boundaries** so each passage has a single deepest section owner,
 - give E2 the **section path/role signal** it consumes (D25/D31 — Selection drops
   references/boilerplate at proposition grain),
 - carry **per-section summaries** (kept — see below), and

@@ -2034,6 +2034,12 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
+> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
+> On adoption, the whole-block and oversize edge rules below give way to a
+> hard embedding-input ceiling and lossless within-block cuts for oversized
+> candidates. Section ownership, anchors, non-overlap and the multi-grain
+> retrieval contract continue to apply.
+
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
 **anchor-stabilized boundaries** (packing restarts at content-defined anchor blocks, so an
@@ -8738,3 +8744,25 @@ generations, retrieval and rendering use their existing code and identities.
 [Analysis](plan/analysis/ingestion_migration_contention_20261127.md) ·
 [Corpus publication §6.5](plan/designs/e0_files_design.md#65-incremental-work-publication-order-and-reader-observations) ·
 [Migration compatibility §6.1](plan/designs/packaging_distribution_design.md#61-migration-compatibility).
+
+## D162. Split oversized chunks before embedding
+
+**Status:** Proposed. **Date:** 2026-11-27.
+
+**Decision.** E1 keeps the legacy anchored whole-block pack for fitting
+inputs. When the rendered input exceeds the qualified per-input ceiling, the
+chunker partitions the offending source span at deterministic structural
+boundaries or Unicode scalar boundaries. Every piece is independently
+embedded, with exact source coordinates. A deterministic rejection makes
+the affected embedding job fail with a typed error.
+
+**Reuse boundary.** Only representations with an offending chunk receive
+the split packing generation and repair work. Fitting legacy grids retain
+their IDs, hashes, work identity and paid results. Repair reuses the recorded
+E0 reading and replaces the old searchable grid after the new embeddings are
+complete. Stored evidence retains its historical coordinates. Release
+requires provider conformance and unchanged benchmark corpora, including
+the frozen LoCoMo image readings.
+
+[Design](plan/designs/split_oversized_chunks_design.md) ·
+[Analysis](plan/analysis/split_oversized_chunks_analysis.md).

@@ -264,6 +264,7 @@ produced from different text.
 | Change | Action |
 |---|---|
 | Body bytes change | Re-render; new hash ⇒ provider embed under the configured current state |
+| Proposed D162 sizing envelope changes | Audit the selected grids. Repack only grids with over-ceiling inputs under the new envelope. D80 rendering and vector attestation retain their generation. |
 | Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
 | Policy version changes | Mark semantic channel unready; re-render all in-scope chunks; reuse an exactly attested vector or re-embed; verify and publish |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
@@ -344,6 +345,9 @@ pack chunks
   single home for call keys and crash recovery.
 - **Document readiness:** all in-scope chunks have prepare stamps and successful
   embed matching the configured current state (or typed skips).
+  Under [proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry),
+  an input-size failure blocks readiness. A split grid requires a vector for
+  every nonempty piece.
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.
