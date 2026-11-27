@@ -371,10 +371,11 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
    discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
    origin time of the earliest chunk of a non-deleted version of the lineage with the same
-   date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
-   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
-   E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
-   version's own date instead would change every key whenever the source stamps a new
+   date-free reuse identity whose date is not later than this version's own date. A chunk
+   in a new version without a match takes its `source_modified_at` or `published_at`. Private CHUNK
+   recovery carries the same-version date under [D162](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
+   The reuse key, E2 header, and the `asserted_at` of freshly extracted claims use this
+   per-chunk date. Keying on the version's own date would change every key whenever the source stamps a new
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.

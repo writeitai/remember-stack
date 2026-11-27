@@ -18,10 +18,10 @@ on OpenRouter `nebius/bf16`.
 CHUNK runs the existing section-bounded, anchored packer first. Render each
 candidate with its actual D80 facts, including chunk count, and check the
 full normalized body, header, and separators with the pinned tokenizer and
-framing. If all fit, use the existing row assembly, allocation, work keys
-and reuse path. Every stored field has its legacy value given the same
-inputs and allocations. The base chunker, embedding and extraction
-generations stay in use.
+framing. If all fit, use the existing row assembly, allocation and work keys.
+For fitting inputs and reuse history with no split pieces, every stored field
+has its legacy value given the same inputs and allocations. The base chunker,
+embedding and extraction generations stay in use.
 
 EMBED_CHUNK checks every prepared input against the active qualified binding
 before reuse or dispatch. This catches a title or route change between
@@ -58,8 +58,10 @@ piece wholly in a gap. Keep source locators and clip their coverage to the
 piece. For E2, label an exact gap-only window even if another window has
 a clipped block.
 Use the ordinary D119 grounding and D122 prior-eight window on the final
-grid. Section references and history use the first piece that intersects
-the section's first block, at most one per version and section.
+grid. For each D162 split grid, section references and history pick the
+lowest-ordinal chunk whose exact span intersects the section's first block.
+Apply this within the representation and full packing generation. Unsplit
+grids contribute all their matching IDs in the existing result order.
 
 Use UUIDv5 for replacement pieces, with the representation ID as namespace
 and an unambiguous tuple of the full `chunker_version(params=...)`, split-rule
@@ -79,36 +81,46 @@ new ineligible row records a fresh empty Selection and Claimify completion
 without a model call. Every producer keeps its slot in the ordered D122
 window, and an unchanged empty producer has the same key across versions.
 A new split piece takes the version's D140 source date or unknown, with its
-date-free lookup key unset. In CHUNK recovery it keeps its same-version
-parent's recorded date, including unknown. Ordinary retries use completions
-of the same row.
+date-free lookup key unset. Ordinary retries use completions of the same row.
 
-For intact chunks, compute `reuse_identity_hash` and `extraction_input_hash`
-from the unsplit candidates using the legacy E1 calculation. It includes
-the previous and next document chunks only if they share the target's
-section. E2 reads the closest same-section chunk on each side and can see
-past a nested section. A cut outside those E2 windows leaves both key
-calculations on the legacy path.
+For intact chunks, start with the legacy E1 key inputs from the unsplit
+candidates. They include document-adjacent chunks that share the target's
+section. E2 reads the closest same-section chunk on each side, including
+across a nested section. Use the legacy calculation unless an eligible intact
+target consumes a split neighbor in either grid or a prior row has tagged
+D162 extraction keys.
 
-When an eligible intact target reads a D162 piece as an E2 neighbor, use
-the final E2 windows in both keys. Use the actual previous and next
-content hashes and the window-relative converter-origin hashes for the
-target and those neighbors. The tagged slice hash distinguishes the recut
-input. Both paths keep the existing key generations and other fields.
-Resolve `text_origin_at` through the D140 lookup before hashing it into the
-Selection key. D119 checks evidence remapping, and D122 can re-key Claimify
-when its ordered producer keys change.
+Align intact targets by their own block hashes within the lineage. Read the
+prior target's recorded representation and packing generation. Compare the
+exact Markdown, clipped D119 passage ranges and converter-origin coverage in
+each target, previous and next slot using window-relative coordinates. Keep
+absent slots in place. Compare the typed D80 location pairs E2 admits and the
+other date-free key inputs.
+When they match, keep the prior `reuse_identity_hash`, `extraction_input_hash`
+and `text_origin_at`. On a new version, choose among matching rows in earlier
+non-deleted versions using D140's date eligibility and ordering. An undated
+version can keep matching keys with an unknown date.
+
+Without a match, hash the final stable inputs. Resolve the date under D140
+for a new version and use the recorded date in §3 for recovery. Include it
+in the Selection key. Tag both new keys `d162:` so later grids can recognize
+them even after the neighbor fits. For this reuse path, verify the inputs
+of the row supplying the result and remap evidence under D119. Claimify
+also checks its ordered D122 producer keys.
 [E1 reuse](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3) ·
 [D140 text origin](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
 
 ## 3. Recover through CHUNK while the grid is unpublished
 
-A grid completes E1 when its `embed_chunk` ledger work succeeds for that
-representation and packing generation. E1-complete and previously readable
-grids keep their cuts and IDs. For an incomplete grid with an `embed_chunk`
-dead letter, verify the typed size error or measure that the failed input
-exceeds its qualified ceiling. Require separate evidence of continuous reader
-isolation through replacement, such as an uninterrupted isolated import.
+Record the representation and full packing generation in the `embed_chunk`
+work payload and use that pair at dispatch. A grid completes E1 when embed
+work for that exact pair succeeds. Recovery starts from the failed attempt's
+pair. Leave legacy work in the dead letter queue (DLQ) if retained evidence
+cannot identify the grid the attempt used. E1-complete and previously
+readable grids keep their cuts and IDs. Verify the typed size error or
+measure that the failed input exceeds its qualified ceiling. Require separate
+evidence of continuous reader isolation, such as an uninterrupted isolated
+import, through replacement.
 E0 sets the version and representation to `ready` before CHUNK, allowing SQL
 to expose stored chunk IDs. E1 can publish P1 rows before the last batch.
 If isolation is uncertain, keep the grid and dead letter.
@@ -116,12 +128,15 @@ If isolation is uncertain, keep the grid and dead letter.
 [Legacy visibility and replay analysis](../analysis/split_oversized_chunks_analysis.md#incident-and-scope).
 
 Re-run CHUNK on the immutable E0 inputs for the same version. Use committed
-cuts as bounds so each new piece has one recorded parent. Under the lineage
-lock, fence obsolete attempts and verify liveness, E1 incompleteness,
-continuous isolation and the failed work row. Replace any recut private grid
-and remove its superseded embedding stamps and P1 rows before reopening that
-same embed ledger row. Keep its attempt count and error history. Hold the work
-row lock through the replacement and reset, then announce the committed work.
+cuts as bounds so each new piece has one recorded parent. Carry the recorded
+`text_origin_at`, including unknown, from every intact row and from each
+split piece's parent. Recompute affected intact keys from the final windows
+with that date under §2. Under the lineage lock, fence obsolete attempts and
+verify liveness, E1 incompleteness, continuous isolation and the failed work
+row for the exact grid. Replace any recut private grid and remove its
+superseded embedding stamps and P1 rows before reopening that same embed
+ledger row. Keep its attempt count and error history. Hold the work row lock
+through the replacement and reset, then announce the committed work.
 If all cuts still fit, CHUNK keeps the grid and reopens embed work through
 the same ledger transition. Key recovery to the failed attempt so repeated requests resume
 the selected work. E1 writes verify liveness and a running, unexpired
@@ -197,5 +212,20 @@ section, with identical local inputs, D80 input and ordered D122 producer
 keys. Assert matching `reuse_identity_hash`, `extraction_input_hash` and
 `claimify_input_hash`, the first version's `text_origin_at`, the same nonempty
 claim IDs through `chunk_claims`, and zero paid embedding, Selection and
-Claimify calls for the parent target. A control that cuts the closest
-same-section neighbor must change both E1 keys.
+Claimify calls for the parent target. A split that changes the closest
+neighbor's consumed text or passage ranges must change both E1 keys.
+
+Repeat with a dense neighbor doubled so the first split piece exactly
+matches the earlier window, including its clipped passages and origins.
+Require the same reuse with unchanged D122 producers. Changing only an
+ordered producer key re-keys Claimify independently. A matching window in a
+fitting grid can inherit tagged keys from an earlier split grid and pass
+them to the next fitting version.
+
+In private CHUNK recovery, recut a dated grid's neighbor while the intact
+target's recorded origin predates the version. Check that affected keys
+change and fresh claims still use the recorded date. Cover an unknown origin.
+With a newer generation present, recover only the grid used by the failed
+attempt. An ambiguous legacy failure stays dead-lettered.
+With multiple grids in one representation, both section-link reads retain
+legacy IDs and pick only the first intersecting chunk of the split grid.

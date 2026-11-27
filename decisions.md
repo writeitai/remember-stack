@@ -1949,7 +1949,8 @@ identity rules per source kind are a named spike.
 >
 > **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
 > Split pieces get fresh E1 and E2 work. Intact targets retain the legacy
-> Selection and text-origin key calculations when their E2 windows stay intact.
+> keys for unchanged windows and can carry both keys across a split when
+> their consumed extraction inputs match.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -7250,7 +7251,8 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 > **Proposed exception in [D162](#d162-split-oversized-chunks-before-embedding).**
 > New split pieces use their version date or unknown. Private CHUNK recovery
-> retains the recorded same-version parent date.
+> retains each intact row's recorded date and passes the parent's date to each
+> replacement piece.
 
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
@@ -8771,14 +8773,15 @@ generations, retrieval and rendering use their existing code and identities.
 Check each full D80 embedding input against a provider-qualified ceiling
 using a pinned tokenizer. Refine only failing candidates into lossless,
 section-bounded pieces with exact offsets, provenance and deterministic IDs.
-Fitting grids keep every stored field. Each split piece gets a
-generation-specific ID, a fresh vector and a fresh E2 completion. Stable
-Selection keys for ineligible pieces preserve matching Claimify inputs.
-Intact chunks keep legacy Selection and text-origin keys when their E2
-windows are unaffected by cuts.
+Fitting grids with legacy reuse inputs keep every stored field. Each split
+piece gets a generation-specific ID, a fresh vector and a fresh E2 completion.
+Ineligible pieces have stable Selection keys for their Claimify consumers.
+Intact chunks keep their Selection key, date-free key and date when the
+consumed E2 inputs match across a split. Claimify still checks D122's producers.
 E1-complete and exposed grids keep their cuts. CHUNK recovers confirmed size
-dead letters on incomplete grids with proven reader isolation. Confirmed
-input rejection is terminal and capacity retries remain bounded.
+dead letters for the failed attempt's exact incomplete grid with proven reader
+isolation. Recovery carries recorded dates. Confirmed input rejection is terminal
+and capacity retries remain bounded.
 
 Require offline full-row equality on frozen LoCoMo v45 and BEAM inputs at
 their qualified benchmark ceiling of at least 22,528 tokens, including the

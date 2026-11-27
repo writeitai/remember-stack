@@ -493,6 +493,8 @@ null. A duplicate key in one generation keeps the first occurrence and records a
 warning; the later headings get no key. Every read that resolves a key — section history,
 reference endpoints, first chunk ids — looks it up only in the version's current
 representation's current structure generation.
+Both section reads apply [D162's first-intersection rule](split_oversized_chunks_design.md#2-refine-only-failing-candidates)
+within each split packing grid and include the ordinary matches from unsplit grids.
 
 The hash columns are nullable at the schema level. Sections created before D140 are backfilled
 by a maintenance job that recomputes, from each representation's stored `blocks.json` and the
@@ -533,7 +535,8 @@ the undated header facts (title, file name, source kind, language and the
 eligibility policy marker), and the blockizer, structurer and extractor
 versions. The lookup index uses `(deployment_id, doc_id, reuse_identity_hash)`.
 D162 pieces leave the lookup key unset and take the version's date or unknown.
-A private CHUNK recovery gives each new piece its same-version parent's date.
+A private CHUNK recovery carries the committed date for every intact row and
+gives each replacement piece its parent's date, including unknown.
 [D162 key and date rules](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
 
 **Rule at intact chunk creation.** When E1 creates an intact chunk for a new version of lineage `L`:
@@ -548,6 +551,8 @@ A private CHUNK recovery gives each new piece its same-version parent's date.
    `version_no`, then `ordinal`). Otherwise set `text_origin_at = d` (possibly
    `NULL`, meaning unknown). E2 applies the Selection and Claimify reuse rules
    with this date in the Selection key.
+   D162 treats identical consumed inputs across a split as a match and keeps
+   both recorded keys for the chosen date.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the

@@ -96,9 +96,8 @@ call. Empty representations follow the existing empty completion path.
 
 ## Reuse, including negative dependencies
 
-Each producer supplies its E1 Selection key. Eligible intact chunks use the
-final windows when E2 consumes a split piece. Other intact chunks use the
-legacy inputs.
+Each producer supplies its E1 Selection key. D162 keeps the key of an intact
+producer whose consumed extraction inputs match across layouts.
 [E1 key inputs and split-piece keys](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
 
 Claimify's effective basis adds the ordered stable

@@ -207,7 +207,7 @@ blocks ≈ paragraphs, and the machinery is uniform.
 to a whitespace-token target. A block above the target is its own candidate.
 [D162](split_oversized_chunks_design.md) checks the full rendered embedding
 input and refines failing candidates into exact slices. A fitting document
-uses the original row assembly and identities.
+uses the original packing and row assembly.
 
 - **Never cross a section boundary** (§3 makes this well-defined).
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
@@ -320,9 +320,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 
 These reuse rules apply to intact chunks. The legacy Selection and date-free
 keys include the previous and next document chunks only when they share the
-target's section. An eligible intact target keys on the final E2 windows if
-it consumes a split piece. The pieces get fresh embeddings and E2 completions.
-Ineligible pieces have stable Selection keys for their D122 consumers.
+target's section. D162 preserves both keys for intact targets with matching
+E2 inputs and keys changed windows on the final inputs. Split pieces get fresh
+embeddings and E2 completions. Ineligible pieces have stable Selection keys
+for their D122 consumers.
 [D162 reuse rules](split_oversized_chunks_design.md#2-refine-only-failing-candidates).
 
 - **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
@@ -336,7 +337,7 @@ Ineligible pieces have stable Selection keys for their D122 consumers.
   reuse when evidence remaps. Claimify also requires the D122 hash. Unchanged
   regions keep the prior version's structure under `structurer_version`.
   LLM output must not enter identity keys (D7 replay-not-recall).
-  Consequently the **extraction reuse key contains only stable components**:
+  The **legacy extraction reuse key** uses these stable components:
   `extraction_input_hash = hash(own content hash + keyed neighbor content hashes + stable header
   facts + keyed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
   deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
@@ -351,9 +352,9 @@ Ineligible pieces have stable Selection keys for their D122 consumers.
   a later date) — own and keyed neighbor content hashes, non-date header facts,
   keyed converter-origin hashes and blockizer/structurer/extractor versions, indexed per
   lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
-  and replayed, never recomputed; deleting the origin version later does not change it. The
-  E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
-  in unchanged text stay resolved against the time the text was written, and a dated new
+  and replayed, including in private CHUNK recovery. It survives deletion of the origin
+  version. The E2 header shows the same value and fresh claims take it as `asserted_at`.
+  Relative dates in unchanged text stay resolved against the time it was written, and a dated new
   version reuses its unchanged chunks (with the version's own date in the key, nearly every
   new version would miss every key) — **no LLM *output* participates in the
   key** (refines D56's original sketch, which had let the section path and prefix in — a key

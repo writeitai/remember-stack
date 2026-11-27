@@ -1637,6 +1637,7 @@ Retrieval-sized units that preserve context and trace back to position. Chunk
 sidecar**. Authority tables hold metadata, source offsets, section links and
 the D80 embedding-input stamps, including the optional deterministic header.
 [E1 packing and fit check](split_oversized_chunks_design.md).
+[Text-origin creation and replay](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
@@ -1659,7 +1660,7 @@ CREATE TABLE chunks (
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
-  text_origin_at  timestamptz,                 -- D140: recorded once at creation: the text origin time of the earliest matching chunk (same reuse_identity_hash) in a non-deleted version of the lineage, else this version's source_modified_at or published_at; the E2 header date, the reuse-key date, and fresh claims' asserted_at
+  text_origin_at  timestamptz,                 -- D140/D162: immutable date for the E2 header, Selection key and fresh claims' asserted_at
   reuse_identity_hash text,                    -- D140 date-free input identity for intact chunks
   extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)

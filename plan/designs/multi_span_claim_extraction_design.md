@@ -123,8 +123,8 @@ identical passages using unambiguous source/block alignment. Do not use an
 unqualified first substring match or copy old offsets.
 
 Changed context can change a referent even if the cited text still occurs.
-D162 keys the actual E2 neighbor windows when an intact target consumes a
-split piece. Legacy inputs govern other intact targets. If support cannot
+D162 compares the actual E2 neighbor windows and relative passage ranges
+before re-keying an intact target across a split. If support cannot
 be resolved safely, run the ordinary accounted extraction path. Do not
 disable reuse for multi-span claims as a general fallback or ship a
 full-document re-extraction policy to avoid implementing occurrence remapping.

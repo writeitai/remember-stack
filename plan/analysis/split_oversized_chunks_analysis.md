@@ -37,7 +37,11 @@ E1 can also write P1 batches before a later batch fails. A recovery that
 changes cuts therefore needs separate evidence that readers never had access.
 The ledger deduplicates by stage and component version, so restarting CHUNK
 must explicitly reopen the failed embed work after any private grid replacement.
+The base embed component version omits packing parameters, and the layer
+helper selects the latest grid independently. A newer grid can coexist with
+the failed one, so recovery needs evidence of the attempt's exact grid.
 [E1 completion check](../../src/rememberstack/spine/processing_layers.py#L624-L644) ·
+[Ledger and grid lookups](../../src/rememberstack/spine/processing_layers.py#L1308-L1332) ·
 [Public chunk view](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L719) ·
 [E1 batch write](../../src/rememberstack/workers/e1.py#L535-L572) ·
 [Work identity](../../src/rememberstack/spine/work_ledger.py#L1996-L2023).
@@ -69,10 +73,26 @@ payload for such chunks preserved all three keys and the original date.
 [D140 fallback](../../src/rememberstack/core/text_origin.py#L76-L85) ·
 [D122 key](../../src/rememberstack/core/selection_references.py#L70-L86).
 
-When a cut replaces an E2 neighbor, using the final window and its tagged
-slice hash distinguishes the changed input even across a nested section.
-The legacy path preserves fitting-grid equality and reuse for unrelated
-cuts. The ordered D122 producers can still change independently.
+Doubling a dense paragraph can leave the first split piece byte-identical
+to the earlier neighbor. A read-only probe found equal E2 windows, clipped
+passages, origins and D80 inputs but different keys after substituting the
+tagged slice hash. Compare the full local inputs so this case keeps the old
+keys and date. The passage ranges matter because equal text can offer
+different evidence boundaries. D122 can still change independently.
+[Passage catalog](../../src/rememberstack/core/source_passages.py#L109-L171).
+
+In same-version recovery, a genuine window change also misses the D140
+lookup and falls back to the version date. Carrying the committed date
+through the rehash preserves the date in the prompt and on fresh claims.
+[Date lookup](../../src/rememberstack/workers/e1.py#L193-L217) ·
+[Claim date](../../src/rememberstack/workers/e2.py#L1345-L1349) ·
+[Prompt date](../../src/rememberstack/workers/e2.py#L1794-L1815).
+
+Both section-link queries collect all chunks covering the first block across
+packing generations. Collapse first-block matches within each split grid so
+the same section can still expose links from its older unsplit grids.
+[Document references](../../src/rememberstack/spine/document_references.py#L1366-L1382) ·
+[Section history](../../src/rememberstack/spine/section_history.py#L737-L753).
 
 ## Benchmark sizing
 
