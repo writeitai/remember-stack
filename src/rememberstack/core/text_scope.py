@@ -235,6 +235,8 @@ def _in_scope_fact_occurrence(
     """Bind evidence, then its occurrences and their coordinates (D163)."""
     table, column = fact_evidence_relation(fact_kind=fact_kind)
     stance = "AND raw.stance = 'supports'" if supports_only else ""
+    # Keep the required deployment comparison as a filter on the chunk ID
+    # probe. With sparse statistics a deployment-only index can look cheaper.
     return f"""
     EXISTS (
       SELECT 1
@@ -254,7 +256,8 @@ def _in_scope_fact_occurrence(
       CROSS JOIN LATERAL (
         SELECT ch.deployment_id, ch.version_id, ch.representation_id
         FROM public.chunks AS ch
-        WHERE ch.deployment_id = occurrence.deployment_id AND ch.chunk_id = occurrence.chunk_id
+        WHERE ch.chunk_id = occurrence.chunk_id
+          AND ch.deployment_id IS NOT DISTINCT FROM occurrence.deployment_id
         OFFSET 0
       ) AS chunk
       CROSS JOIN LATERAL (

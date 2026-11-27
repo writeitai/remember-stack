@@ -177,6 +177,8 @@ def claim_entity_filter() -> str:
 def _fact_has_visible_source(*, kind: Literal["relation", "observation"]) -> str:
     """Bind a fact's raw links before either branch of historical claim membership."""
     table, identifier = fact_evidence_relation(fact_kind=kind)
+    # Keep deployment and document as filters on the chunk ID probe. With
+    # sparse statistics the optimizer can otherwise favor a document index.
     return f"""
       EXISTS (
         SELECT 1
@@ -223,8 +225,9 @@ def _fact_has_visible_source(*, kind: Literal["relation", "observation"]) -> str
             CROSS JOIN LATERAL (
               SELECT ch.deployment_id, ch.version_id, ch.representation_id
               FROM public.chunks AS ch
-              WHERE ch.deployment_id = occurrence.deployment_id
-                AND ch.chunk_id = occurrence.chunk_id AND ch.doc_id = claim.doc_id
+              WHERE ch.chunk_id = occurrence.chunk_id
+                AND ch.deployment_id IS NOT DISTINCT FROM occurrence.deployment_id
+                AND ch.doc_id IS NOT DISTINCT FROM claim.doc_id
               OFFSET 0
             ) AS chunk
             CROSS JOIN LATERAL (

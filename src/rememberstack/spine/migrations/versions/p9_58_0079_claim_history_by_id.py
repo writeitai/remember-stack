@@ -11,6 +11,8 @@ down_revision: str | None = "p9_57_0078"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+# The non-null deployment and document checks are filters on the chunk ID
+# probe. PostgreSQL can otherwise favor a document index with sparse stats.
 CLAIM_HISTORY_BY_ID_DDL = r"""
 CREATE VIEW v_memory_claim_history_by_id (
   deployment_id,
@@ -26,9 +28,9 @@ WHERE EXISTS (
   FROM LATERAL (
     SELECT ch.version_id, ch.representation_id
     FROM public.chunks AS ch
-    WHERE ch.deployment_id = claim.deployment_id
-      AND ch.chunk_id = claim.chunk_id
-      AND ch.doc_id = claim.doc_id
+    WHERE ch.chunk_id = claim.chunk_id
+      AND ch.deployment_id IS NOT DISTINCT FROM claim.deployment_id
+      AND ch.doc_id IS NOT DISTINCT FROM claim.doc_id
     OFFSET 0
   ) AS origin
   CROSS JOIN LATERAL (

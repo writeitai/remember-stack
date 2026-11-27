@@ -12614,7 +12614,7 @@
                                       },
                                       {
                                         "@": "String",
-                                        "sval": "deployment_id"
+                                        "sval": "chunk_id"
                                       }
                                     ]
                                   },
@@ -12633,7 +12633,7 @@
                                       },
                                       {
                                         "@": "String",
-                                        "sval": "deployment_id"
+                                        "sval": "chunk_id"
                                       }
                                     ]
                                   },
@@ -12644,7 +12644,7 @@
                                   "@": "A_Expr",
                                   "kind": {
                                     "#": "A_Expr_Kind",
-                                    "name": "AEXPR_OP"
+                                    "name": "AEXPR_NOT_DISTINCT"
                                   },
                                   "lexpr": {
                                     "@": "ColumnRef",
@@ -12655,7 +12655,7 @@
                                       },
                                       {
                                         "@": "String",
-                                        "sval": "chunk_id"
+                                        "sval": "deployment_id"
                                       }
                                     ]
                                   },
@@ -12674,7 +12674,7 @@
                                       },
                                       {
                                         "@": "String",
-                                        "sval": "chunk_id"
+                                        "sval": "deployment_id"
                                       }
                                     ]
                                   },
@@ -12685,7 +12685,7 @@
                                   "@": "A_Expr",
                                   "kind": {
                                     "#": "A_Expr_Kind",
-                                    "name": "AEXPR_OP"
+                                    "name": "AEXPR_NOT_DISTINCT"
                                   },
                                   "lexpr": {
                                     "@": "ColumnRef",
@@ -50796,5 +50796,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "2710ecbb28fdbbf6bc42e8a3eade479437858149da39b7724185db09314ba451"
+  "surface_manifest_hash": "dca2b2bb58e3e7a0e1552dac817f704b41668d10ebe47200ffb1969fd644123b"
 }

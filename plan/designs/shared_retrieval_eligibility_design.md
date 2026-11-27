@@ -417,7 +417,7 @@ versions or replaced readings. The carried arm uses the same keyed origin
 check inside `NOT EXISTS (... OFFSET 0)`. It requires current testimony in
 a periodised live document and an occurrence in a non-deleted version's current
 ready reading. Bind the occurrence by deployment and claim ID, then its chunk
-by deployment and chunk ID with `ch.doc_id = claim.doc_id` inside the probe.
+by deployment and chunk ID with a matching document inside the probe.
 [Deployed history](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L258) ·
 [Deployed carried membership](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174)
 
@@ -470,7 +470,11 @@ metadata only.
 
 Use the existing indexes under normal join planning. A fact ID selects one
 evidence hash leaf. `ix_chunkclaims_claim` and the `chunks_pkey` prefix
-can probe each retained range leaf for a known claim or chunk ID. For a
+can probe each retained range leaf for a known claim or chunk ID. Enforce
+the deployment and any document comparison inside each chunk probe with
+`IS NOT DISTINCT FROM` on the non-null coordinates. This leaves `chunk_id`
+as the index search key even when sparse statistics cost a deployment or
+document index as a point lookup. For a
 fact with `E` evidence rows and `O` matching occurrences, a stance probe
 uses at most `E × P_occ + O × P_chunk` such probes, where each `P` is
 that table's retained leaf count. The base `claims` key is unpartitioned.

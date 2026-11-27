@@ -9,6 +9,7 @@ See the D163 qualification instructions for fixture preparation.
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from collections import defaultdict
 from collections.abc import Callable
 from collections.abc import Mapping
@@ -44,6 +45,7 @@ from rememberstack.adapters.postgres_p1 import FACT_INPUT_POLICY
 from rememberstack.adapters.postgres_p1 import PostgresP1Index
 from rememberstack.core.text_scope import fact_in_scope
 from rememberstack.core.text_scope import TextScope
+from rememberstack.model import Envelope
 from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.spine.query_space import load_manifest
@@ -246,7 +248,7 @@ def _record_nomination(
         lambda conn, *args, **kw: trace.execute(conn, *args, **kw),
     ):
         result = nominate(**arguments)
-    if result.account.termination.value in {"deadline", "work_budget", "plan_rejected"}:
+    if not result.account.termination.complete:
         raise AssertionError(result.account)
     return trace, [(row.qualifier, row.item_id, row.score) for row in result]
 
@@ -284,6 +286,21 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
                 )
             record["cuts"][f"broad/{kind}/{batch}"] = [(kind, *row) for row in rows]
             record["cuts"][f"broad_final/{kind}/{batch}"] = final
+        gates = {kind: statement for kind, statement, _ in broad.gates}
+        for kind in KINDS:
+            if kind not in case.batch_sizes:
+                continue
+            count = case.batch_sizes[kind]
+            ids = [key for key_kind, key in keys if key_kind == kind][:count]
+            assert len(ids) == count, (kind, count)
+            original = gates[kind]
+            batch = Statement(original.sql, {**original.parameters, "batch_ids": ids})
+            rows = _run(connection, batch)
+            final = _run(connection, _confirmation(case, kind=kind, ids=ids))
+            if sorted(row[0] for row in rows) != sorted(str(row[2]) for row in final):
+                raise AssertionError(f"fixed batch stage disagreement in {kind}")
+            record["cuts"][f"fixed_batch/{kind}"] = [(kind, *row) for row in rows]
+            record["cuts"][f"fixed_final/{kind}"] = final
         scenarios: dict[str, dict[str, Any]] = {"keyed": {"candidate_keys": keys}}
         if case.entity_ids:
             scoped = {
@@ -379,12 +396,6 @@ SELECT (SELECT count(*) FROM (TABLE baseline EXCEPT ALL TABLE target) missing),
 def compare(
     connection: Connection, baseline: dict[str, Any], target: dict[str, Any]
 ) -> dict[str, Any]:
-    if baseline["raw"] != target["raw"]:
-        raise AssertionError(
-            "ordered raw HNSW batches differ; the fixture pair is invalid"
-        )
-    if baseline["ordered"] != target["ordered"]:
-        raise AssertionError("ordered top-k differs")
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
     counts = {}
@@ -401,6 +412,8 @@ def compare(
         }
     return {
         "cuts": counts,
+        "raw_batches_match": baseline["raw"] == target["raw"],
+        "ordered_top_k_match": baseline["ordered"] == target["ordered"],
         "ordered_raw": {
             kind: [len(batch) for batch in batches]
             for kind, batches in baseline["raw"].items()
@@ -428,24 +441,33 @@ def _sandbox_queries(case: Case, *, dsn: str, samples: int) -> dict[str, Any]:
     if invalid.error_code != "execution_error":
         raise AssertionError("the original BEAM label query should fail")
 
-    def read(sql_query: str) -> int:
-        result = sandbox.query_sql(sql=sql_query)
-        if result.error_code is not None or result.termination_reason not in {
-            "completed",
-            "row_cap",
-        }:
-            raise AssertionError(
-                (result.termination_reason, result.error_code, result.error_message)
-            )
-        return len(result.rows)
+    report: dict[str, Any] = {"beam_undefined_label": str(invalid.error_code)}
+    for name, query in queries.items():
+        result = sandbox.query_sql(sql=query)
+        times = []
+        for _ in range(samples):
+            if (
+                result.error_code is not None
+                or result.termination_reason != "completed"
+            ):
+                break
+            start = monotonic()
+            result = sandbox.query_sql(sql=query)
+            times.append(monotonic() - start)
+        report[name] = {
+            "samples": len(times),
+            "termination": result.termination_reason,
+            "error": result.error_code,
+            "last_rows": len(result.rows),
+            "truncation": result.truncation_reason,
+            "last_elapsed_ms": result.elapsed_ms,
+            **(_percentiles(times) if times else {}),
+        }
+    return report
 
-    return {
-        "beam_undefined_label": str(invalid.error_code),
-        **{
-            name: _measured(lambda query=query: read(query), samples=samples)
-            for name, query in queries.items()
-        },
-    }
+
+def _percentiles(times: list[float]) -> dict[str, float]:
+    return {"p50_s": median(times), "p95_s": sorted(times)[ceil(0.95 * len(times)) - 1]}
 
 
 def _measured(run: Callable[[], Any], *, samples: int) -> dict[str, Any]:
@@ -456,12 +478,7 @@ def _measured(run: Callable[[], Any], *, samples: int) -> dict[str, Any]:
         start = monotonic()
         last = run()
         times.append(monotonic() - start)
-    return {
-        "samples": samples,
-        "p50_s": median(times),
-        "p95_s": sorted(times)[ceil(0.95 * samples) - 1],
-        "last_rows": last,
-    }
+    return {"samples": samples, **_percentiles(times), "last_rows": last}
 
 
 def _plans(connection: Connection, statement: Statement) -> dict[str, Any]:
@@ -528,9 +545,31 @@ def latency(
             if explain:
                 measured["plans"] = _plans(connection, statement)
 
+    query = _query_engine(engine, index, case)
+
+    def native(entities: tuple[str, ...]) -> dict[str, Any]:
+        incomplete: Counter[str] = Counter()
+
+        def measure() -> int:
+            response = _native_read(query, case, entities=entities)
+            if response.truncation and (reason := response.truncation.reason):
+                incomplete[reason] += 1
+            return len(response.facts)
+
+        measured = _measured(measure, samples=samples)
+        measured["incomplete"] = dict(incomplete)
+        return measured
+
+    report["native/broad"] = native(())
+    if case.entity_ids:
+        report["native/scoped"] = native(case.entity_ids)
+    return report
+
+
+def _query_engine(engine: Engine, index: PostgresP1Index, case: Case) -> QueryEngine:
     provider = MagicMock()
     provider.embed.return_value = MagicMock(vectors=(case.vector,), usage=None)
-    query = QueryEngine(
+    return QueryEngine(
         engine=engine,
         search_index=index,
         model_provider=provider,
@@ -538,31 +577,26 @@ def latency(
         fact_read_pool=index._read_pool,
     )
 
-    def native(entities: tuple[str, ...]) -> int:
-        response = query.facts_context(
-            deployment_id=case.deployment_id,
-            query="fixed stored vector",
-            entity_ids=tuple(UUID(entity) for entity in entities),
-            k=50,
-            candidate_k=200,
-            time=case.time,
-            evaluated_at=case.evaluated_at,
-        )
-        if response.truncation and response.truncation.reason == "p1_deadline":
-            raise AssertionError(response.truncation)
-        return len(response.facts)
 
-    report["native/broad"] = _measured(lambda: native(()), samples=samples)
-    if case.entity_ids:
-        report["native/scoped"] = _measured(
-            lambda: native(case.entity_ids), samples=samples
-        )
-    return report
+def _native_read(
+    query: QueryEngine, case: Case, *, entities: tuple[str, ...]
+) -> Envelope:
+    return query.facts_context(
+        deployment_id=case.deployment_id,
+        query="fixed stored vector",
+        entity_ids=tuple(UUID(entity) for entity in entities),
+        k=50,
+        candidate_k=200,
+        time=case.time,
+        evaluated_at=case.evaluated_at,
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("capture", "compare", "latency"))
+    parser.add_argument(
+        "operation", choices=("capture", "compare", "latency", "sandbox", "scope")
+    )
     parser.add_argument("--database", required=True, help="SQLAlchemy PostgreSQL URL")
     parser.add_argument("--case", type=Path)
     parser.add_argument("--baseline", type=Path)
@@ -572,12 +606,14 @@ def main() -> None:
     parser.add_argument("--samples", type=int, default=40)
     parser.add_argument("--plans", action="store_true")
     parser.add_argument("--stratum", choices=LATENCY_TARGETS)
+    parser.add_argument("--expect-scope-boundary", action="store_true")
     parser.add_argument(
         "--query-dsn", help="libpq DSN for the deployment's query login"
     )
     args = parser.parse_args()
     engine = create_engine(args.database)
     failed = False
+    result: dict[str, Any]
     try:
         if args.operation == "compare":
             if args.baseline is None or args.target is None:
@@ -593,12 +629,14 @@ def main() -> None:
             )
             with engine.connect() as connection:
                 result = compare(connection, baseline, target)
-            failed = any(
+            failed = not (
+                result["raw_batches_match"] and result["ordered_top_k_match"]
+            ) or any(
                 count["missing"] or count["extra"] for count in result["cuts"].values()
             )
         else:
             if args.case is None or args.output is None:
-                parser.error("capture and latency require --case and --output")
+                parser.error("this operation requires --case and --output")
             case = Case.model_validate_json(args.case.read_text())
             with engine.connect() as connection:
                 head = connection.exec_driver_sql(
@@ -611,6 +649,30 @@ def main() -> None:
                 assert int(server) // 10000 == 18, server
             if args.operation == "capture":
                 result = capture(engine, case, timeout=args.timeout)
+            elif args.operation == "scope":
+                if not case.entity_ids:
+                    parser.error("scope requires entity_ids in the case")
+                query = _query_engine(engine, _index(engine, case), case)
+                start = monotonic()
+                response = _native_read(query, case, entities=case.entity_ids)
+                reason = response.truncation.reason if response.truncation else None
+                expected_rows = 0 if args.expect_scope_boundary else 50
+                result = {
+                    "wall_s": monotonic() - start,
+                    "rows": len(response.facts),
+                    "reason": reason,
+                }
+                failed = len(response.facts) != expected_rows or (
+                    (reason == "entity_scope_too_broad") != args.expect_scope_boundary
+                )
+            elif args.operation == "sandbox":
+                if not args.query_dsn or args.samples < 1:
+                    parser.error("sandbox requires --query-dsn and at least one sample")
+                result = {
+                    "sandbox": _sandbox_queries(
+                        case, dsn=args.query_dsn, samples=args.samples
+                    )
+                }
             else:
                 if args.samples < 40:
                     parser.error("latency requires at least 40 warm samples")
@@ -625,6 +687,11 @@ def main() -> None:
                     result["sandbox"] = _sandbox_queries(
                         case, dsn=args.query_dsn, samples=args.samples
                     )
+                failed = any(
+                    value["incomplete"]
+                    for name, value in result.items()
+                    if name.startswith("native/")
+                )
                 if args.stratum:
                     batch_limit, native_limit = LATENCY_TARGETS[args.stratum]
                     result["stratum"] = args.stratum
@@ -638,7 +705,13 @@ def main() -> None:
                             and value["p95_s"] > native_limit
                         )
                     ]
-                    failed = bool(result["missed_targets"])
+                    failed |= bool(result["missed_targets"])
+            if "sandbox" in result:
+                failed |= any(
+                    state["error"] is not None
+                    for state in result["sandbox"].values()
+                    if isinstance(state, dict)
+                )
             result["case"] = case.model_dump(mode="json")
             result["schema_head"] = head
             result["server_version_num"] = int(server)

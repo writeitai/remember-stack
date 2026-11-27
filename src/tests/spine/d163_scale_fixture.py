@@ -14,6 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.profiles.selfhost import _provision_query_role_password
 from rememberstack.spine.settings import load_database_settings
 
@@ -39,13 +40,18 @@ def _expand_facts(connection: Connection, *, kind: str, size: int) -> None:
     labels = "obs_label" if kind == "observation" else "fact_label"
     # Use an eligible prototype; clones keep its evidence and distinct keys.
     seed = connection.execute(
-        text(f"SELECT {identifier} FROM {table} WHERE {labels}='multi_source'")
+        text(
+            f"SELECT {identifier} FROM {table} WHERE {labels}='multi_source' ORDER BY {identifier} LIMIT 1"
+        )
     ).scalar_one()
     columns = _columns(connection, table)
-    projection = [
-        "md5(:prefix || n)::uuid" if field == identifier else f"seed.{field}"
-        for field in columns
-    ]
+    replacements = {
+        identifier: "md5(:prefix || n)::uuid",
+        # Distinct cosine distances let the ordinary HNSW cursor prove its
+        # cutoff without exhausting a graph full of identical vectors.
+        "embedding": f"concat('[', n::float8 / (n + 10000), ',1', repeat(',0', {P1_VECTOR_DIMENSIONS - 2}), ']')::vector",
+    }
+    projection = [replacements.get(field, f"seed.{field}") for field in columns]
     bindings = {
         "seed": seed,
         "prefix": f"d163-test-{kind}-",
@@ -76,13 +82,29 @@ def _expand_facts(connection: Connection, *, kind: str, size: int) -> None:
     )
 
 
-def _expand_chunks(connection: Connection, *, size: int) -> None:
+def _expand_chunks(
+    connection: Connection, *, size: int, claim_text: str = "old rule"
+) -> None:
     """Grow one retained document without changing any candidate's evidence."""
     count = connection.exec_driver_sql("SELECT count(*) FROM chunks").scalar_one()
     if count >= size:
         return
-    seed = connection.exec_driver_sql(
-        "SELECT c.chunk_id FROM claims c WHERE c.claim_text='old rule' LIMIT 1"
+    seed = connection.execute(
+        text("""
+            SELECT ch.chunk_id
+            FROM claims AS claim
+            JOIN chunk_claims AS occurrence
+              ON occurrence.deployment_id=claim.deployment_id AND occurrence.claim_id=claim.claim_id
+            JOIN chunks AS ch
+              ON ch.deployment_id=occurrence.deployment_id AND ch.chunk_id=occurrence.chunk_id
+             AND ch.doc_id=claim.doc_id
+            JOIN document_versions AS version
+              ON version.deployment_id=ch.deployment_id AND version.version_id=ch.version_id
+             AND version.current_representation_id=ch.representation_id AND version.deleted_at IS NULL
+            WHERE claim.claim_text=:claim_text
+            ORDER BY ch.chunk_id LIMIT 1
+        """),
+        {"claim_text": claim_text},
     ).scalar_one()
     columns = _columns(connection, "chunks")
     projection = {
@@ -102,13 +124,15 @@ def _expand_chunks(connection: Connection, *, size: int) -> None:
 
 def _expand_leaves(connection: Connection, *, leaves: int) -> None:
     for table in ("chunks", "chunk_claims"):
-        count = connection.execute(
+        count, seeded = connection.execute(
             text(
-                "SELECT count(*) FROM pg_inherits WHERE inhparent=CAST(:name AS regclass)"
+                "SELECT count(*), count(*) FILTER (WHERE child.relname LIKE :seeded) "
+                "FROM pg_inherits JOIN pg_class child ON child.oid=inhrelid "
+                "WHERE inhparent=CAST(:name AS regclass)"
             ),
-            {"name": table},
-        ).scalar_one()
-        for offset in range(leaves - count):
+            {"name": table, "seeded": table + "_d163_%"},
+        ).one()
+        for offset in range(seeded, seeded + leaves - count):
             year, month = 1900 + offset // 12, 1 + offset % 12
             end_year, end_month = (year + 1, 1) if month == 12 else (year, month + 1)
             connection.exec_driver_sql(

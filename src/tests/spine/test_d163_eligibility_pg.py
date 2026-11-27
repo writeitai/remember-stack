@@ -42,6 +42,7 @@ from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces.query_engine import QueryEngine
+from tests.spine.d163_scale_fixture import _expand_chunks
 from tests.spine.test_d153_eligibility_pg import _plan_nodes
 from tests.surfaces.test_d140_scoped_retrieval import _claim
 from tests.surfaces.test_d140_scoped_retrieval import _declare
@@ -391,8 +392,9 @@ def _survivor(connection: Connection, *, origin: UUID) -> UUID | None:
     ).scalar_one_or_none()
 
 
+@pytest.mark.parametrize("extra_links", [0, 16])
 def test_negative_probes_prune_one_evidence_leaf_in_both_plan_modes(
-    d163_corpus: tuple[Engine, Corpus],
+    d163_corpus: tuple[Engine, Corpus], extra_links: int
 ) -> None:
     engine, corpus = d163_corpus
     trace, _ = _record_nomination(
@@ -402,6 +404,19 @@ def test_negative_probes_prune_one_evidence_leaf_in_both_plan_modes(
     with engine.connect() as connection:
         connection.exec_driver_sql("SET LOCAL jit = off")
         for kind in KINDS:
+            # Raw evidence with missing claim IDs cannot pass either source arm.
+            # Grow the rejected fact's links while holding all other inputs fixed.
+            rejected = corpus.facts[kind, "foreign_occurrence"]
+            connection.execute(
+                text(
+                    f"INSERT INTO {kind}_evidence ({kind}_id, deployment_id, claim_id, "
+                    "doc_id, stance, normalizer_version) "
+                    f"SELECT {kind}_id, deployment_id, gen_random_uuid(), doc_id, stance, normalizer_version "
+                    f"FROM {kind}_evidence CROSS JOIN generate_series(1, CAST(:extra AS integer)) "
+                    f"WHERE {kind}_id=:fact"
+                ),
+                {"extra": extra_links, "fact": rejected},
+            )
             for name, expected_rows in (
                 ("foreign_occurrence", 0),
                 ("contradiction_only", 1),
@@ -411,15 +426,27 @@ def test_negative_probes_prune_one_evidence_leaf_in_both_plan_modes(
                 for mode, result in _plans(connection, statement).items():
                     plan = result["Plan"]
                     assert plan["Actual Rows"] == expected_rows, (kind, name, mode)
-                    aliases = {
-                        node["Relation Name"]: node["Alias"]
+                    leaves = [
+                        node
                         for node in _plan_nodes(node=plan)
                         if node.get("Actual Loops", 0) > 0
                         and str(node.get("Relation Name", "")).startswith(
                             f"{kind}_evidence_"
                         )
-                    }
-                    assert len(aliases) == 1, (kind, name, mode)
+                    ]
+                    assert len({leaf["Relation Name"] for leaf in leaves}) == 1, (
+                        kind,
+                        name,
+                        mode,
+                    )
+                    if name == "contradiction_only":
+                        assert any(
+                            leaf["Alias"].startswith("support") for leaf in leaves
+                        )
+                    else:
+                        assert any(
+                            leaf["Actual Rows"] == 1 + extra_links for leaf in leaves
+                        )
         relation = gates["relation"]
         relation.parameters["batch_ids"] = [str(corpus.facts["relation", "mixed"])]
         for result in _plans(connection, relation).values():
@@ -445,6 +472,63 @@ def test_negative_probes_prune_one_evidence_leaf_in_both_plan_modes(
                 )
                 == 1
             )
+
+
+def test_origin_probes_stay_keyed_as_their_own_documents_grow(
+    d163_corpus: tuple[Engine, Corpus],
+) -> None:
+    engine, corpus = d163_corpus
+    trace, _ = _record_nomination(
+        _index(engine, corpus.case), arguments=_arguments(corpus.case, timeout=20)
+    )
+    gates = {kind: statement for kind, statement, _ in trace.gates}
+
+    def keyed_work() -> dict[tuple[str, str, str], tuple[int, float, int]]:
+        work = {}
+        with engine.connect() as connection:
+            connection.exec_driver_sql("SET LOCAL jit = off")
+            for kind in KINDS:
+                for name in ("multi_source", "carried"):
+                    statement = gates[kind]
+                    statement.parameters["batch_ids"] = [str(corpus.facts[kind, name])]
+                    for mode, result in _plans(connection, statement).items():
+                        plan = result["Plan"]
+                        assert plan["Actual Rows"] == 1, (kind, name, mode)
+                        leaves = [
+                            node
+                            for node in _plan_nodes(node=plan)
+                            if str(node.get("Relation Name", "")).startswith("chunks_")
+                            and node.get("Actual Loops", 0)
+                        ]
+                        assert leaves, (kind, name, mode)
+                        work[kind, name, mode] = (
+                            sum(leaf["Actual Loops"] for leaf in leaves),
+                            sum(
+                                leaf["Actual Rows"] * leaf["Actual Loops"]
+                                for leaf in leaves
+                            ),
+                            sum(
+                                leaf.get("Rows Removed by Filter", 0)
+                                * leaf["Actual Loops"]
+                                for leaf in leaves
+                            ),
+                        )
+        return work
+
+    initial = keyed_work()
+    with engine.begin() as connection:
+        _expand_chunks(connection, size=10_000)
+        _expand_chunks(connection, size=20_000, claim_text="carried")
+    sparse = keyed_work()
+    with engine.begin() as connection:
+        connection.exec_driver_sql("ANALYZE chunks")
+    refreshed = keyed_work()
+    for actual in (sparse, refreshed):
+        for key, counters in actual.items():
+            assert all(
+                after <= before
+                for after, before in zip(counters, initial[key], strict=True)
+            ), (key, counters, initial[key])
 
 
 def test_corrupt_round_trip_is_rejected_and_valid_walks_are_preserved(
