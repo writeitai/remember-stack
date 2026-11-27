@@ -218,10 +218,22 @@ lineage's current extraction basis *under the lineage's mode*:
   current version flip non-current (`version_superseded`).
 - **`snapshot`**: version succession flips nothing.
 
-For a same-version repack, both reconcile modes verify the version's selected
-grid under the lineage lock before applying currency transitions. Classify
-loss from the displaced grid as `reextracted` before evaluating living-version
-supersession. Late writes from a displaced grid record historical claims.
+Both reconcile modes verify selection under the lineage lock before
+changing currency. Classify loss from a same-version repack as `reextracted`
+before evaluating living supersession. Record the old and completing bases
+on the reconciliation receipt so loss from packing alone, with the same
+representation and extractor, can be identified. Late writes from a
+displaced grid record historical claims.
+
+When a completed selected grid carries a verified D56 reuse occurrence,
+restore a non-current claim whose last currency transition was such a
+packing-only retirement. The occurrence must pass Selection and Claimify
+matching and D119 evidence remapping. Apply this to live versions and, in
+living mode, only to the current version. Append an idempotent
+`became_current = true` event with reason `reextracted` and update the cached
+flag. Recount affected facts and reuse the claim ID and its paid products.
+If support returns, auto-resolve the open `support_withdrawn` review for
+that withdrawal. D118 governs fact-window changes.
 [D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
 
 **What currency is not.** Not supersession, not invalidation, not a validity judgment — no
@@ -261,9 +273,9 @@ they always assumed.
   exception: it closes by `invalidated_at` only and leaves world time untouched, because an
   unarchive can reopen the fact. Loud, attributed, reversible —
   **no flag, no queue, no limbo.**
-- **Only our transcription changed** — a new toolchain generation (an extractor bump, or for
-  media the common case: a converter — ASR/VLM — upgrade) re-read the *unchanged* file and
-  did not re-derive a claim. The file still says what it always said; the event carries no
+- **Only our transcription changed** — a new toolchain generation, such as a repack,
+  extractor bump or converter upgrade, re-read the *unchanged* file and did not
+  re-derive a claim. The file still says what it always said; the event carries no
   information about the world, and its two possible explanations demand **opposite** actions
   (the old claim was an extraction artifact → the fact should be marked wrong; the new
   extractor regressed → the fact is fine and the extractor needs fixing). No mechanical
@@ -308,10 +320,10 @@ to the next finalization (recorded grace). A cross-cycle move leaves a short, vi
 self-healing gap (a named spike, not papered over):
 
 1. **Diff** the lineage's evidence links: facts evidenced under the old basis vs the new.
-2. **Transition currency** per the §3 rules (append ledger rows; update the cache).
-3. **Recount** affected facts — bounded and indexed: the touched set is exactly the lineage's
-   evidence links.
-4. **Apply the zero-support policy** (§4) where counts hit zero.
+2. **Transition currency** per §3, appending ledger rows and updating the cache.
+3. **Recount** affected facts using the lineage's evidence links. On retry, include
+   transitions already written by this reconciliation so the recount can finish.
+4. **Apply the zero-support policy** (§4) for loss transitions where counts hit zero.
 5. **Emit `evidence_changed`** (the D45 trigger queue) carrying the *fact-level* delta — the
    affected fact IDs with what happened to each, e.g.
    `{relations_closed: [r1], observations_closed: [], facts_recounted: [{id: r2, evidence_count: 3→2}], flags_raised: []}`

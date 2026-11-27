@@ -154,9 +154,11 @@ the previous stage, under the layer fence and the lineage lock (§3.3):
 
 **A deployment without a configuration row** enters every layer directly at its boundary.
 Both boundaries use the completed work's packing grid in configured and unconfigured
-deployments. Deferred admission uses the selected grid. When a repack selects a new grid,
-reevaluate its gaps and admission under the lineage lock using its own work.
-[D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
+deployments. Immediate and deferred facts entry check selection under the
+lineage lock. On a repack, reevaluate the gaps and admission using the new
+grid's work after the old grid's admitted fact applications settle.
+[D162 grid binding](split_oversized_chunks_design.md#delivery-and-completion) ·
+[Fact-application fence](split_oversized_chunks_design.md#fact-application-fence).
 
 **A configured deployment** decides by one procedure:
 
@@ -234,7 +236,9 @@ Consequences: an older version's fact work — including work draining after fac
 and closes exactly as always-on processing would, with the same history. No fact is created from
 retired testimony and no suppression state exists. Snapshot lineages never retire testimony by
 succession, so for them the wait only orders work. A deployment without a configuration row keeps
-today's chain unchanged.
+the default cross-version chain. Same-version repacks in either configuration
+follow D162's fact-application fence.
+[Fact-application fence](split_oversized_chunks_design.md#fact-application-fence).
 
 ### 4.4 Switching off drains; it never holds
 
@@ -294,7 +298,9 @@ the work ledger, never from the mere absence of rows:
   extract barrier is ready — every chunk's Selection and Claimify results are committed, so every
   claim occurrence for that grid is attached — or the completed grid is empty. Readiness
   and receipts match the exact grid to all required ledger work and barriers.
-  [D162 grid binding](split_oversized_chunks_design.md#3-recover-through-chunk-while-the-grid-is-unpublished).
+  A verified legacy empty grid uses its original successful embed row and
+  completion time.
+  [D162 grid binding](split_oversized_chunks_design.md#delivery-and-completion).
 - A version reaches a layer's **frontier** when the selected grid's products are reusable by
   later versions:
   - **claims** — that grid's occurrences are complete and its `embed_claim` succeeded, so every

@@ -70,6 +70,49 @@ supersession query can see occurrence links from every grid of the version.
 [Application membership](../../src/rememberstack/spine/fact_applications.py#L470-L488) ·
 [Testimony selectors](../../src/rememberstack/spine/lifecycle.py#L1433-L1474).
 
+The D118 entity stream assigns admission sequences using materialized unit
+memberships. It then selects the earliest unapplied admission for the
+entity, and releases its locks between prepare and apply. A replacement
+grid could reconcile in that gap and recount before the old assertion
+changes the fact. Filtering new admissions by selected membership closes
+one side of the race. Serializing admission and selection with the lineage
+lock lets the repack see the outstanding admissions and wait for their
+committed receipts. Dropping an admitted head would abandon its ordered
+work, and holding the lineage lock during inference would stall other
+work on the lineage. Take candidate lineage locks before the entity
+lock to preserve the support-review lock order.
+[Admission and head](../../src/rememberstack/spine/fact_applications.py#L344-L414) ·
+[Support-review locks](../../src/rememberstack/spine/review.py#L601-L645) ·
+[Prepare and apply](../../src/rememberstack/spine/fact_adjudication.py#L297-L339) ·
+[Atomic receipt](../../src/rememberstack/spine/apply_fact_decision.py#L258-L293).
+
+Claimify's prior-result lookup matches earlier non-deleted versions by
+input keys and attaches the same claim ID after remapping its evidence.
+The attachment writes the occurrence and completion. A claim retired
+by a packing-only change can therefore return as an occurrence while
+its currency flag stays false. Filtering out retired claims would repeat
+paid work. Restoring at attachment would give an unfinished or displaced
+grid authority over currency. Reconcile can use the verified occurrence
+and the recorded retirement to restore currency and recount. The
+serving flag comes from the open review, so the withdrawal tied to that
+retirement also needs resolving when support returns.
+[Prior lookup](../../src/rememberstack/spine/claim_catalog.py#L425-L446) ·
+[Verified reuse](../../src/rememberstack/workers/e2.py#L817-L860) ·
+[Attach](../../src/rememberstack/spine/claim_catalog.py#L164-L203) ·
+[Serving flag](../../src/rememberstack/surfaces/query_engine.py#L7429-L7444).
+
+A legacy sources-only run can succeed at embed with zero chunks, write
+deferred gaps, and never publish a flush marker. Its embed payload names
+the representation, and the packing part of its key names the base
+algorithm. A recorded historical configuration supplies the parameters. If
+the E0 block grid is verified empty, its result is independent of those
+parameters and the original completion can serve one adopted empty grid.
+Both paths preserve the original ledger timestamp.
+[Embed key](../../src/rememberstack/workers/e1.py#L67-L73) ·
+[Payload](../../src/rememberstack/workers/e1.py#L794-L811) ·
+[Disabled claims boundary](../../src/rememberstack/spine/processing_layers.py#L95-L123) ·
+[Empty completion time](../../src/rememberstack/spine/readiness.py#L843-L852).
+
 Enqueuing CHUNK again resolves to the original processing row. Even a fresh
 invocation of its ordinary handler takes the existing-cuts path. Calling the
 shared fit-and-refine code from size recovery lets the replacement and

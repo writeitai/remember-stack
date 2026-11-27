@@ -1670,8 +1670,8 @@ CREATE TABLE chunks (
   location_header text,                        -- optional bounded deterministic header only (not body); null in body_only mode
   embedding_text_hash text,                    -- hash of canonical embedding text under the policy
   embedding_input_policy_version text,         -- LOGICAL FK → pipeline_component_versions (embedding_input_policy)
-  context_prefix  text,                        -- LEGACY LLM location prose (pre-D80); retained for migration/replay; not written on D80 path
-  prefixer_version text,                       -- LEGACY context_prefixer component version
+  context_prefix  text,                        -- pre-D80 LLM location prose. D80 stamps its rendered location_header, including NULL.
+  prefixer_version text,                       -- pre-D80 context_prefixer component version. D80 stamps the embedding input policy generation.
   chunker_version text,                        -- full packing generation (algorithm and parameter values)
   embedding_version text,                      -- configured embedder/model attestation for the current chunk vector
   policy_generation text,                      -- configured embedding_input_policy_version
@@ -1911,23 +1911,27 @@ CREATE INDEX ix_grounding_claim ON grounding_audits (claim_id);
 -- transaction-time reconstructions exact (fact-as-of-T still sees old generations).
 -- Written by the reconciliation step of the lifecycle flow (evidence_lifecycle_design §5),
 -- which runs only on COMPLETED basis changes and then recounts affected facts.
+-- Serialize on the claim row and deduplicate transitions by run, claim, reason
+-- and direction. A D162 packing-only retirement records the old and completing
+-- bases on its reconcile receipt. A verified reuse occurrence can restore currency
+-- with reason reextracted and became_current=true (lifecycle §3).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE testimony_currency_events (
   event_id        uuid NOT NULL,
   deployment_id   uuid NOT NULL,               -- LOGICAL FK → deployments
   claim_id        uuid NOT NULL,               -- LOGICAL FK → claims
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the lineage; the recount scope)
-  reconciliation_id uuid NOT NULL,             -- identifies ONE reconciliation run = one completed basis change per lineage (a new version's extraction completing, or a version-bump re-extraction completing). Minted when the run starts and stored in processing_state, so a RETRIED run reuses it — its re-emitted events hit the UNIQUE below as no-ops
-  became_current  boolean NOT NULL,            -- false = lost currency; true = regained (unarchive, mode change)
-  reason          currency_reason NOT NULL,    -- reextracted | version_superseded | version_archived
-  from_extractor_version text,                 -- the superseded generation (reason=reextracted)
+  reconciliation_id uuid NOT NULL,             -- stable run ID for a completed basis change, reused on retry
+  became_current  boolean NOT NULL,            -- false = lost currency, true = regained
+  reason          currency_reason NOT NULL,    -- reextracted | version_superseded | version_archived | review_restored
+  from_extractor_version text,                 -- the superseded generation on a reextracted loss
   from_version_id uuid,                        -- the superseded/deleted document version (reason=version_*)
   occurred_at     timestamptz NOT NULL DEFAULT now(),  -- partition key
   PRIMARY KEY (event_id, occurred_at),
-  UNIQUE (claim_id, reconciliation_id, reason, became_current, occurred_at)  -- a retried reconciliation re-emits as a no-op, never a duplicate (F11)
+  UNIQUE (claim_id, reconciliation_id, reason, became_current, occurred_at)  -- includes the partition key
 ) PARTITION BY RANGE (occurred_at);
 COMMENT ON TABLE testimony_currency_events IS
-  'Append-only D54 testimony-currency transitions. Truth for claims.is_current_testimony (cache); replayable (D7). Reasons: reextracted (a newer extraction generation covers the chunk), version_superseded (living-mode lineage moved past the claim''s version), version_archived. Never validity, never supersession — D3 untouched.';
+  'Append-only D54 testimony-currency transitions. Truth for claims.is_current_testimony (cache); replayable (D7). Reasons: reextracted (basis change or verified reuse after a packing-only retirement), version_superseded (living-mode lineage moved past the claim''s version), version_archived, review_restored. Never validity, never supersession — D3 untouched.';
 CREATE INDEX ix_currency_claim ON testimony_currency_events (claim_id);
 CREATE INDEX ix_currency_doc   ON testimony_currency_events (deployment_id, doc_id, occurred_at);
 ```

@@ -125,6 +125,15 @@ Repeated enqueues resolve to the assigned key. Every version-level job
 from CHUNK through the applicable tail records the pair at enqueue and
 uses it at dispatch.
 
+For a legacy sources-only completion with deferred gaps and no chunk or
+flush rows, bind the original successful work using the proven historical
+full generation. If the generation is unknown, verify from the immutable
+E0 artifacts that the representation named by the successful embed row
+has no blocks to pack. Under the lineage lock, recheck the representation
+and bind the existing completion once to an empty grid at the configured
+full generation. Keep the original keys and `finished_at`. Deferred D143
+admission uses that binding and takes the ordinary empty path.
+
 E2 starts after that grid's embed row succeeds, including the empty case.
 Immediate and deferred D143 admission use the recorded grid for Selection and
 Claimify dispatch, windows and barriers. For older chunk-grain E2 work, the
@@ -147,11 +156,31 @@ Reuse normalization and application receipts and vector stamps by claim ID.
 Readiness and receipts select the expected grid first and check that grid's
 required work and barriers. D143 admits and closes gaps for the selected
 grid under the lineage lock. Both reconcile modes check that selection under
-the same lock before changing current testimony. Claims carried into the
-selected grid keep their currency. Claims lost solely to the repack are
-retired as `reextracted`, and late claims from a displaced grid are historical.
-Living supersession checks occurrences in the current version's selected
-grid. [Testimony currency](evidence_lifecycle_design.md#3-testimony-currency-d54).
+the same lock before changing currency. Retire claims lost solely to the
+repack as `reextracted`. A verified reuse occurrence on the completed
+selected grid can restore those claims and their support. Late claims
+from a displaced grid are historical. Living supersession checks the
+current version's selected occurrences.
+[Testimony currency](evidence_lifecycle_design.md#3-testimony-currency-d54).
+
+### Fact-application fence
+
+Before changing selection under the lineage lock, check the old grid's
+memberships for D118 assertions with an admission sequence and no applied
+receipt. If any remain, keep that grid selected and retry the repack
+through the ledger. Release the lock so the entity stream can drain.
+A dead-lettered admission blocks the switch until replay applies it or
+hard forget removes it.
+
+Recheck selection under the same lock at D143 facts entry and when D118
+assigns an admission sequence. Each new assertion admission requires a
+materialized membership on a selected grid that entered facts. Acquire
+the identity fence, candidate lineage locks in ID order, then the entity
+stream lock, matching the support-review lock order. Recheck membership
+and selection before committing admissions for those lineages.
+Already-admitted assertions finish in D118 order.
+[D118 application](mutable_fact_windows_design.md#4-writes-concurrency-and-retry) ·
+[D143 ordering](processing_layers_design.md#43-the-claims-tail-waits-for-earlier-fact-work-configured-deployments).
 
 ### Private size recovery
 
@@ -281,6 +310,29 @@ Verify that reconcile retires old-only testimony, that prior ledger keys resolve
 and that readiness and receipts wait for the new grid. Cover immediate and
 deferred claims handoffs and empty completion. Verify zero paid passage
 embeddings for unchanged D80 inputs.
+
+Pause an old grid's fact application with a durable decision waiting to
+apply. Request a repack and verify the old grid stays selected. Resume
+and require one application receipt before selection switches. After
+the switch, let a helper for the same subject see a staged, unadmitted
+assertion unique to the old grid. Its admission sequence stays unset
+and the new grid's recount reflects all committed old applications.
+
+After a packing-only repack retires a claim, ingest a dated successor
+whose intact chunk matches the old Selection and Claimify keys and
+remaps the old spans. Exercise both reconcile modes. Require the same
+claim ID in current-only search, one restoration event across retries,
+and recounted support with any matching withdrawal flag resolved. Check
+that the carried chunk reuses its paid results and that an occurrence on
+a displaced grid leaves the claim historical.
+
+Upgrade a legacy empty sources-only completion with deferred claims and
+facts gaps, a succeeded embed row, and no chunks or flush marker. Cover
+both proven historical parameters and verified empty E0 with unknown
+parameters. Enable claims with a different packing configuration.
+Require the same binding and original sources completion time. Deferred
+admission takes the empty path with zero chunk jobs. A nonempty
+representation with missing chunks fails the empty-grid check.
 
 With CHUNK already succeeded, dead-letter private `embed_chunk` on size and
 issue repeated recovery requests for that exact failed attempt while a newer

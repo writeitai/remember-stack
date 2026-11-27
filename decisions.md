@@ -1780,7 +1780,8 @@ config choice.
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
 > Both reconcile modes use the selected packing grid's claim occurrences.
-> Testimony lost to a same-version repack follows the `reextracted` rule.
+> A packing-only loss follows the `reextracted` rule. Verified reuse can
+> restore the same claim and recount its support.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
@@ -6254,6 +6255,10 @@ absence-based closures indefinitely.
 > Processing amendments D120–D123 clarify assertion identity, project concise
 > model inputs and add source-backed context nomination. D118's one world window,
 > ordered application and validation/forget authority remain in force.
+>
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> A repack waits for already-admitted assertions, and selected grid
+> membership governs new admissions.
 
 **Status:** accepted when merged; replacement runtime is not implemented by this
 amendment. **Date:** 2026-09-07.
@@ -8797,11 +8802,13 @@ Ineligible pieces have stable Selection keys for their Claimify consumers.
 Intact chunks keep their Selection key, date-free key and date when the
 consumed E2 inputs match across a split. Claimify still checks D122's producers.
 Each additional packing grid gets its own delivery and barrier keys through
-the claims-only or facts tail. Existing keys stay with their grids. Reconcile
-uses the selected grid for current testimony. E1-complete and exposed grids
-keep their cuts. Size recovery calls CHUNK's shared fit-and-refine routine
-for the exact failed embed attempt and commits the private recut and replay
-together. Recovery carries the effective date, using E2's version-date fallback
+the claims-only or facts tail. Existing keys stay with their grids, including
+verified empty legacy completions. A repack drains admitted fact applications
+before switching grids. New fact admissions and reconcile use the selected
+grid. Verified reuse restores testimony retired solely by repacking.
+E1-complete and exposed grids keep their cuts. Size recovery calls CHUNK's
+shared fit-and-refine routine for the exact failed embed attempt and commits
+the private recut and replay together. Recovery carries the effective date, using E2's version-date fallback
 for unstamped pre-D140 rows. Confirmed input rejection is terminal and capacity
 retries remain bounded.
 

@@ -230,6 +230,9 @@ Required properties apply equally to relations and observations:
    with stable tie breakers. A newly admitted late source is new work; this is not
    a promise that an ever-growing corpus has a globally final order. Source order
    coordinates processing and supplies no world-time boundary authority.
+   D162 limits new admissions to selected packing grids and drains already
+   admitted assertions before a repack switches grids.
+   [Fact-application fence](split_oversized_chunks_design.md#fact-application-fence).
 3. Prepare a bounded candidate/evidence snapshot, release database locks for
    remote inference, and apply only after revalidating the complete consumed
    snapshot. Candidate additions, source withdrawal/forget, identity redirects,

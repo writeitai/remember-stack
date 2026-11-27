@@ -141,10 +141,11 @@ state by (V, G, N). Missing membership is a non-retryable error.
 ### 5.3 Handler (entity unit)
 
 Load the generation-qualified unit by `work.target_id`. Resolve its canonical
-entity block, admit a finite set of eligible assertions from materialized units,
-and apply the earliest outstanding assertion.
+entity block, admit a finite set of eligible assertions from materialized
+units on selected grids, and apply the earliest outstanding admission.
 Preparation and completed output are durable, inference holds no database locks,
 and application revalidates the inputs under D118's locks.
+[D162 fact-application fence](split_oversized_chunks_design.md#fact-application-fence).
 
 Apply identity, evidence, all re-split effects and receipt/membership retirement
 atomically. Retain the membership's `applied_at` witness rather than deleting it.
