@@ -31,6 +31,7 @@ from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.object_store import StreamingReadPort
 from rememberstack.ports.purge import ObjectPurgePort
 from rememberstack.spine.corpus_export import CorpusReaderCatalog
+from rememberstack.spine.corpus_export import served_corpus_document_ids_on
 from rememberstack.spine.corpus_publication import CorpusPublicationCatalog
 from rememberstack.spine.corpus_publication import CorpusPublicationLock
 from rememberstack.workers.base import HandlerOutcome
@@ -121,9 +122,7 @@ class CorpusPublisher:
                     ancestors.add(parent)
                     parent = posixpath.dirname(parent)
             self._navigation(
-                deployment_id=held.deployment_id,
-                before_write=held.check,
-                ancestors=ancestors,
+                deployment_id=held.deployment_id, lock=held, ancestors=ancestors
             )
             self._catalog.set_paths(
                 lock=held, doc_id=doc_id, paths={path} if path else set()
@@ -146,27 +145,26 @@ class CorpusPublisher:
             published: list[tuple[UUID, str | None, str | None]] = []
             # Keep only one document inventory at a time. Discovery stores
             # folder paths, not asset keys, and is shared across this run.
-            with self._readers.documents(deployment_id=deployment_id) as documents:
-                for document in documents:
-                    paths = folders.pop(corpus_suffix(document.doc_id), set())
-                    paths.update(self._catalog.paths(lock=lock, doc_id=document.doc_id))
-                    revision, path = self._publish_document(
-                        lock=lock, doc_id=document.doc_id, folders=paths, verify=verify
-                    )
-                    published.append((document.doc_id, revision, path))
+            with lock.transaction() as connection:
+                doc_ids = served_corpus_document_ids_on(
+                    connection=connection, deployment_id=deployment_id
+                )
+            for doc_id in doc_ids:
+                paths = folders.pop(corpus_suffix(doc_id), set())
+                paths.update(self._catalog.paths(lock=lock, doc_id=doc_id))
+                revision, path = self._publish_document(
+                    lock=lock, doc_id=doc_id, folders=paths, verify=verify
+                )
+                published.append((doc_id, revision, path))
             for paths in folders.values():
                 for path in paths:
                     self._remove_folder(lock=lock, path=path)
             self._navigation(
-                deployment_id=lock.deployment_id,
-                before_write=lock.check,
-                existing=navigation,
+                deployment_id=lock.deployment_id, lock=lock, existing=navigation
             )
             # Only small input identities survive the metadata pass; no stored
             # receipts or export inventories. Concurrent changes get fresh work.
-            self._catalog.clear_unselected_paths(
-                lock=lock, doc_ids=[doc_id for doc_id, _, _ in published]
-            )
+            self._catalog.clear_unselected_paths(lock=lock, doc_ids=doc_ids)
             for doc_id, revision, path in published:
                 self._catalog.set_paths(
                     lock=lock, doc_id=doc_id, paths={path} if path else set()
@@ -209,9 +207,7 @@ class CorpusPublisher:
                 ancestors.add(parent)
                 parent = posixpath.dirname(parent)
         if folders or listing:
-            self._navigation(
-                deployment_id=deployment_id, before_write=None, ancestors=ancestors
-            )
+            self._navigation(deployment_id=deployment_id, ancestors=ancestors)
 
         removed = 0
         if folders:
@@ -389,7 +385,7 @@ class CorpusPublisher:
         self,
         *,
         deployment_id: UUID,
-        before_write: Callable[[], None] | None,
+        lock: CorpusPublicationLock | None = None,
         existing: set[str] | None = None,
         ancestors: set[str] | None = None,
     ) -> None:
@@ -406,10 +402,16 @@ class CorpusPublisher:
                     for key in self._store.iter_keys(prefix=posixpath.join(parent, "~"))
                 )
         assert existing is not None
-        with self._readers.documents(deployment_id=deployment_id) as documents:
+        with (
+            lock.transaction() if lock is not None else nullcontext() as connection,
+            self._readers.documents(
+                deployment_id=deployment_id, connection=connection
+            ) as documents,
+        ):
             desired = render_navigation(
                 documents, policy=self.policy, ancestors=ancestors
             )
+        before_write = lock.check if lock is not None else None
         for path in sorted(desired, key=lambda name: (-name.count("/"), name)):
             file = GeneratedFile(path, desired[path])
             if self._store.sha256_of(key=ObjectKey(path)) != file.sha256:

@@ -1,8 +1,11 @@
 """Real-PostgreSQL lifecycle tests for the Phase 0 Alembic schema chain."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import timezone
+import logging
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 from alembic import command
@@ -225,6 +228,65 @@ def test_batch_b_indexes_have_bound_columns_and_predicates() -> None:
             " (superseded_by IS NULL)"
         ),
     }
+
+
+def test_upgrade_retries_contended_revision_after_autocommit() -> None:
+    """An ordinary reader delays DDL, then both readers and the upgrade proceed."""
+    database_url = _database_url()
+    config = Config()
+    config.set_main_option("script_location", str(_VERSIONS.parent))
+    config.set_main_option("sqlalchemy.url", database_url)
+    reset_database(config=config)
+    before = "p9_54_0075"
+    command.upgrade(config=config, revision=before)
+    config.set_main_option("migration_lock_timeout_seconds", "0.1")
+    engine = create_engine(database_url)
+    retry = Event()
+    resume = Event()
+
+    class ObserveRetry(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if "SQLSTATE 55P03" in record.getMessage():
+                retry.set()
+                resume.wait(timeout=10)
+
+    notice = ObserveRetry()
+    logger = logging.getLogger("alembic.runtime.migration")
+    logger.addHandler(notice)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor, engine.connect() as reader:
+            reader.exec_driver_sql("SELECT doc_id FROM documents LIMIT 1")
+            pending = executor.submit(command.upgrade, config=config, revision="head")
+            try:
+                assert retry.wait(timeout=5), "DDL did not time out behind the reader"
+                with engine.begin() as other_reader:
+                    other_reader.exec_driver_sql("SET LOCAL statement_timeout = '1s'")
+                    other_reader.exec_driver_sql("SELECT doc_id FROM documents LIMIT 1")
+                    assert (
+                        other_reader.exec_driver_sql(
+                            "SELECT version_num FROM alembic_version"
+                        ).scalar_one()
+                        == before
+                    )
+                    # The release is still at its old revision, but the first
+                    # attempt's idempotent autocommit phase already committed.
+                    assert (
+                        other_reader.exec_driver_sql(
+                            "SELECT 'reopened_unarchive'::adjudication_outcome"
+                        ).scalar_one()
+                        == "reopened_unarchive"
+                    )
+                    assert other_reader.exec_driver_sql(
+                        "SELECT pg_try_advisory_xact_lock(1919251316, 153)"
+                    ).scalar_one()
+            finally:
+                reader.rollback()
+                resume.set()
+            pending.result(timeout=15)
+        assert _head_revision(database_url=database_url) == "p9_55_0076"
+    finally:
+        logger.removeHandler(notice)
+        engine.dispose()
 
 
 def test_postgres_p1_schema_searches_and_audits_chunk_authority() -> None:

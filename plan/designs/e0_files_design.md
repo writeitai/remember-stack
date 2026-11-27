@@ -995,9 +995,12 @@ cannot write; seed current-policy work instead.
 One deployment-scoped PostgreSQL advisory lock serializes publication, including
 index regeneration, normal removal and reconcile. Forget's sweep does not take it
 (§6.7). Reuse caller lock ownership for internal calls. Re-read authority after
-taking the lock. Keep the claim alive while streaming. Before each object write
-or delete, confirm ownership of that advisory lock on the same PostgreSQL session
-and that the work claim is still live; abort further mutations on loss.
+taking the lock. The task uses the lock session for its catalog reads and marker
+writes. End each SQL transaction before starting object I/O so the session
+holds only the advisory lock while copying. Keep the claim alive while
+streaming. Before each object write or delete, confirm ownership of the
+advisory lock on that session and that the work claim is still live. Abort
+further mutations on loss.
 
 Check the lock and the live claim before each multipart request too, so one
 bounded part is the largest upload
@@ -1085,8 +1088,10 @@ a matching marker never skips verification.
 ### 6.6 Repair, readiness and processing layers
 
 `run_projection(plane="p3")` reconciles this same live tree using the lock,
-selectors, renderer and publisher above. Stream DB lineages and paged key listings;
-delete unknown/orphan objects, render all current navigation indexes from the DB,
+selectors, renderer and publisher above. Collect the ordered IDs of served DB
+lineages in one statement and end its transaction before copying. Re-read each
+selected lineage's current authority in its own short transaction. Stream paged
+key listings, delete unknown/orphan objects, render current navigation from the DB,
 and prune obsolete index keys even if no document folder remains there. Share
 one full-store discovery pass across the run; ordinary publication never does
 this scan. Union discovered suffix folders with recorded `corpus_paths`, repair

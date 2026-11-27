@@ -8,6 +8,8 @@ architecture lives in `designs/`; research in `analysis/` is non-binding.
 For schema upgrades while the previous release serves, see
 [migration compatibility in §6.1](designs/packaging_distribution_design.md#61-migration-compatibility)
 and [D160](../decisions.md#d160-keep-the-previous-release-working-through-migrations).
+[D161](../decisions.md#d161-release-corpus-read-transactions-before-object-io-and-retry-contended-migrations)
+covers lock timeouts, migration retries and the corpus worker's connection lifetime.
 
 For package and release identity, start with [D108's unified distribution
 design](designs/unified_remember_distribution_design.md). The

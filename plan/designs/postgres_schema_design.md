@@ -88,7 +88,9 @@ These rules apply to every table unless a module overrides them with a stated re
   deployment-aware, fixed-C UUID-text ordered shape before publishing the new
   view/head; offline SQL emission refuses that
   catalog-driven revision. The detailed build/failure contract lives in
-  [D153](shared_retrieval_eligibility_design.md).
+  [D153](shared_retrieval_eligibility_design.md). The runner bounds lock waits
+  and retries a contended revision as specified in
+  [migration compatibility](packaging_distribution_design.md#61-migration-compatibility).
 - **Identifiers (D153).** Surrogate primary keys are opaque **`uuid`** values
   minted by the application/worker before INSERT. Current writers use UUIDv4;
   no sequential allocator, ID rewrite or paid-product identity change is

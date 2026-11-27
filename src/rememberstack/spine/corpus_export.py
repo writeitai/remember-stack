@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from contextlib import nullcontext
 from uuid import UUID
 
 from sqlalchemy import text
@@ -26,6 +27,18 @@ def served_corpus_documents_on(
     }
 
 
+def served_corpus_document_ids_on(
+    *, connection: Connection, deployment_id: UUID
+) -> tuple[UUID, ...]:
+    """Snapshot ordered reconcile membership without holding a cursor during copies."""
+    return tuple(
+        connection.execute(
+            text(f"SELECT doc_id FROM ({_DOCUMENTS}) AS served ORDER BY doc_id"),
+            {"deployment_id": deployment_id},
+        ).scalars()
+    )
+
+
 class CorpusReaderCatalog:
     """Stream the served readings in one repeatable-read database snapshot."""
 
@@ -34,7 +47,11 @@ class CorpusReaderCatalog:
 
     @contextmanager
     def documents(
-        self, *, deployment_id: UUID, doc_id: UUID | None = None
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID | None = None,
+        connection: Connection | None = None,
     ) -> Iterator[Iterator[CorpusDocument]]:
         """Select current pointers, not newest stored or candidate generations.
 
@@ -42,18 +59,18 @@ class CorpusReaderCatalog:
         Missing immutable inventories are errors in the reader, not a reason to
         silently present a raw-only or partial folder.
         """
-        with self._engine.connect().execution_options(
-            isolation_level="REPEATABLE READ"
-        ) as connection:
-            statement = _DOCUMENTS + (" AND d.doc_id = :doc_id" if doc_id else "")
-            rows = (
-                connection.execution_options(yield_per=150)
-                .execute(
-                    text(statement + " ORDER BY d.doc_id"),
-                    {"deployment_id": deployment_id, "doc_id": doc_id},
-                )
-                .mappings()
+        with (
+            nullcontext(connection)
+            if connection is not None
+            else self._engine.connect().execution_options(
+                isolation_level="REPEATABLE READ"
             )
+        ) as reader:
+            statement = _DOCUMENTS + (" AND d.doc_id = :doc_id" if doc_id else "")
+            rows = reader.execute(
+                text(statement + " ORDER BY d.doc_id").execution_options(yield_per=150),
+                {"deployment_id": deployment_id, "doc_id": doc_id},
+            ).mappings()
             try:
                 yield (CorpusDocument(**dict(row)) for row in rows)
             finally:
