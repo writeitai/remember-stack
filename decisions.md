@@ -1312,10 +1312,10 @@ surviving semantic requirement is redirect-safe, deployment-keyed, temporal
 graph views over PostgreSQL authority data. D98 drops the six snapshot-export
 `v_graph_*` views named below and replaces them with no-row private live source
 views plus SQL/PGQ metadata (the metadata was removed by the D98 RC 1
-amendment; the views remain). Only `v_graph_survivor` remains as the private
-merge-resolution authority behind `v_memory_entity_survivor`; it is not a graph
-export or public query surface. The D98 graph design owns the current schema
-and contracts.
+amendment; the views remain). `v_graph_survivor` remains private identity
+infrastructure. D163 proposes making it a projection of the shared walk in
+`v_memory_entity_survivor`. The graph design owns the current graph contract.
+[D163](#d163-drive-fact-eligibility-from-its-own-evidence)
 
 **Decision.** The Postgres→LadybugDB (P2) projection is defined by a set of read-only **Postgres views**
 (`v_graph_entities`, `v_graph_documents`, `v_graph_relates`, `v_graph_mentioned_in`, `v_graph_crossref`,
@@ -8207,6 +8207,11 @@ must qualify before advertising chargeable evidence.
 > amends the migration lock wait and retry policy. The session guard and
 > resumable concurrent-index procedure still apply.
 
+> **Proposed fact-path amendment (2026-11-27).** D163 binds each
+> candidate's evidence, claim/chunk coordinates and survivor lookups.
+> D153's source, visibility and sharing rules still apply.
+> [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
+
 **Status:** accepted design on this PR's merge; implementation not yet qualified.
 **Date:** 2026-11-12. **Authority:** owner requested Claude Opus approval before
 implementation; Opus 5.5 HIGH approved revision `431900b1d` after three reviews.
@@ -8221,7 +8226,7 @@ UUID-text order that avoids competing UUID-key scans under skew. Opus approved
 this measured physical amendment at `68e156154` ([review](https://github.com/writeitai/remember-stack/pull/587#issuecomment-6830637190)). Claim/chunk scope uses the same
 canonical mention relation in entity-driven and candidate-driven directions.
 A private source-qualified fact helper owns actual D140 carried-claim membership
-and presentation/counts; the only runtime-composed fact authority is the tested
+and presentation/counts. D153's original runtime builder composes the tested
 subject/object visibility conjunction. Full eligibility precedes each cut.
 
 **Tradeoffs and consequences.** Add a mention chunk-lookup B-tree with native
@@ -8233,11 +8238,9 @@ No ranking thresholds, public row shapes, ingestion generations, ID minting,
 model calls or paid reuse keys change. No cache, persisted visibility flag,
 legacy fallback, reranker or automatic DLQ repair is introduced.
 
-**Qualification.** The pre-change oracle is a real `p9_46_0067` database, not
-hand-picked old DDL. Complete row/count, deletion/merge/time, 120-partition,
-large unrelated-data, concurrency/cancellation, manifest/ACL and native completion
-gates are mandatory before merging runtime changes. Single-reader prototypes
-are evidence for the design, not proof of a shipped speedup.
+**Original D153 qualification.** The oracle was a real `p9_46_0067`
+database. The full-row, visibility, scale, concurrency, manifest/ACL and
+completion gates are in the delivery record. D163 uses `p9_55_0076`.
 
 **Design:** [shared retrieval eligibility](plan/designs/shared_retrieval_eligibility_design.md).
 **Analysis:** [measured SQL amplification](plan/analysis/retrieval_filtering_reliability_20261112.md).
@@ -8783,3 +8786,31 @@ LoCoMo binding must qualify at 22,528 Qwen tokens or higher.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
+
+## D163. Drive fact eligibility from its own evidence
+
+**Status:** Proposed. **Date:** 2026-11-27. **Amends:** D153's physical fact path.
+
+Bind each candidate's raw evidence before source qualification and the D140
+occurrence and readable-version checks. Use the same gate in P1 nomination
+and final confirmation. Resolve a relation's survivors from its two stored
+endpoints, keying every redirect by deployment and entity ID.
+
+The hosted planner checked evidence last and made about 1.99 million
+probes. Starting from the candidate's evidence removed the unrelated-chunk
+multiplier and produced the same eligible IDs in the paired prototype.
+
+Compare eligible rows with multiplicity, scoped ranking values and complete
+final confirmation rows against the archive-aware `p9_55_0076` gate on
+retained LoCoMo and hosted-shaped stores. Qualify latency on hosted-size
+hardware. Commit compatible view replacements separately under D161 and
+qualify the shipped three-second lock wait with previous-release readers.
+Publish the new manifest atomically with the saved-query registry transition
+after previous-release readers drain. A downgrade after publication drains
+D163 readers before restoring the previous schema and republishing its hash.
+D142 ranking and D56 ingestion identities continue to use their existing
+inputs.
+
+[Fact path](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
+[Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·
+[Hosted evidence](plan/analysis/evidence_driven_fact_eligibility_20261127.md)
