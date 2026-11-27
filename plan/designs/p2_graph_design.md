@@ -135,10 +135,10 @@ surface.
 
 D98 drops the six legacy `v_graph_entities`, `v_graph_documents`,
 `v_graph_relates`, `v_graph_mentioned_in`, `v_graph_crossref`, and
-`v_graph_is_document` snapshot-export views. `v_graph_survivor` remains only as
-the pre-existing private merge-resolution authority behind the
-deployment-labelled `v_memory_entity_survivor`; neither is a graph copy or a
-public query-space surface.
+`v_graph_is_document` snapshot-export views. The proposed D163 amendment
+puts the shared forward merge walk in `v_memory_entity_survivor`.
+`v_graph_survivor` is its two-column private projection.
+[D163 fact-path design](shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule)
 
 The graph views, the traversal helpers, and their grants are schema objects.
 They contain no copied rows and have no data generation id. Migrations create
