@@ -500,11 +500,13 @@ limits are present in the hashed descriptors, not only in implementation
 constants.
 
 Reader tools use `MemoryClient` and the normal P3 mount. Under proposed D163,
-a launcher verifies the serving build, live schema and each database
-connection against the sample's frozen store on start and resume. It keeps
-the private service bound through the last checkpoint and dispatches the
-recorded evaluator with the restored mount and original inputs. Using D163
-requires explicit opt-in under a fresh run identity.
+a launcher verifies the running API image, resolved retrieval settings,
+live schema and database connections against the original run and the
+sample's frozen store on start and resume. It keeps the private service
+bound through the last checkpoint, with retrieval data read-only and cost
+receipts enabled on the restore. It dispatches the recorded evaluator with
+the restored mount and original inputs. Using D163 requires explicit opt-in
+under a fresh run identity.
 [Benchmark admission](shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime)
 
 ## 7. Answer loop

@@ -266,6 +266,59 @@ breaks that invariant, so the oracle needs a specific exception for that chain.
   [SQL result](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061) ·
   [LoCoMo renderer](../../benchmarks/locomo/protocol.py#L717)
 
+## Round-five source checks
+
+- The pinned build label comes from `REMEMBERSTACK_BUILD_REVISION`.
+  The profile passes its resolved `retrieval_database_budget_s` separately
+  to `QueryEngine`. The pinned LoCoMo protocol specifies 120 seconds.
+  Matching a revision and catalog therefore leaves room for a different
+  executable or a different deadline. The API container's content identity
+  and effective retrieval configuration come from the original launch.
+  [Build label](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L137-L148) ·
+  [Query engine setup](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L1342-L1385) ·
+  [LoCoMo budget](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/protocol.py#L151-L154)
+- Stopping workers leaves the pinned API's ingest route mounted. Both
+  native and SQL embeddings use the primary engine's cost recorder,
+  which inserts a receipt and falls back to a counter upsert. If both
+  fail, the recorder raises. A read-route allowlist and narrow database
+  and object grants protect the restored data while the two existing
+  accounting tables remain writable.
+  [Ingest route](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/surfaces/http_api.py#L2171-L2180) ·
+  [Cost recorder](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/spine/surface_cost.py#L172-L217)
+- BEAM keeps one `state.json` for every arm. Each invocation loads the
+  whole file and rewrites it after each answer. Independent store locks
+  allow two writers to start from the same old file. A run-directory lock
+  serializes the entire read-modify-write sequence.
+  [BEAM checkpoint loop](../../benchmarks/rs_harness_beam/answer_agent.py#L737-L767)
+- The executor reads `transaction_timestamp()`, the SQL bridge exports
+  its snapshot with `now()`, and `facts_current` applies
+  `statement_timestamp()` to its rows. PostgreSQL exposes those through
+  SQL time functions and separately uses `GetCurrentTimestamp()` to
+  schedule timeouts. Injecting recorded instants at the evaluation sites
+  preserves statement behavior and real timeout scheduling. Editing view
+  definitions would also change the catalog being compared.
+  [Executor](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1166-L1171) ·
+  [SQL bridge](../../src/rememberstack/surfaces/query_sandbox/bridge.py#L445-L485) ·
+  [Fact view](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L267-L272) ·
+  [PostgreSQL time functions](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/adt/timestamp.c#L1608-L1624) ·
+  [Timeout scheduler](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/misc/timeout.c#L560-L574)
+- The public `claims_live` view selects current testimony from
+  `claims_visible_history`. BEAM also issues a text-filtered sample
+  without claim IDs. A fence on the public history join would constrain
+  both broad reads to origin probes across the chunk range leaves.
+  [Claim views](../../src/rememberstack/spine/migrations/versions/p9_01_0022_memory_v1_query_space.py#L509-L512) ·
+  [BEAM sample](../../benchmarks/rs_harness_beam/answer_agent.py#L62-L68)
+
+A disposable PostgreSQL 18.7 fixture modeled those origin joins under the
+interactive SQL limits. At 12,000 claims and 48,000 chunks across 12 range
+leaves plus the default, counts matched. Each set-based read scanned 13
+leaves. The fenced reads executed 156,000 leaf scans for history and 104,000
+for current testimony. At 120,000 claims and 480,000 chunks across 120 leaves
+plus the default, the set-based reads took 336 ms and 242 ms in the
+instrumented runs. Both fenced reads hit the five-second statement timeout.
+Confine the fence to the fact paths, where evidence supplies a claim ID.
+Full-schema measurements through the SQL sandbox remain a qualification gate.
+
 ## Prior qualification and alternatives
 
 - D142's 300k-chunk gate measured BM25 chunk retrieval at 263/267 ms unfiltered

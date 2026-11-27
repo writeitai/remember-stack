@@ -8751,10 +8751,11 @@ generations, retrieval and rendering use their existing code and identities.
 **Decision.** Bind the fact's raw evidence before claim source qualification
 and before the D140 occurrence and readable-version probes. Reuse the keyed
 lookups for counts and representative evidence. Key the origin chunk from
-its claim and the raw-support absence check from its fact. Use the same gate
-in nomination and confirmation before eligibility cuts. Key the single
-forward merge walk by deployment and entity at the stored endpoint and at
-every redirect. Keep D153's shared survivor visibility checks.
+its claim within fact reads and the raw-support absence check from its fact.
+Keep public claim scans set-based with shared visibility predicates. Use
+the same gate in nomination and confirmation before eligibility cuts. Key
+the single forward merge walk by deployment and entity at the stored endpoint
+and at every redirect. Keep D153's shared survivor visibility checks.
 
 **Why.** On the hosted WriteIt brain, the planner made about 1.99 million
 evidence probes after starting from chunks. A paired evidence-first probe
@@ -8769,11 +8770,13 @@ totals and ranks. Preserve D140 scope, D142 ranking and budgets, #542 count
 pruning and embedding reuse, D153 sharing, D159 archive behavior and D56
 ingestion identities. Qualify against `p9_55_0076` at fixed snapshots and
 measure work and latency at scale. Commit compatible view replacements
-separately. On benchmark start and resume, bind every API database connection
-to the verified frozen store through the last checkpoint. LoCoMo pins the
-store per sample and resumes with its original storage stack, evaluator and
-reader inputs. BEAM pins the ordered questions, evaluator and effective reader
-settings. D163 evaluation requires explicit opt-in under a fresh run identity.
+separately. On benchmark start and resume, verify the running API image and
+effective retrieval settings and bind every database connection to the
+frozen scoring data through the last checkpoint. Permit cost receipts on
+the private restore. LoCoMo pins the store per sample and resumes with its
+original storage stack, evaluator and reader inputs. BEAM pins the ordered
+questions, evaluator and settings and serializes checkpoint writes across
+arms. D163 evaluation requires explicit opt-in under a fresh run identity.
 
 [D153 §4.3](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
 [Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·

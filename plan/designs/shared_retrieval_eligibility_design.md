@@ -387,29 +387,35 @@ In each source-membership `EXISTS`, first select raw evidence through a
 deployment and candidate fact ID in that probe's `WHERE`. A second
 `LATERAL (... OFFSET 0)` probe binds the evidence row's
 `(deployment_id, claim_id, doc_id)` inside both sides of
-`claims_visible_history UNION ALL v_memory_claim_carried_periodised`.
+`v_memory_claim_history_by_id UNION ALL v_memory_claim_carried_periodised`.
 Binding the raw evidence inside its probe prevents semi-join conversion even
 when no claim qualifies. Either stance can qualify, including claims carried
 by a newer occurrence after loss of the origin.
 
-Put the shared origin probe in `memory_v1.claims_visible_history`. From the
-claim row, look up its origin chunk in `LATERAL (... OFFSET 0)` using the
-claim's `(deployment_id, doc_id, chunk_id)` inside the lookup. From that
-chunk, use a second such lookup to check its visible version and ready
-representation by their full coordinates. Keep the existing live-lineage
-and historical visibility rules, including ready origins in superseded
-versions or replaced representations.
+Use the private `v_memory_claim_history_by_id` only where a fact's evidence
+supplies claim IDs. Bind the claim by deployment and ID, then look up its
+origin chunk in `LATERAL (... OFFSET 0)` using the claim's
+`(deployment_id, doc_id, chunk_id)`. From that chunk, use a second such
+lookup to check its visible version and ready representation by their full
+coordinates. Author the projection and visibility predicates once for the
+keyed and set-based forms. Both use `documents_live`,
+`document_versions_visible` and the same ready-representation check,
+including ready origins in superseded versions or replaced representations.
+Use set-based joins in `memory_v1.claims_visible_history` and its
+current-testimony subset `memory_v1.claims_live`. This lets broad reads
+join origins in one pass, avoiding a range-leaf probe for each origin.
+
 In `v_memory_claim_carried_periodised`, use `NOT EXISTS (... OFFSET 0)`
-against that same history view keyed by the claim's deployment and ID.
+against the private history view keyed by the claim's deployment and ID.
 Keep the current-testimony and period predicates. Bind the carried
 occurrence by deployment and claim ID, then its chunk by deployment and
 chunk ID, and check that version's current ready reading using those inputs.
 
 Keep the widened `v_memory_fact_claim_live` for current-lineage membership.
 Each arm starts with raw evidence and uses a `LATERAL (... OFFSET 0)` lookup
-that binds the evidence's deployment, claim and document IDs inside both
-branches of `memory_v1.claims_live UNION ALL v_memory_claim_carried_periodised`.
-The ordinary branch reuses the keyed origin probe through `claims_live`.
+binding the evidence's deployment, claim and document IDs in both branches.
+Use the private history view filtered by `is_current_testimony` for the
+ordinary branch and the carried view for the other.
 
 D54 counts still come from `v_memory_evidence_lineage_live` through the left
 lateral aggregate. Bind deployment, fact kind and fact ID below the lineage
@@ -566,9 +572,10 @@ lineage counts remain independent of the request's time and document filters.
 | `_FACTS_CONTEXT_CONTRADICTION_MEMBERS` | Enumerate matching group fact IDs, then apply shared endpoint qualification and the D140 gate with existing group count/member semantics and deadline |
 | `graph_queries.py`, SQL sandbox `nomination.py` | Preserve complete public authority for graph traversal/sandbox SQL; use shared builder where they call bounded native fact nomination. No private helper becomes caller-reachable |
 
-Keep the source helper in `AUTHORIZATION_HELPER_VIEWS` as a hashed dependency.
-It remains owned by `rememberstack_view_owner` and outside public discovery
-and query-role reachability.
+Keep the source and keyed claim history helpers in
+`AUTHORIZATION_HELPER_VIEWS` as hashed dependencies. Both are owned by
+`rememberstack_view_owner` and stay outside public discovery and query-role
+reachability.
 
 A scope below the unchanged 50,000 raw-row budget may still have expensive
 source qualification or many distinct
@@ -612,19 +619,19 @@ pin transitions belong to [D153's historical delivery](../plans/shared_retrieval
 
 Build `ix_review_open_support_fact` concurrently in its own Alembic
 revision. Reuse the session lock and invalid-index retry checks in §4.2
-and verify the index definition and validity before use. Then use
-`CREATE OR REPLACE VIEW` in separate revisions, one view per transaction.
-Apply the view revisions in this order.
+and verify the index definition and validity before use. Create or replace
+one view per revision, in this order.
 
 1. `v_memory_entity_survivor`, with the deployment-bound walk.
 2. `v_graph_survivor`, projecting that walk.
-3. `memory_v1.claims_visible_history`, with the shared origin probe.
+3. Create `v_memory_claim_history_by_id` with the keyed origin probe.
 4. `v_memory_claim_carried_periodised`, using the keyed origin-absence check.
 5. `v_memory_fact_claim_live`, with the keyed live-claim lookup.
 6. `v_memory_fact_source_qualified`, with bounded membership, counts and support state.
 
 Downgrade in reverse order, restoring the exact `p9_55_0076` definitions and
-comments, then drop the review index concurrently in its own revision.
+comments and dropping the new view after its callers are restored. Then drop
+the review index concurrently in its own revision.
 Between the survivor replacements both views walk `entities` directly,
 so callers can use either view and see the same results on valid chains.
 Preserve columns, types, owners, grants and public comments at every step.
@@ -633,14 +640,15 @@ finish through a dependency before the migration needs an exclusive lock on
 the reader's caller view. Keep historical migrations immutable and keep one
 serving path using typed builders with fixed SQL identifiers and bound values.
 
-Register the changed authored DDL in `source_definitions.py`, retaining the
-changed private views in the hashed dependency set. Regenerate the manifest
-and any affected deletion matrix, verify catalog definitions and ACLs, and run
-normal saved-query revalidation. A changed private dependency changes the
+Verify that the shared claim definition's set-based form matches the
+deployed public DDL. Register the new and replaced DDL in
+`source_definitions.py`, with the private views in the hashed dependency set.
+Regenerate the manifest and any affected deletion matrix, verify catalog
+definitions and ACLs, and run normal saved-query revalidation. A changed private dependency changes the
 manifest identity even with stable public columns. Advance the D152
 schema-head pins in `storage_capture_guard.py` and `storage_capture_catalog.py` from
-`p9_55_0076` to the new head. Add the review index to the native catalog
-inventory and qualify the guards and resource inventory at that head.
+`p9_55_0076` to the new head. Add the review index and private view to the
+native catalog inventory and qualify the guards and resource inventory there.
 Protected benchmark identities follow §9.1.
 
 Verify previous-release reads and writes at each intermediate revision under
@@ -821,12 +829,21 @@ leaf per probe, claim/chunk-keyed range probes and one seed per stored endpoint.
 Hold candidate IDs and leaf counts fixed as unrelated rows grow. Measure
 both relation endpoints separately with multi-hop chains and verify that
 each step visits only its next entity. Explain both source-helper arms
-separately from the time gate. Use the real history and carried views with a
-missing origin chunk, testing both a qualifying carried occurrence and no
+separately from the time gate. Use the keyed history and carried views with
+a missing origin chunk, testing both a qualifying carried occurrence and no
 qualifying occurrence. Grow unrelated chunks in the claim's own document
 and require origin work to stay keyed to its chunk ID, with only the
 existing range-leaf overhead. A visible origin still excludes the claim
-from the carried branch.
+from the carried branch. Compare the keyed view's complete rows with the
+public history view at the same keys, and compare its current-testimony
+subset with `claims_live`.
+
+Qualify SQL reads of both public claim views with no claim ID predicate
+against `p9_55_0076`. Include a broad aggregate and BEAM's text-filtered,
+ordered sample. Grow corpus size and range-leaf count independently.
+Compare results, executed rows, leaf loops, buffers and completion under
+the same SQL deadline. Require comparable work and completion wherever
+the baseline completes. [BEAM claim sample](../../benchmarks/rs_harness_beam/answer_agent.py#L62-L68)
 
 Exercise the raw-support absence check for both kinds with in-scope
 contradictions. A contradiction-only fact passes. Adding raw support whose
@@ -872,29 +889,61 @@ Keep the recorded values distinct from these proposed acceptance targets.
 An external launcher guards LoCoMo `answer` and live `retrieval-ablation`,
 and BEAM `answer-retrieval`, on every start and resume, including BEAM
 `--force`. Keep immutable pins alongside the run manifests for endpoint,
-serving revision, packaged manifest hash, live Alembic revision and
-definitions of the views changed by D163. When the scoring store is frozen,
-pin its deployment ID, verified snapshot or restore manifest digest and
-storage image identities. Key the store binding by run and sample in LoCoMo
-and by run and arm in BEAM.
+serving revision, API image digest, resolved server retrieval settings,
+packaged manifest hash, live Alembic revision and expected presence and
+definitions of the views affected by D163. Match the running container's
+platform-specific image digest to the original run, using the immutable
+image ID for an original local build. Run the recorded API entry point
+and serve code from that image. Also check the API's environment-supplied
+revision. Resolve the non-secret settings from the actual launch with the
+recorded build's defaults and overrides. Compare the database budget
+(`retrieval_database_budget_s`), pool and admission limits, embedding model
+and routing, and effective graph and SQL limits. [Pinned profile](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L1342-L1398) ·
+[Build label](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L2158-L2164)
+
+When the scoring store is frozen, pin its deployment ID, verified snapshot
+or restore manifest digest and storage image identities. Key the store
+binding by run and sample in LoCoMo and by run and arm in BEAM. Recover
+legacy pins only from original run records or a verified restore that
+attests them. Missing or mismatched pins abort before retrieval, provider
+calls or checkpoint writes.
 
 For BEAM, also pin the SHA-256 of the complete ordered `questions.json`,
 the evaluator revision and the effective reader settings, including the
 answer model after defaults are resolved. Run the clean evaluator with
 its locked dependencies, a read-only snapshot of the verified questions
 and the pinned settings. Question text and ability drive retrieval and
-prompting even when IDs match. Recover legacy pins only from original records
-or a verified restore for that identity. Missing or mismatched pins abort
-before retrieval, provider calls or checkpoint writes.
+prompting even when IDs match.
 [BEAM resume](../../benchmarks/rs_harness_beam/answer_agent.py#L725) ·
 [BEAM CLI](../../benchmarks/rs_harness_beam/cli.py#L174)
 
+For BEAM, the launcher takes one filesystem lock for the canonical run
+directory, shared by every arm, before taking any store lock or loading
+`state.json`. An overlapping invocation waits before loading the checkpoint.
+The run lock lasts through the last checkpoint write and evaluator exit,
+including with `--force`.
+
 Acquire the store lock before starting or verifying the store. Reuse the
 shard runner's lock when it already holds it. Restore, wipe and service
-replacement share that lock. Run only the private API and its backing
-services with setup, migrations and automatic restarts disabled. Exclude
-ingestion, workers and projection refresh. Keep the retrieval data, object
-store and any corpus mount read-only for the invocation.
+replacement share that lock. Keep setup, migrations, workers, projection
+refresh, partition maintenance and automatic restarts disabled.
+
+Expose the pinned API only through the launcher's allowlist of read methods,
+routes and operation names. Reject ingest and other mutations there, including
+when the underlying self-host API has no authentication. Serve objects with
+read/list credentials and mount the corpus read-only. Keep database ownership
+and administrative credentials with the launcher. Use a non-owner,
+non-superuser API login with read grants, graph reader role membership and
+permission to set the existing `temp_file_limit`. Check effective grants, including
+role memberships and `PUBLIC`, for denial of retrieval data changes, schema
+changes and mutation routines. Keep the sandbox role read-only.
+
+The primary API login also gets `INSERT` on `surface_cost_ledger` and the
+`INSERT`, `SELECT` and `UPDATE` privileges needed by the fallback upsert on
+`surface_cost_meter_state`. These grants let native and SQL semantic reads
+write their receipts on the private copy while retrieval relations stay
+read-only. [Pinned cost recorder](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/spine/surface_cost.py#L269-L299) ·
+[Pinned graph connection](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/surfaces/graph_queries.py#L411-L426)
 
 Bind every effective API database connection, including the primary,
 retrieval and graph pools and the open-query role, to the same private
@@ -903,17 +952,18 @@ Resolve the running instance's connection settings, including
 `query_role_host`, `query_role_port` and driver overrides. Allow only that
 database destination. Before dispatch, confirm each role connects to the
 process serving the verified volumes. Check the packaged manifest and verify
-`public.alembic_version` and `pg_get_viewdef` on that database.
+`public.alembic_version` and the pinned view catalog using `pg_get_viewdef` on
+that database.
 [Pinned query-role factory](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L784-L822)
 
 Give every reader the route to that exact API. This includes BEAM's
 per-question clients and LoCoMo's `codex-p3-mcp` child, which receives the
 engine route and credentials through `REMEMBER_API_URL` and `REMEMBER_API_KEY`.
-Use a private network binding with no alternate engine, redirect or proxy
-route for reads. A stopped instance closes the route and the launcher ends
-the invocation. Hold the lock and the binding until the evaluator and its
-reader children exit and the last checkpoint is written. The shard can then
-switch to the next sample's verified store while still holding its lock.
+Bind that route exclusively to the admitted API, with redirects and
+fallback disabled. A stopped instance closes the route and the launcher
+ends the invocation. Hold the store lock and the binding until the evaluator
+and its reader children exit and the last checkpoint is written. The shard
+can then switch to the next sample's verified store while holding its lock.
 [BEAM client](../../benchmarks/rs_harness_beam/answer_agent.py#L692) ·
 [MCP child](../../benchmarks/locomo/ablation.py#L1821) ·
 [Store lock](../../benchmarks/locomo/sharding/store_backup.py#L247)
@@ -947,23 +997,35 @@ a historical-format restore with its recorded PostgreSQL image. Complete a
 remaining question with the fingerprint, prior answers and readiness checks
 intact. Use the published prompt override and saved options for the
 full-profile ablation test. Resume a partial BEAM run on its pinned store with
-its original reader inputs. Test a two-sample shard that accepts each sample's own restore and
-rejects the other's.
+its original reader inputs. Test a two-sample shard that accepts each
+sample's own restore and rejects the other's.
 
 Reject an endpoint change, a store swap at the same endpoint and a migrated
-copy behind the pinned image. In both harnesses, point only the SQL role at a
-second database while native reads target the verified restore. Test both
-a migrated clone and a separate copy with a matching schema. For BEAM also
-change the question text or ability under the same ID, reorder the file,
-change evaluator revision and change `--model` in independent cases. Each
-mismatch must abort before retrieval and leave output and checkpoints
-byte-identical. Cover starts and resumes, including BEAM `--force`.
+copy behind the pinned image. In both harnesses, test a different API image
+with the same reported revision and catalog. Independently change only the
+server's `retrieval_database_budget_s`. Also point only the SQL role at a
+migrated clone or a separate copy with a matching schema. For BEAM, change
+the question text or ability under the same ID, reorder the file, change the
+evaluator revision and change `--model` in independent cases. Each mismatch
+must abort before retrieval or provider calls and leave the output and
+checkpoints byte-identical. Cover starts and resumes, including BEAM
+`--force`.
 
 In a synchronized test, pause after admission and again before the last
 checkpoint. Attempt same-address service replacement, store swap, migration
 and corpus writes while the lock is held. Verify that every reader, including
 the MCP child, and each new checkpoint receive data only from the admitted
-service and store.
+service and store. Through the admitted route, submit a valid ingest request
+and require refusal. Verify that the serving credentials cannot write
+retrieval rows, run schema changes or mutate objects. Complete an
+embedding-backed native read and an embedding-backed SQL read, with a cost
+receipt for each on the private restore.
+
+Start two overlapping BEAM invocations for different arms in one run
+directory, using distinct stores. Pause the first after it loads state and
+verify that the second waits before loading it. After both finish,
+`state.json` contains both arms' answers. An ordinary resume skips both sets
+of completed questions without repeated provider calls.
 
 #### Model-free qualification for benchmark adoption
 
@@ -977,9 +1039,32 @@ query vectors in embedding call order with the model, dimensions and exact
 input text, including embeddings used by SQL semantic calls. Archive the
 evaluation instant, world and belief times, SQL transaction and statement
 times used by the query or its views, and the rendered SQL
-`execution_started_at`. Feed the vectors through a replay-only
-embedding adapter and pin those clocks in the disposable services and
-databases. Keep elapsed-time deadlines active and disable provider access.
+`execution_started_at`. Feed the vectors through a replay-only embedding
+adapter with provider access disabled. Inject application evaluation and
+envelope timestamps at their call sites.
+
+Use a disposable PostgreSQL test build for replay. Load a clock schedule
+for each replay connection before dispatch. At SQL evaluation, substitute
+the recorded transaction instant in `now()` and `transaction_timestamp()`,
+and the recorded instant for that statement in `statement_timestamp()`.
+Apply this to native and sandbox connections, including SQL bridge snapshot
+export and its imported reads. Cover other SQL clock expressions if they
+are used by the recorded query or its dependencies. Preserve function
+volatility, statement text, catalog definitions and MVCC. Leave the server's
+wall clock, PostgreSQL timeout scheduling and application monotonic
+deadlines live at the recorded limits.
+[SQL bridge](../../src/rememberstack/surfaces/query_sandbox/bridge.py#L445-L485) ·
+[SQL clock functions](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/adt/timestamp.c#L1608-L1624) ·
+[Timeout scheduler](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/misc/timeout.c#L560-L574)
+
+Qualify the clock hook with a `facts_current` query just before and at an
+exclusive validity end, keeping the transaction instant fixed. Check the
+reported clocks and the row leaving the result at the boundary. Hold a
+conflicting lock past a sandbox statement's recorded timeout, which is
+shorter than the fixture's lock timeout. Require PostgreSQL cancellation
+at that deadline (`57014`) and the same typed outcome and comparable real
+elapsed time as a control with the hook disabled.
+
 A missing or mismatched vector or clock fails the replay before it can report
 parity. Tool traces omit vectors and can omit internal clocks. Where exact
 historical inputs are missing, run a separately identified paired fixture
