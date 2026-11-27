@@ -1,12 +1,16 @@
 """Alembic runtime configured through the typed spine settings boundary."""
 
+import logging
 from logging.config import fileConfig
 import math
 import re
+from time import sleep
 
 from alembic import context
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import DBAPIError
 
 from rememberstack.spine.settings import load_database_settings
 
@@ -25,6 +29,8 @@ target_metadata = None
 # names that map to themselves are accepted.
 _MAX_DATABASE_NAME_BYTES = 63 - len("rememberstack_query_")
 _DATABASE_NAME = re.compile(r"[a-z_][a-z0-9_]*")
+_LOCK_RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0, 4.0)
+_LOGGER = logging.getLogger("alembic.runtime.migration")
 
 
 def _database_url() -> str:
@@ -49,17 +55,36 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations through a non-pooled SQLAlchemy connection."""
+    """Retry a contended revision from Alembic's last committed version."""
+    lock_seconds = float(config.get_main_option("migration_lock_timeout_seconds", "3"))
+    if not math.isfinite(lock_seconds) or lock_seconds <= 0:
+        raise ValueError("migration_lock_timeout_seconds must be finite and positive")
+    lock_timeout_ms = max(1, int(lock_seconds * 1000))
     configuration = config.get_section(config.config_ini_section) or {}
     configuration["sqlalchemy.url"] = _database_url()
     connectable = engine_from_config(
         configuration, prefix="sqlalchemy.", poolclass=pool.NullPool
     )
+    for attempt in range(len(_LOCK_RETRY_DELAYS) + 1):
+        try:
+            _run_online_attempt(engine=connectable, lock_timeout_ms=lock_timeout_ms)
+            return
+        except DBAPIError as error:
+            if getattr(error.orig, "sqlstate", None) != "55P03" or attempt == len(
+                _LOCK_RETRY_DELAYS
+            ):
+                raise
+            delay = _LOCK_RETRY_DELAYS[attempt]
+            _LOGGER.warning(
+                "Migration lock unavailable (SQLSTATE 55P03). Retrying in %s s.", delay
+            )
+            sleep(delay)
 
-    with connectable.connect() as connection:
+
+def _run_online_attempt(*, engine: Engine, lock_timeout_ms: int) -> None:
+    """Hold the native migration lock through one pass, including autocommit DDL."""
+    with engine.connect() as connection:
         database = connection.exec_driver_sql("SELECT current_database()").scalar_one()
-        # End the read's implicit transaction so Alembic owns the next one.
-        connection.rollback()
         if (
             len(str(database)) > _MAX_DATABASE_NAME_BYTES
             or _DATABASE_NAME.fullmatch(str(database)) is None
@@ -74,19 +99,12 @@ def run_migrations_online() -> None:
         # CREATE INDEX CONCURRENTLY. Acquire it BEFORE Alembic reads revision
         # state, so a second upgrader cannot act on that same old revision.
         # Advisory locks are database-local; the first key namespaces ours.
-        lock_seconds = float(
-            config.get_main_option("migration_lock_timeout_seconds", "60")
-        )
-        if not math.isfinite(lock_seconds) or lock_seconds <= 0:
-            raise ValueError(
-                "migration_lock_timeout_seconds must be finite and positive"
-            )
-        connection.exec_driver_sql(
-            f"SET LOCAL lock_timeout = '{max(1, int(lock_seconds * 1000))}ms'"
-        )
-        connection.exec_driver_sql("SELECT pg_advisory_lock(1919251316, 153)")
-        connection.rollback()
         try:
+            # A session setting survives both revision commits and concurrent
+            # index builds. Commit before Alembic inspects the transaction state.
+            connection.exec_driver_sql(f"SET lock_timeout = '{lock_timeout_ms}ms'")
+            connection.exec_driver_sql("SELECT pg_advisory_lock(1919251316, 153)")
+            connection.commit()
             context.configure(
                 connection=connection,
                 target_metadata=target_metadata,
@@ -102,6 +120,7 @@ def run_migrations_online() -> None:
         else:
             connection.rollback()
             connection.exec_driver_sql("SELECT pg_advisory_unlock(1919251316, 153)")
+            connection.exec_driver_sql("RESET lock_timeout")
             connection.commit()
 
 

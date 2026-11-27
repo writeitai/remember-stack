@@ -316,19 +316,19 @@ whose claim is not visible contributes no claim coverage.
 Build the new nonunique index without a corpus-wide write outage: create a
 parent index on `ONLY mentions`, build matching indexes concurrently on its
 leaves/default partition, then attach them and verify parent/leaf validity.
-New partitions inherit the parent index. Use a database-scoped **session**
-advisory migration lock in the native Alembic runner, acquired before reading
-revision state and held across autocommit index-build phases. Current
-`migrations/env.py` has no such lock, so it is explicitly part of this change,
-not assumed existing. Ordinary reads/ingestion do not take that lock.
+New partitions inherit the parent index. The native Alembic runner acquires
+a database-scoped **session** advisory migration lock before reading revision
+state and holds it across autocommit index-build phases. Ordinary reads and
+ingestion do not take that lock.
 
 Concurrent builds run outside transaction blocks; final view/manifest-related
 DDL and the revision update run normally after index qualification. The native
 runner commits each revision separately, releasing index-attachment metadata
-locks before the following view revision can wait for readers. Lock acquisition
-has a finite configurable wait (`migration_lock_timeout_seconds` in Alembic;
-default 60 seconds), rather than waiting indefinitely behind a stuck upgrader. Under the
-same native migration lock, an interrupted own-named invalid leaf index is
+locks before the following view revision can wait for readers. The runner
+uses short lock waits and retries a contended revision with bounded backoff.
+[The migration contract](packaging_distribution_design.md#61-migration-compatibility)
+specifies the policy. Under the native migration lock, an interrupted
+own-named invalid leaf index is
 dropped concurrently and rebuilt; an existing valid index is reused only if
 its table/key/definition matches exactly. A foreign or mismatched object fails
 setup. Re-enumerate partitions before completing attachment and serialize

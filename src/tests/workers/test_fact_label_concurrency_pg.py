@@ -343,7 +343,11 @@ def test_overlapping_document_and_fact_jobs_pay_once(
         ]
         for future in futures:
             future.result(timeout=20)
-    assert len(provider.requests) == 1
+    assert provider.requests == [
+        EmbeddingRequest(
+            model=_MODEL, texts=("Aster works for Beacon",), dimensions=1536
+        )
+    ]
     assert _embedded_count(engine=database_engine) == 1
     assert refresher.fact_refreshes == [((seeded.relations[0],), ())] * 2
 

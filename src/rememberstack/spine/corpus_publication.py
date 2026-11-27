@@ -113,8 +113,25 @@ class CorpusPublicationLock:
 
     def check(self) -> None:
         """Confirm actual lock ownership and live claim before a provider mutation."""
+        with self.transaction():
+            pass
+
+    @contextmanager
+    def transaction(self, *, check: bool = True) -> Iterator[Connection]:
+        """Use the lock session for a short SQL operation and end its transaction."""
         if self.connection.closed or self.connection.invalidated:
             raise CorpusLockLostError("corpus publication session was lost")
+        try:
+            with self.connection.begin():
+                if check:
+                    self._check_on()
+                yield self.connection
+        except DBAPIError as error:
+            if not error.connection_invalidated:
+                raise
+            raise CorpusLockLostError("corpus publication session was lost") from error
+
+    def _check_on(self) -> None:
         try:
             held = _holds_lock(
                 connection=self.connection,
@@ -202,33 +219,34 @@ class CorpusPublicationCatalog:
         self, *, deployment_id: UUID, work: ClaimedWork | None = None
     ) -> Iterator[CorpusPublicationLock]:
         """Serialize publishers on a dedicated session, including all streamed IO."""
-        with self._engine.connect().execution_options(
-            isolation_level="AUTOCOMMIT"
-        ) as connection:
+        with self._engine.connect() as connection:
             params = {"key": f"corpus-publication:{deployment_id}"}
             try:
-                connection.execute(
-                    text("SELECT pg_advisory_lock(hashtextextended(:key, 0))"), params
-                )
-                lock = CorpusPublicationLock(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    backend_pid=connection.execute(
-                        text("SELECT pg_backend_pid()")
-                    ).scalar_one(),
-                    work=work,
-                )
-                lock.check()
+                with connection.begin():
+                    connection.execute(
+                        text("SELECT pg_advisory_lock(hashtextextended(:key, 0))"),
+                        params,
+                    )
+                    lock = CorpusPublicationLock(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        backend_pid=connection.execute(
+                            text("SELECT pg_backend_pid()")
+                        ).scalar_one(),
+                        work=work,
+                    )
+                    lock._check_on()
                 yield lock
             finally:
                 if not connection.invalidated and not connection.closed:
                     try:
-                        connection.execute(
-                            text(
-                                "SELECT pg_advisory_unlock(hashtextextended(:key, 0))"
-                            ),
-                            params,
-                        )
+                        with connection.begin():
+                            connection.execute(
+                                text(
+                                    "SELECT pg_advisory_unlock(hashtextextended(:key, 0))"
+                                ),
+                                params,
+                            )
                     except (  # error-contract: exempt cleanup discards the broken connection
                         DBAPIError
                     ):
@@ -238,8 +256,7 @@ class CorpusPublicationCatalog:
         self, *, lock: CorpusPublicationLock, doc_id: UUID
     ) -> CorpusDocument | None:
         """Clear before store mutation, then read authority after acquiring the lock."""
-        lock.check()
-        with self._engine.begin() as connection:
+        with lock.transaction() as connection:
             document = document_on(
                 connection=connection, deployment_id=lock.deployment_id, doc_id=doc_id
             )
@@ -252,12 +269,12 @@ class CorpusPublicationCatalog:
 
     def paths(self, *, lock: CorpusPublicationLock, doc_id: UUID) -> set[str]:
         """Read cleanup state even for a deleted or no-longer-served document."""
-        lock.check()
-        paths = lock.connection.execute(
-            text("""SELECT corpus_paths FROM documents
-            WHERE deployment_id = :d AND doc_id = :doc"""),
-            {"d": lock.deployment_id, "doc": doc_id},
-        ).scalar_one_or_none()
+        with lock.transaction() as connection:
+            paths = connection.execute(
+                text("""SELECT corpus_paths FROM documents
+                WHERE deployment_id = :d AND doc_id = :doc"""),
+                {"d": lock.deployment_id, "doc": doc_id},
+            ).scalar_one_or_none()
         return set(paths or ())
 
     def set_paths(
@@ -268,26 +285,30 @@ class CorpusPublicationCatalog:
         Keep old paths until their navigation is repaired too, so a crash after
         the last old object deletion still leaves its ancestors discoverable.
         """
-        lock.check()
-        row = lock.connection.execute(
-            text("""UPDATE documents SET corpus_paths = :paths
-            WHERE deployment_id = :d AND doc_id = :doc RETURNING doc_id"""),
-            {"d": lock.deployment_id, "doc": doc_id, "paths": sorted(paths) or None},
-        ).scalar_one_or_none()
-        if paths and row is None:
-            raise RuntimeError("document disappeared before corpus path recording")
+        with lock.transaction() as connection:
+            row = connection.execute(
+                text("""UPDATE documents SET corpus_paths = :paths
+                WHERE deployment_id = :d AND doc_id = :doc RETURNING doc_id"""),
+                {
+                    "d": lock.deployment_id,
+                    "doc": doc_id,
+                    "paths": sorted(paths) or None,
+                },
+            ).scalar_one_or_none()
+            if paths and row is None:
+                raise RuntimeError("document disappeared before corpus path recording")
 
     def clear_unselected_paths(
-        self, *, lock: CorpusPublicationLock, doc_ids: list[UUID]
+        self, *, lock: CorpusPublicationLock, doc_ids: tuple[UUID, ...]
     ) -> None:
         """Full reconcile removed all folders outside the served DB selection."""
-        lock.check()
-        lock.connection.execute(
-            text("""UPDATE documents SET corpus_paths = NULL
-            WHERE deployment_id = :d AND NOT (doc_id = ANY(CAST(:ids AS uuid[])))
-            AND corpus_paths IS NOT NULL"""),
-            {"d": lock.deployment_id, "ids": doc_ids},
-        )
+        with lock.transaction() as connection:
+            connection.execute(
+                text("""UPDATE documents SET corpus_paths = NULL
+                WHERE deployment_id = :d AND NOT (doc_id = ANY(CAST(:ids AS uuid[])))
+                AND corpus_paths IS NOT NULL"""),
+                {"d": lock.deployment_id, "ids": list(doc_ids)},
+            )
 
     def finish(
         self,
@@ -298,13 +319,13 @@ class CorpusPublicationCatalog:
         policy: CorpusPolicy,
     ) -> bool:
         """Set success only against matching inputs; retain a durable newer wake-up."""
-        with self._engine.begin() as connection:
+        with lock.transaction(check=False) as connection:
             connection.execute(
                 text("""SELECT doc_id FROM documents
                 WHERE deployment_id = :d AND doc_id = :doc FOR UPDATE"""),
                 {"d": lock.deployment_id, "doc": doc_id},
             )
-            lock.check()
+            lock._check_on()
             current = document_on(
                 connection=connection, deployment_id=lock.deployment_id, doc_id=doc_id
             )

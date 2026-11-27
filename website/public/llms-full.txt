@@ -10358,11 +10358,12 @@ The `setup` service runs before the API and workers every time you run
    re-publishes the search channels, rebuilding entity profile vectors
    when needed.
 
-The API and the workers start only after `setup` exits successfully. If a
-migration fails, `setup` exits with an error, nothing else starts, and
-`docker compose logs setup` shows why.
+The API and the workers start only after `setup` exits successfully. When
+PostgreSQL reports a migration lock timeout, `setup` retries with a short
+backoff. If the retries run out or the migration fails for another reason,
+`setup` exits with an error and `docker compose logs setup` shows why.
 
-Each migration revision commits separately; online index phases can also
+Each migration revision commits separately. Online index phases can also
 commit inside a revision. If a later revision fails, completed revisions stay
 applied. Migrations only go forward. Some refuse to convert data in a way that
 would lose it, and there is no supported downgrade. To go back to an earlier

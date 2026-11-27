@@ -356,7 +356,21 @@ in migration review. If a change deliberately breaks the rule, state
 the reason and expected outage in the migration comment and release notes.
 Even compatible changes can block queries while holding a database lock.
 
+The native Alembic runner uses a dedicated connection and a three-second
+PostgreSQL lock timeout by default (`migration_lock_timeout_seconds`). It
+applies to waits to acquire locks, including the database's migration guard
+and locks requested during concurrent index creation. A single statement may
+take longer while doing work or acquiring multiple locks. On PostgreSQL
+`55P03` the runner ends the failed transaction, closes its session and retries
+from the last committed revision. The five retry delays are 250 ms, 500 ms,
+one second, two seconds and four seconds. The final failure is reported by
+setup. A new attempt acquires the database guard before reading the revision.
+Any steps committed separately in an autocommit phase must be safe to resume.
+This leaves ingestion running during retries and keeps the compatibility rule
+above in force.
+
 [D160](../../decisions.md#d160-keep-the-previous-release-working-through-migrations) ·
+[D161](../../decisions.md#d161-release-corpus-read-transactions-before-object-io-and-retry-contended-migrations) ·
 [Analysis](../analysis/expand_contract_migrations.md)
 
 ## 7. Decision interactions

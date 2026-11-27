@@ -11,8 +11,10 @@ from uuid import uuid4
 
 from lxml import html
 import pytest
+from sqlalchemy import event
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.pool import QueuePool
 
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import LocalFSObjectStore
@@ -118,7 +120,17 @@ def test_git_links_publish_and_refresh_as_target_appears_moves_and_leaves(
         placement_path=None,
     )
     _seed(engine, target)
-    assert profile.run_projection(plane="p3") == {"p3": 2}
+    pool = engine.pool
+    assert isinstance(pool, QueuePool)
+
+    def check_checkout(*_: object) -> None:
+        assert pool.checkedout() == 1
+
+    event.listen(engine, "checkout", check_checkout)
+    try:
+        assert profile.run_projection(plane="p3") == {"p3": 2}
+    finally:
+        event.remove(engine, "checkout", check_checkout)
     fragment = "#d100--one-shared-runtime"
     assert links() == {
         "Decision": posixpath.relpath(f"{target.path}/{READER_PAGE}", source.path)

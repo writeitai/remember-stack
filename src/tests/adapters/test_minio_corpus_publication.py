@@ -18,8 +18,11 @@ from uuid import uuid4
 
 from markdown_it import MarkdownIt
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy import event
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
+from sqlalchemy.pool import QueuePool
 
 from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.testing.model_provider import FakeModelProvider
@@ -550,6 +553,50 @@ def test_incremental_and_empty_store_reconcile_converge_and_clean_orphans(
     assert state.assert_tree() == incremental
 
 
+@pytest.mark.parametrize("reconcile", [False, True])
+def test_corpus_io_leaves_tables_available_for_ddl(
+    publication: Publication, monkeypatch: pytest.MonkeyPatch, reconcile: bool
+) -> None:
+    """Use one task session and end the served-selection read before the first PUT."""
+    state = publication
+    pool = state.engine.pool
+    assert isinstance(pool, QueuePool)
+    peak = 0
+    checked_ddl = False
+    original = state.bucket.store.replace_stream
+    observer = create_engine(state.engine.url)
+
+    def checkout(*_: object) -> None:
+        nonlocal peak
+        peak = max(peak, pool.checkedout())
+
+    def replace_stream(**kwargs: Any) -> None:
+        nonlocal checked_ddl
+        if not checked_ddl:
+            with observer.begin() as connection:
+                connection.exec_driver_sql(
+                    "LOCK TABLE documents IN ACCESS EXCLUSIVE MODE NOWAIT"
+                )
+            checked_ddl = True
+        original(**kwargs)
+
+    event.listen(state.engine, "checkout", checkout)
+    monkeypatch.setattr(state.bucket.store, "replace_stream", replace_stream)
+    try:
+        if reconcile:
+            assert (
+                state.publisher.reconcile(deployment_id=state.source.deployment_id) == 1
+            )
+        else:
+            assert state.publish()
+    finally:
+        event.remove(state.engine, "checkout", checkout)
+        observer.dispose()
+    assert checked_ddl
+    assert peak == 1
+    state.assert_tree()
+
+
 def _folder_markers(state: Publication) -> set[str]:
     """Every listed key ending in "/" (a gateway's empty folder)."""
     listed = state.bucket.client.list_objects_v2(Bucket=state.bucket.name)
@@ -954,7 +1001,8 @@ def test_lost_owner_refuses_further_publication_requests(
                     {"p": event},
                 )
         else:
-            lock.connection.execute(text("SELECT pg_advisory_unlock_all()"))
+            with lock.transaction() as connection:
+                connection.exec_driver_sql("SELECT pg_advisory_unlock_all()")
         with pytest.raises(CorpusLockLostError):
             state.publisher.publish_corpus(
                 deployment_id=state.source.deployment_id,
@@ -1283,7 +1331,8 @@ def test_owner_loss_between_deletes_refuses_the_next_request(
             original(**kwargs)
             deleted.append(kwargs["key"].root)
             if loss == "lock":
-                lock.connection.execute(text("SELECT pg_advisory_unlock_all()"))
+                with lock.transaction() as connection:
+                    connection.exec_driver_sql("SELECT pg_advisory_unlock_all()")
             else:
                 with state.engine.begin() as connection:
                     connection.execute(

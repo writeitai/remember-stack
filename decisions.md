@@ -8184,6 +8184,10 @@ must qualify before advertising chargeable evidence.
 
 ## D153. Shared eligibility and candidate-constrained provenance
 
+> [D161](#d161-release-corpus-read-transactions-before-object-io-and-retry-contended-migrations)
+> amends the migration lock wait and retry policy. The session guard and
+> resumable concurrent-index procedure still apply.
+
 **Status:** accepted design on this PR's merge; implementation not yet qualified.
 **Date:** 2026-11-12. **Authority:** owner requested Claude Opus approval before
 implementation; Opus 5.5 HIGH approved revision `431900b1d` after three reviews.
@@ -8322,6 +8326,11 @@ validation for `max_rows`. Does **not** amend the cost-export feed contract
 ---
 
 ## D155. The corpus filesystem is a mutable tree of document folders
+
+> [D161](#d161-release-corpus-read-transactions-before-object-io-and-retry-contended-migrations)
+> puts corpus SQL on the existing publication session and closes the reconcile
+> selection transaction before copying. The session guard and object mutation
+> sequence still apply.
 
 > **Amended by [D159](#d159-archive-and-forget-replace-delete-forget-hides-at-once-and-sweeps-until-clean) (2026-11-24).** Per-document suffix erasure is forget's corpus step, repeated
 > by each sweep. The D74 barrier around it, the restore replay and the stop-and-remount rule are
@@ -8701,3 +8710,31 @@ remains the historical change.
 
 [Design §6.1](plan/designs/packaging_distribution_design.md#61-migration-compatibility) ·
 [Analysis](plan/analysis/expand_contract_migrations.md).
+
+## D161. Release corpus read transactions before object IO and retry contended migrations
+
+**Decision (2026-11-27).** Corpus publication uses one PostgreSQL session for
+its existing advisory lock and for its catalog reads and writes. Reconcile
+reads the ordered IDs of served documents before copying. Each copy re-reads
+that document's current authority, and the final marker still checks the
+published revision. The lock serializes publishers, and SQL transactions end
+before object operations.
+
+Online migrations set a short lock wait for the migration session, including
+autocommit statements. On SQLSTATE `55P03`, the runner closes the attempt and
+retries with bounded backoff from the database's committed Alembic revision.
+D160's compatibility rule and D153's concurrent-index recovery still apply.
+
+**Why.** A corpus reader holding a transaction during object I/O keeps table
+read locks while DDL and later queries queue. A short DDL lock wait gives that
+queue a chance to clear. The fact-label and Plane K reservations retain their
+session lifetimes. A check after an embedding cannot prevent a duplicate call,
+and the corpus marker cannot undo an object mutation. An expiring reservation
+would change takeover behavior when a worker stops renewing mid-request.
+
+**Reuse boundary.** Provider inputs, models, outputs, label and vector
+generations, retrieval and rendering use their existing code and identities.
+
+[Analysis](plan/analysis/ingestion_migration_contention_20261127.md) ·
+[Corpus publication §6.5](plan/designs/e0_files_design.md#65-incremental-work-publication-order-and-reader-observations) ·
+[Migration compatibility §6.1](plan/designs/packaging_distribution_design.md#61-migration-compatibility).
