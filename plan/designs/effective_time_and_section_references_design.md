@@ -377,9 +377,9 @@ This refines D134 §4's "the returned evidence is the claim's origin" for scoped
 periodised lineages; unscoped reads and undeclared lineages keep the origin rule.
 
 With a [proposed D162 claims publication](split_oversized_chunks_design.md#publication),
-both scope checks and hydration use occurrences from the version's selected
-claims basis in one snapshot. Live evidence uses its published occurrence.
-The immutable origin remains available through history.
+scope checks and hydration use selected or verdict-authorized claim
+occurrences in one snapshot. The immutable origin remains available through
+history.
 
 ### 3.5 `search_documents`
 
@@ -981,9 +981,10 @@ date); a later version stating a different value ends the earlier fact at that v
 in-force start, never at publication time.
 
 Under [proposed D162](split_oversized_chunks_design.md#publication), use the
-selected completed claims basis for the interval union, fact period basis,
-watched digest and final validation. A passage-only cutover leaves these inputs
-on the selected claims basis.
+selected and verdict-authorized claim occurrences for the interval union,
+fact period basis, watched digest and final validation. A restoration that
+changes an edition's carriage queues the same window review as a claims
+cutover.
 
 **The first fact is adjudicated too.** Ordinary adjudication skips the model when an entity
 has no candidate fact (the D118 novelty gate records a new, undated fact). That shortcut is
@@ -1036,8 +1037,8 @@ application would ever reach the adjudicator again. A **window review** closes t
      the fan-out sees the stale basis and reviews the fact.
 
   Period inputs can change during a decision. Declarations, clears and deletions update
-  the scope projection. Claim publication can also change the versions that carry a claim.
-  With D162 the completed claims basis swap makes this change visible. Freezing periods
+  the scope projection. Under D162, claims cutovers and verdicts can also
+  change the versions that carry a claim. Freezing periods
   for the length of a decision would need one of two things:
   - an exclusive per-deployment lock in every extraction write of a periodised deployment,
     which would serialise extraction deployment-wide; or
@@ -1090,10 +1091,10 @@ application would ever reach the adjudicator again. A **window review** closes t
   processing completes (the reconcile stage), not at ingest: until then its reused claims have
   no occurrences in it, so the predecessor's facts would look closed and be reviewed twice. A
   version whose processing never completes (no route, dead letter) is reviewed when it is
-  reprocessed or deleted. Under D162, a repair that changes an edition's claim membership
-  queues the review in the claims cutover transaction, even when a claim is still current
-  and support counts stay the same. The `review_fact_windows` request id identifies the
-  change, including a reconcile, deletion or cutover, so retries are idempotent.
+  reprocessed or deleted. Under D162, a cutover or verdict that changes an
+  edition's claim membership queues the review in the transaction, even
+  when currency and support counts stay the same. The
+  `review_fact_windows` request id identifies the change for idempotent replay.
   While a deployment's facts layer is switched off (D143), these jobs are queued but
   not claimed; they run when facts are switched back on
   ([processing layers design §4.4](processing_layers_design.md#44-switching-off-drains-it-never-holds)).

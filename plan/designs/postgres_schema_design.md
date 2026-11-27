@@ -1639,14 +1639,15 @@ rows store source offsets, section links and D80 location facts.
 Under [proposed D162](split_oversized_chunks_design.md#3-selective-migration-and-replay),
 a representation can stage a replacement grid and select one published generation.
 Within-block slices can share E0 block ordinals and have distinct character
-spans. A split cutover publishes its private search projection and passage
-pointers in one transaction. Pending and reusable superseded vectors live
-in private storage. Running readers may finish on the retired projection.
-Claim occurrences follow the version's selected completed claims basis,
-which can remain selected across a sources-only passage swap. D54 currency
-changes with claim publication. Living lineages store which version settled
-as standing. D143 gaps and D90/D118 staging and unit memberships record
-their basis without changing paid-product identities.
+spans. A cutover commits its private passage or claim search selector with
+the matching basis pointer. Pending and reusable superseded vectors live
+in private storage. Running readers may finish on their pinned projection.
+Claim occurrences follow the selected completed claims basis, including
+across a sources-only swap. A D54 verdict can authorize its exact reviewed
+occurrence. D54 currency changes with claim publication, and living
+lineages store their standing version. D143 gaps and D90/D118 staging and
+unit memberships record their basis. An unapplied application records the
+eligibility generation of its stream position and attempts.
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────

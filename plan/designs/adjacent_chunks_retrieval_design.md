@@ -15,7 +15,7 @@
 2. **Symmetric Windowing (`window: int = 1`):**
    * The retrieval primitive accepts `chunk_id: UUID` and a symmetric `window: int = 1` (constrained to `1 <= window <= 2`).
    * Return the target and up to `window` chunks on each side, in document order. With D162 a retained claim handle can resolve to an interval of pieces. The same window applies outside the interval's two edges.
-   * Edges of documents truncate naturally (e.g. if target chunk is ordinal 0, only ordinal 0 and 1 are returned).
+   * Edges of documents truncate naturally. A single target at ordinal 0 with `window=1` returns ordinals 0 and 1 when both exist.
 3. **Consistent Wire Contract:**
    * The operation returns a standard `Envelope` with `grain = Grain.EVIDENCE`.
    * Result chunks are instances of `ChunkEvidenceResult` ordered by `ordinal ASC`.

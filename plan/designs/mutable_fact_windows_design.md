@@ -251,10 +251,11 @@ Required properties apply equally to relations and observations:
 For [proposed D162 repair](split_oversized_chunks_design.md#dispatch-and-writes),
 admission and completion require staging and a materialized unit on the same
 eligible packing basis. Completion accepts recorded retirement of an
-ineligible membership. Release an unapplied stream position under the
-canonical entity lock when its last eligible membership retires. Repointing
-can admit unapplied work again. Completed application receipts are reused
-across bases.
+ineligible membership. Losing the last eligible membership advances the
+application's eligibility generation in the lineage transaction. Decision
+publication, apply and stream admission honor that fence. The entity worker
+releases the fenced position and assigns a new one if repointing restores
+eligibility. Completed receipts satisfy restored memberships.
 
 These are application requirements, not a mandate for the removed temporal
 operation graph, endpoint owners, cache certificates or compensation checkpoints.

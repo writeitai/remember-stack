@@ -1782,8 +1782,9 @@ config choice.
 > A repaired packing grid publishes its completed claim occurrences and currency
 > together. Eligible published carriage governs additions, withdrawals and automatic
 > restoration. A living lineage advances standing through ordered reconciliation
-> of completed claims, independently of the source head. Counting still uses
-> distinct lineages.
+> of completed claims, independently of the source head. A restore verdict
+> authorizes its exact reviewed occurrence for reads and effective time.
+> Counting still uses distinct lineages.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
@@ -4116,6 +4117,7 @@ for an unused benchmark harness.
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
 > Repair scopes fan-out, staging and entity-unit completion to the packing basis.
+> Grounding opens `embed_claim` before the D143 facts boundary.
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The empty path opens `adjudicate_supersession` and `embed_claim` only when the facts layer is
@@ -4301,6 +4303,11 @@ readiness.
 projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
+
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> Claim text and vectors also enter a private search projection so claim
+> cutovers can publish both indexes with the completed basis and currency.
+> Passage and claim projections keep a private copy for online cutover.
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -6243,8 +6250,9 @@ absence-based closures indefinitely.
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
 > Repair qualifies admission, completion and membership retirement by packing
-> basis. An unapplied application releases its stream position when its last
-> eligible membership retires. Completed applications keep their receipts.
+> basis. Loss of the last eligible membership fences an unapplied application's
+> sequence and attempt in the lineage transaction. The entity worker releases
+> the sequence. Completed applications keep their receipts.
 
 > Processing amendments D120–D123 clarify assertion identity, project concise
 > model inputs and add source-backed context nomination. D118's one world window,
@@ -7265,8 +7273,9 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
 > A new fragment can inherit the date of a verified unchanged span in an
 > earlier original grid. Same-version repair copies the parent occurrence's
-> date. Fact periods use selected completed occurrences. A repair that changes
-> an edition's carriage queues the existing fact-window review at cutover.
+> date. Fact periods use selected and verdict-authorized occurrences. A
+> cutover or verdict that changes an edition's carriage queues the existing
+> fact-window review.
 
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
@@ -7405,8 +7414,8 @@ only through D118 adjudication.
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Split cutovers publish a privately built passage search projection. Each
-> operation uses its selected physical index population through hydration.
+> Cutovers publish private passage and claim search projections. Each
+> operation pins its selected index populations through hydration.
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -7635,11 +7644,11 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 ## D143. Processing layers can be switched off per deployment and per request
 
 > **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
-> Repair tracks gaps and completion by packing basis. A sources-only passage
-> cutover keeps completed claim occurrences serving until successor extraction.
-> Re-enable admits owed claims repairs even for historical versions. A living
-> version can settle completed claims after a newer version takes the source
-> head. Current fact applications require eligible published carriage.
+> Gaps and completion follow the packing basis, including with default
+> layers. Search-ready claims publication opens the facts boundary.
+> Re-enable admits historical claims repairs. Facts advance oldest eligible
+> completed basis first. A newer source head leaves those obligations open
+> and an ordered reconcile can advance standing independently of it.
 
 > **P3 served-set/snapshot clause superseded by [D155](#d155-the-corpus-filesystem-is-a-mutable-tree-of-document-folders).** P3 is a
 > sources-only document tree with no entities, fact metadata or K links, identical
@@ -8809,12 +8818,16 @@ the split packing and delivery generation. Fitting grids retain IDs,
 hashes and qualifying paid products. A fragment covering complete blocks
 can reuse an attested whole-block vector for the same D80 input in either
 direction. Repair replaces a failed pending basis when the qualified
-envelope changes and reuses equivalent committed products. A private
-search projection isolates passage cutovers and aborts. Claims publication
-and tail completion follow their own packing basis. Selected completed
-claims govern standing testimony, restoration and fact period inputs.
-LoCoMo and BEAM keep pinned readers and schema until the exact candidate
-passes frozen input, grid and complete tool-response parity.
+envelope changes and reuses equivalent committed products.
+
+**Publication.** Passage and claim index cutovers use private copies,
+with online catch-up and first-publication appends to a warmed copy.
+Claims publish with both channels ready. Eligible completed bases keep
+their facts obligation as the source head advances. A restore verdict
+authorizes its exact reviewed evidence for reads and fact periods.
+LoCoMo and BEAM keep their pinned readers, schema and effective query
+binding until the exact candidate passes frozen input, grid and
+tool-response parity.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

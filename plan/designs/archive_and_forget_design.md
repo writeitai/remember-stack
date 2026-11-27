@@ -107,8 +107,9 @@ undo a caller's archive; a changed version does (§2.3).
 Under [proposed D162](split_oversized_chunks_design.md#publication), automatic restoration
 uses eligible occurrences in the selected completed claims basis. This also applies when
 an unarchive restores a living lineage whose head was removed during the archive, or when
-a changed version returns with reused claims. A suspended D54 `restore_support` verdict
-resumes when its reviewed source remains eligible.
+a changed version returns with reused claims. Archive suspends the D54
+`restore_support` authorization. Unarchive restores that exact occurrence
+and its contribution to reads, support and D140 periods if it remains eligible.
 
 ### 2.4 Surfaces
 
@@ -241,9 +242,9 @@ profile jobs, K compilation) revalidate the inputs they rendered from at publica
 hidden document. Whatever slips through is found by the next sweep. A sweep "finds something"
 only when it removes forgotten residue; an ordinary rebuild of a clean page or label is not
 residue.
-Under [proposed D162](split_oversized_chunks_design.md#passage-cutover-and-reads),
-forget can invalidate a passage projection build and checks every physical
-projection and private staging store for residue.
+Under [proposed D162](split_oversized_chunks_design.md#search-projection-publication),
+forget invalidates affected passage and claim projection builds and checks
+every copy and private staging store for residue.
 
 The job never waits on another job and holds no lock while it waits: it reschedules itself with
 the work ledger's `not_before`. Its work item has no attempt cap: a failed sweep, or a crashed

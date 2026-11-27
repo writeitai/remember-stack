@@ -231,7 +231,9 @@ changes (text, spans, asserted validity, assertion time: immutable forever, D3 f
 Currency is processing bookkeeping — the same epistemic category as "this P1 row belongs
 to a superseded embedding version." Mechanically it is the D33 pattern: an **append-only
 transitions ledger** is the truth (timestamped, reason-coded, replayable — D7), and a cached
-flag + partial index on `claims` is the hot-path filter. Because transitions are timestamped
+flag is the hot-path filter. Proposed D162 leaves the cache on `claims`
+and [publishes the claim search indexes separately](split_oversized_chunks_design.md#search-projection-publication).
+Because transitions are timestamped
 events, transaction-time reconstructions ("what did we believe in March?") still see the old
 generation's contribution — nothing is overwritten.
 
@@ -283,6 +285,12 @@ re-derives it; the recount restores the fact's support, the flag closes, and the
 planted as a D35 canary so no future extractor ships while missing it. **`invalidate_fact`** —
 the old claim was an extraction artifact: the fact's `invalidated_at` is set with a recorded
 adjudication; it leaves the current fact layer entirely (history keeps the full record).
+
+For a [proposed D162 packing repair](split_oversized_chunks_design.md#publication),
+cite the exact withdrawn occurrence in the review. `restore_support`
+authorizes that occurrence for live reads and D140 periods in the same
+transaction as currency and recount. The reviewed version must still be
+eligible to carry testimony.
 `uncertain` is the only non-terminal outcome and leaves the marker standing — deliberately
 visible, meant to be rare.
 
@@ -318,11 +326,11 @@ self-healing gap (a named spike, not papered over):
    `{relations_closed: [r1], observations_closed: [], facts_recounted: [{id: r2, evidence_count: 3→2}], flags_raised: []}`
    — fact IDs and outcomes, never raw claim IDs (the K stale-storm guard).
 
-**Packing repair (proposed D162).** At the completed extraction barrier, diff
-the predecessor and successor `chunk_claims` under the lineage fence. Commit
-the selected basis, first currency events for fresh claims, transitions for
-existing claims and the fact recount together. Apply the transcription review
-policy when loss of eligible carriage takes support to zero.
+**Packing repair (proposed D162).** When the replacement's search channels
+are ready, diff the predecessor and successor `chunk_claims` under the
+lineage fence. Commit the selected basis, search selectors, currency
+events and fact recount together. Apply the transcription review policy
+when loss of eligible carriage takes support to zero.
 [Repair contract](split_oversized_chunks_design.md#publication).
 
 **Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
@@ -516,6 +524,8 @@ meets it:
   lineage row, then its version rows (shared), before its archive check and its currency
   write — the order an archive takes them exclusively — so either the verdict sees the
   archive and is refused, or the archive sees the restored claim and retires it.
+  Under proposed D162, archive suspends a verdict's occurrence authorization.
+  Unarchive resumes it for the same eligible source.
 - **Work still in flight.** Archiving a document never waits for or cancels its pipeline.
   Claim publication treats an archived lineage as it treats a deleted one: new claims for it are
   not published as current testimony. Work past that point is retired where every version's

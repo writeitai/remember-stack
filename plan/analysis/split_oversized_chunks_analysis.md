@@ -202,6 +202,30 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
   sources-only repair can have an older claims basis still serving, so it
   owes that specific version a claims replacement when claims are enabled.
   [Discharge and admission](../../src/rememberstack/spine/processing_layers.py#L315-L354).
+- The same head-only rule discharges unentered facts gaps. If B has entered
+  claims, C can take the source head before B's facts boundary and leave
+  B with a claims-only reconcile. If C then stalls, B stands without its
+  facts. Keep the obligation on the eligible completed basis. Living
+  versions that never entered claims can still be skipped, and genuine
+  supersession can end a facts obligation that never entered while facts
+  were off.
+  [Discharge](../../src/rememberstack/spine/processing_layers.py#L897-L925),
+  [Tail release](../../src/rememberstack/spine/processing_layers.py#L935-L995).
+- `restore_support` records currency and recounts existing fact links. It
+  writes no occurrence. Selecting only the new extraction basis would
+  discard the reviewed quote and its D140 period while counting the claim's
+  support. A verdict can authorize the exact earlier occurrence with its
+  complete spans. Copying the occurrence into the new extraction result
+  would incorrectly make it evidence of what that extractor produced.
+  [Review candidate](../../src/rememberstack/spine/review.py#L87-L127),
+  [Verdict](../../src/rememberstack/spine/review.py#L352-L402),
+  [Period inputs](../../src/rememberstack/spine/period_adjudication.py#L47-L85).
+- The D118 decision write checks attempt and input hash, independently of
+  entity head selection. A worker that checks only current membership can
+  miss a loss followed by restoration between its runs. Record a durable
+  generation change at the loss, in the lineage transaction. The entity
+  worker can release the old sequence asynchronously.
+  [Decision compare-and-set](../../src/rememberstack/spine/fact_applications.py#L402-L443).
 - A claim's primary citation normally names its immutable origin chunk.
   The adjacency query only accepts a live passage ID. The old chunk's range
   already determines its covering pieces on the new grid of the same
@@ -222,24 +246,40 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
 - The pinned BM25 extension adds entries during insert and scores against
   physical index totals. Its abort hook does not remove ordinary inserted
   entries from those totals. A repeatable-read snapshot can still see the
-  old rows with different scores, and filtering by published chunk IDs
-  cannot undo that change or undo writes to the HNSW graph. A private
-  projection build costs one rebuild per batch of split publications, with
-  other projection writes waiting during the build. Readers keep the old
-  population through both build and abort.
+  old rows with different scores. Filtering by published IDs affects row
+  visibility only. Both native claim indexes are partial on currency, and
+  the claim embedding worker presently follows fact adjudication or the
+  claims-only boundary. Vector production and both replacement indexes must
+  be ready before the currency and basis switch.
   [Image pin](../../Dockerfile.postgres#L1-L6),
+  [Claim indexes](../../src/rememberstack/spine/migrations/versions/p9_13_0034_postgres_p1_search.py#L118-L132),
+  [Claim embedding](../../src/rememberstack/workers/p1.py#L99-L144),
   [Index insertion](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/access/build.c#L2107-L2140),
   [Scoring totals](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/scoring/snapshot.c#L178-L204),
   [Abort hook](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/mod.c#L1428-L1438).
+- A write freeze for the duration of a corpus copy makes progress depend on
+  a lease outlasting two index builds. A private copy with durable change
+  capture lets repairs build online. Keeping a caught-up spare costs a
+  second projection per target and lets first publication add only its own
+  rows. This preserves one index population per target for D142 scoring.
+  A separate append index would require merging rankings across physical
+  indexes with different BM25 statistics. A failed private index write also
+  needs a clean private rebuild before selection because rollback alone can
+  leave its physical totals changed.
 - Stock Compose leaves embedding routing open. An order alone still permits
   marketplace fallback, even if a pin is also configured. Keeping stock
   routing on the compatibility path avoids silently sending data to a
-  different provider. Qualify the effective closed binding before D162
-  starts paid ingestion. The response decoder also needs to verify that
-  indices cover the input positions exactly before attesting any vector.
-  A duplicate index can pass count and dimension checks.
+  different provider. Qualify the effective closed binding for E1. The
+  shared OpenRouter decoder sorts by index and checks count and dimensions.
+  It accepts a singleton at index `1`, so using the strict E1 decoder for
+  a public query would change which provider replies produce results. A
+  correctly indexed 1,536-component zero vector also passes that decoder
+  and fails the P1 validator. Check the mapping and every mapped vector
+  with P1's validator before checkpointing the batch.
   [Compose settings](../../compose.yaml#L28-L36),
-  [Routing and decode](../../src/rememberstack/adapters/openrouter.py#L1001-L1077).
+  [Routing and decode](../../src/rememberstack/adapters/openrouter.py#L1001-L1077),
+  [Query embedding](../../src/rememberstack/surfaces/query_engine.py#L4838-L4866),
+  [P1 validator](../../src/rememberstack/ports/p1_index.py#L26-L49).
 
 ## Benchmark fixture audit
 
@@ -306,7 +346,9 @@ grid. Importing upstream JSON wholesale would instead give a single
 
 Read-only storage protects the input corpus. The reader and SQL schema still
 determine the tool responses. A query can return the same claim IDs and quotes
-with different fact windows or scalar SQL values. Qualify the exact candidate
-read path on the frozen tool responses before switching a protected reader.
+with different fact windows or scalar SQL values. Fixed-vector replay
+isolates reader changes but bypasses query embedding. Pin the effective
+query binding and run changed query paths through captured provider replies
+at the transport boundary before switching a protected reader.
 [LoCoMo public tool dispatch](../../benchmarks/locomo/retrieval.py#L165-L202),
 [BEAM SQL retrieval](../../benchmarks/rs_harness_beam/answer_agent.py#L511-L525).

@@ -11,9 +11,11 @@
 > claims tail (`embed_claim` and `reconcile` at `reconcile-2026.07:claims`) instead, and this
 > design's `embed_claim` hand-off does not apply to it.
 
-For [proposed D162 repair](split_oversized_chunks_design.md#dispatch-and-writes),
-the expected claim set and normalize barrier are per packing basis. A
-completed claim-keyed normalization can satisfy the replacement's membership.
+Under [proposed D162](split_oversized_chunks_design.md#publication), the
+search-ready claims publication is the facts boundary and scopes the
+expected claim set and normalize barrier to that basis. Completed claim-keyed
+normalization can satisfy the replacement's membership. The earlier grounding
+handoff owns `embed_claim`.
 
 **Status:** revised after Codex design review — binding once review findings
 absorbed and PR lands on `main`  

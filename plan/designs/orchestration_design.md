@@ -203,7 +203,9 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    not a document dead-letter of already-finished siblings.
    Under [proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry),
    only an empty D80 body can skip. A nonempty singleton failure blocks
-   completion on fitting and split grids. Keep completed sibling attestations.
+   completion on fitting and split grids. Validate every mapped vector
+   before checkpointing a batch. Keep independently validated sibling
+   attestations.
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
    vector/hash/current attestation and stamps the chunk authority row. For a
