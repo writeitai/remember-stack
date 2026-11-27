@@ -50,7 +50,7 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
 
 | Source routes | Inputs to the same paths above |
 | --- | --- |
-| Text, Markdown, logs, source code and YAML/config | `text` returns the full UTF-8 reading up to 1 MB, including long lines and indentation. Its larger-file head/tail profile has fenced regions of up to 50 or 20 lines at 500 characters each. The passthrough route also produces a Markdown reading. Code/config/log text uses a flat root. Its extraction-ineligible flag only bypasses the E2 model. [core/format_registry.py:52–113](../../src/rememberstack/core/format_registry.py#L52-L113), [adapters/converters/text.py:26–35](../../src/rememberstack/adapters/converters/text.py#L26-L35), [adapters/converters/text.py:56–149](../../src/rememberstack/adapters/converters/text.py#L56-L149), [core/conversion.py:234](../../src/rememberstack/core/conversion.py#L234), [workers/e0.py:1659–1681](../../src/rememberstack/workers/e0.py#L1659-L1681), [workers/e2.py:524–553](../../src/rememberstack/workers/e2.py#L524-L553) |
+| Text, Markdown, logs, source code and YAML/config | `text` returns the full UTF-8 reading up to 1 MB, including long lines and indentation. Its larger-file head/tail profile has fenced regions of up to 50 or 20 lines at 500 characters each. The passthrough route also produces a Markdown reading. Search-only code/config/log ranges select model-free, flat-root E0 structuring. E1 cuts at block eligibility transitions, and E2 records ineligible decisions without model calls. [Text converter](../../src/rememberstack/adapters/converters/text.py#L56-L149), [E0 dispatch](../../src/rememberstack/workers/e0.py#L1429-L1438), [flat root](../../src/rememberstack/workers/e0.py#L1659-L1681), [E1 cuts](../../src/rememberstack/core/chunker.py#L221-L240), [E2 eligibility](../../src/rememberstack/workers/e2.py#L524-L553) |
 | Conversation, email and transcripts | Packaging produces text with message or turn boundaries when the source provides them. A single turn, pasted code block, quoted email or inline image reading can still yield a giant block. D137 merges single-block fallback sections forward to preserve context and leaves the block grid intact. [benchmarks/locomo/protocol.py:581–629](../../benchmarks/locomo/protocol.py#L581-L629), [adapters/converters/email_message.py:65–110](../../src/rememberstack/adapters/converters/email_message.py#L65-L110), [core/structure_skeleton.py:665–703](../../src/rememberstack/core/structure_skeleton.py#L665-L703) |
 | PDF, OCR, image, Office, HTML/EPUB and notebooks | PDF verifies the OCR pages and retains their Markdown and locators. OCR paragraphs and tables can be large. The other converters can emit the same large block shapes, including notebook code cells and image readings. Page, slide and cell bounds govern conversion or source coordinates. They are independent of a chunk's embedding size. [adapters/converters/pdf.py:112–152](../../src/rememberstack/adapters/converters/pdf.py#L112-L152), [adapters/converters/mistral_ocr.py:478–535](../../src/rememberstack/adapters/converters/mistral_ocr.py#L478-L535), [adapters/converters/office.py:143–158](../../src/rememberstack/adapters/converters/office.py#L143-L158), [adapters/converters/notebook.py:63–95](../../src/rememberstack/adapters/converters/notebook.py#L63-L95), [adapters/converters/__init__.py:147–187](../../src/rememberstack/adapters/converters/__init__.py#L147-L187) |
 | Data profiles, cards, media and custom converters | Spreadsheet, delimited and dataset profiles and archive/binary/media cards still yield Markdown. Profile samples and metadata can be lexically dense. Current converter limits reduce exposure without proving a provider input bound. Custom routes installed via the provider port also flow through E0 and E1. [core/format_registry.py:166–229](../../src/rememberstack/core/format_registry.py#L166-L229), [adapters/converters/profile.py:248](../../src/rememberstack/adapters/converters/profile.py#L248), [profiles/selfhost.py:1646–1652](../../src/rememberstack/profiles/selfhost.py#L1646-L1652) |
@@ -94,6 +94,41 @@ invoking the packer. [workers/e0.py:969–988](../../src/rememberstack/workers/e
   [spine/readiness.py:140–209](../../src/rememberstack/spine/readiness.py#L140-L209),
   [spine/work_ledger.py:1996–2023](../../src/rememberstack/spine/work_ledger.py#L1996-L2023),
   [spine/work_ledger.py:1026–1040](../../src/rememberstack/spine/work_ledger.py#L1026-L1040).
+
+## What selective repair must preserve
+
+- The ready chunk view joins on representation, so two packing generations can
+  appear in one read. The sidecar loader recomputes stale grids, and E1's live
+  source query uses the lineage's title. Repair needs a uniquely attested legacy
+  grid and its historical coordinates and D80 facts. Guessing by recency can
+  change both the repaired text and otherwise reusable provider inputs.
+  [Ready view](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L701-L717),
+  [sidecar loader](../../src/rememberstack/core/blockizer.py#L38-L54),
+  [E1 source query](../../src/rememberstack/spine/chunk_catalog.py#L270-L289).
+- Legacy E1 hashes neighbours only when they are adjacent in document order.
+  E2 takes the closest chunks with the same section path, including across a
+  child section. The actual slots can be compared against the frozen work to
+  reuse it under a corrected key. Date lookup by the fragment key alone cannot
+  find its legacy parent. The earlier parent's unchanged bytes and committed
+  date supply that evidence before and after a repair.
+  [E1 keys](../../src/rememberstack/workers/e1.py#L734-L771),
+  [E2 windows](../../src/rememberstack/spine/chunk_catalog.py#L373-L419),
+  [D140 lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345).
+- A P1 commit can survive an interrupted spine stamp. Recovery can read the
+  vector and verify its hash by exact chunk ID. Keeping retired vectors in
+  `chunk_search` would put them in broad HNSW and BM25 nomination before the
+  ready-view join. A private store supports recovery and reuse during staging
+  without changing the index population.
+  [E1 recovery](../../src/rememberstack/workers/e1.py#L319-L368),
+  [commit order](../../src/rememberstack/workers/e1.py#L569-L572),
+  [P1 nomination](../../src/rememberstack/adapters/postgres_p1.py#L891-L927).
+- The ledger's route predicate ignores component versions, so a new identity
+  alone cannot fence old workers. Re-extraction also checks carriage only in
+  the completing basis. If B reuses a claim from A, replacing A can therefore
+  retire testimony B still publishes. Fencing writers and switching occurrences
+  and currency in one transaction covers both historical repair and retries.
+  [Claim predicate](../../src/rememberstack/spine/work_ledger.py#L2176-L2192),
+  [re-extraction query](../../src/rememberstack/spine/lifecycle.py#L1449-L1475).
 
 ## Benchmark fixture audit
 

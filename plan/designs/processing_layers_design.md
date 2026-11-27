@@ -294,6 +294,10 @@ the work ledger, never from the mere absence of rows:
   extract barrier is ready — every chunk's Selection and Claimify results are committed, so every
   claim occurrence of the version is attached — or that grid is empty. A version that has not run
   `embed_chunk` is never "complete with zero chunks".
+  For [proposed D162](split_oversized_chunks_design.md#publication), each job
+  and barrier checks its named packing basis. A sources-only repair may publish
+  passages while leaving previously published claim occurrences selected.
+  They switch only when the successor completes admitted claims work.
 - A version reaches a layer's **frontier** when its products are reusable by later versions:
   - **claims** — its occurrences are complete and its `embed_claim` succeeded, so every claim it
     carries, including claims later versions will reuse by id, has its vector;

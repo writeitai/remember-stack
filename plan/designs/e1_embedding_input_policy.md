@@ -344,10 +344,10 @@ pack chunks
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
 - **Document readiness:** all in-scope chunks have prepare stamps and successful
-  embed matching the configured current state (or typed skips).
+  embed matching the configured current state (or a permitted skip).
   Under [proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry),
-  an input-size failure blocks readiness. A split grid requires a vector for
-  every nonempty piece.
+  fitting and split grids require a valid vector for every nonempty D80 input.
+  Only a D80 empty body is eligible for a skip.
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.

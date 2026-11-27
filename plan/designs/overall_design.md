@@ -24,8 +24,8 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
             ┌── registries: entities, predicates ──┐
             ▼                  ▼                    ▼
  inputs ─► E0 files ─► E1 chunks ─► E2 claims ─► E3 relations
-           (raw+md+         (semchunk,   (claimify,    (normalization,
-            PageIndex,      ctx prefix)  coref)        evidence, supersession)
+           (raw+md+         (anchored    (claimify,    (normalization,
+            PageIndex,      packing)    coref)        evidence, supersession)
             placement)      │            │   │
                  │          │            │   │      PLANE K — KNOWLEDGE (debounced,
                  │          │            │   │      LLM-compiled; git is truth)

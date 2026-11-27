@@ -213,6 +213,13 @@ the lexical channel can become ready independently. The row is semantic-ready
 only when its non-null vector attestation matches the deployment's active
 embedding configuration.
 
+For [proposed D162 split grids](split_oversized_chunks_design.md#publication),
+stage bodies and vectors outside `chunk_search`. Broad index nomination uses
+that table before authority confirmation. Swap its HNSW/BM25 population and
+the published passage basis in one transaction. Retained vectors stay off
+both indexes. The published basis governs confirmation and SQL hydration in
+the ranked-read snapshot.
+
 Projection lag may reduce recall; it must never expose an ineligible record.
 Archive, invalidation, supersession, and forget are enforced by the
 authority confirmation of every nomination in the operation's ranked-read

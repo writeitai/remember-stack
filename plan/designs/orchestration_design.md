@@ -201,11 +201,12 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    (halve until size 1) and retry; a single-chunk poison is typed fail/skip for that chunk,
    not a document dead-letter of already-finished siblings.
    Under [proposed D162](split_oversized_chunks_design.md#4-provider-rejection-and-retry),
-   a confirmed singleton input-size rejection immediately dead-letters the job
-   with the offending chunk identified. Keep completed sibling stamps for repair.
+   only an empty D80 body can skip. A nonempty singleton failure blocks
+   completion on fitting and split grids. Keep completed sibling attestations.
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
-   vector/hash/current attestation and stamps the chunk authority row. There is
+   vector/hash/current attestation and stamps the chunk authority row. For a
+   pending D162 basis the write goes to private staging until cutover. There is
    no cross-store gap. A crash after provider response but before commit may
    repeat a billable call; the design does not claim exactly-once provider spend.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
@@ -258,7 +259,9 @@ infrastructure). The operational surface over it is thin and deterministic:
   for inspection, never the source of route, schedule, or retry state.
   [Proposed D162](split_oversized_chunks_design.md#3-selective-migration-and-replay)
   gives legacy size failures a repair replay that starts at CHUNK and links
-  the replacement work to the preserved failed row.
+  the replacement work to the preserved failed row. Split work claims require
+  the compatible worker generation. Writes and barriers verify the lease,
+  live lineage and named basis under the activation and lineage fences.
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.

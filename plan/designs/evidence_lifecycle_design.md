@@ -215,7 +215,9 @@ lineage's current extraction basis *under the lineage's mode*:
   that chunk's v1 claims flip non-current (`reextracted` — the reason covers any
   basis-coordinate change: an extractor bump, a **converter bump** (a new representation — a
   better ASR/VLM re-reading unchanged media bytes, the common media event, D65), a blockizer
-  bump, or a structurer bump) — wholesale, by coordinates; no content matching;
+  bump, or a structurer bump). For [proposed D162 grid repair](split_oversized_chunks_design.md#publication),
+  use the completed claim occurrences and count carriage on other eligible
+  published bases before withdrawing support.
 - **`living` version supersession**: claims whose chunks are absent from the new current
   version flip non-current (`version_superseded`);
 - **`snapshot`**: version succession flips nothing.
@@ -312,6 +314,14 @@ self-healing gap (a named spike, not papered over):
    affected fact IDs with what happened to each, e.g.
    `{relations_closed: [r1], observations_closed: [], facts_recounted: [{id: r2, evidence_count: 3→2}], flags_raised: []}`
    — fact IDs and outcomes, never raw claim IDs (the K stale-storm guard).
+
+**Packing repair (proposed D162).** At the completed extraction barrier, diff
+the predecessor and successor `chunk_claims` under the lineage fence. Only
+the loss of the last eligible published occurrence withdraws current
+testimony. Publish the new occurrences, D54 ledger/cache updates and fact
+recount together. Apply the transcription review policy to zero support.
+Each claim keeps its original source coordinates, even when only another
+version still carries it. [Repair contract](split_oversized_chunks_design.md#publication).
 
 **Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
 not reached a version yet, the version's reconcile runs at component version

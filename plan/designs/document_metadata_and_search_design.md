@@ -162,6 +162,8 @@ search_documents(query?, filters?, k) → documents
     and old names, and a partial or misspelled name still finds it;
   - **content** — the existing `chunk_search` (D94), grouped by document:
     each document scores by its best-ranked chunk in the judged version.
+    Under [proposed D162](split_oversized_chunks_design.md#publication), both
+    ranking and matching-edition checks use its published packing basis.
     A data file's profile, a card, and a document's top-level text are all
     ordinary chunks, so no second search index is needed.
 - With filters only, results are ordered newest first by the ingest time of

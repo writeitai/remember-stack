@@ -11,7 +11,7 @@
 
 1. **Chunk Neighborhood Determinism:**
    * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_all_versions_live` (D140): the chunk may belong to any non-deleted ready version of a live lineage — a time-scoped search can return a passage of a version that is not the lineage's newest — and is read in that version's current representation.
-   * Expanding context stays within the target's document, version and representation. Under [proposed D162](split_oversized_chunks_design.md#3-selective-migration-and-replay), the view selects the published chunk generation for that representation in the same snapshot.
+   * Expanding context stays within the target's document, version and representation. Under [proposed D162](split_oversized_chunks_design.md#publication), lookup, expansion and SQL hydration share the same snapshot of that representation's published grid.
 2. **Symmetric Windowing (`window: int = 1`):**
    * The retrieval primitive accepts `chunk_id: UUID` and a symmetric `window: int = 1` (constrained to `1 <= window <= 2`).
    * A `window=1` query returns up to 3 chunks: `[ordinal - 1, ordinal, ordinal + 1]` in document order.
@@ -48,7 +48,7 @@ def adjacent_chunks(
 1. Validate `ADJACENT_CHUNKS_MIN_WINDOW <= window <= ADJACENT_CHUNKS_MAX_WINDOW`; raise `ValueError` if out of bounds.
 2. Execute target lookup over `memory_v1.chunks_all_versions_live` (D140; before D140 this read `chunks_live`, which holds only the newest version):
    ```sql
-   SELECT doc_id, version_id, ordinal
+   SELECT doc_id, version_id, representation_id, ordinal
    FROM memory_v1.chunks_all_versions_live
    WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id
    ```
@@ -60,11 +60,13 @@ def adjacent_chunks(
    WHERE deployment_id = :deployment_id
      AND doc_id = :doc_id
      AND version_id = :version_id
+     AND representation_id = :representation_id
      AND ordinal >= :ordinal_start
      AND ordinal <= :ordinal_end
    ORDER BY ordinal ASC
    ```
-4. Confirm and hydrate chunks using existing `self._confirm_chunks(deployment_id=deployment_id, chunk_ids=adjacent_ids)`.
+4. Confirm and hydrate the selected IDs. Under proposed D162, read the search
+   text and coordinates in the same snapshot as steps 2 and 3.
 5. Return `_envelope(grain=Grain.EVIDENCE, chunks=chunks, freshness=_freshness(), dropped_by_hydration=dropped, negative=...)`.
 
 ### 2.2 HTTP API (`rememberstack.surfaces.http_api`)

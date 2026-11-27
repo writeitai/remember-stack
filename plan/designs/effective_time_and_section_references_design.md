@@ -342,7 +342,10 @@ and every handle it carries opens that version:
   non-deleted ready version whose representation is that version's current representation (the
   D65 rule), and never mix versions. `memory_v1.chunks_live` keeps its meaning (served-version
   chunks); the new `memory_v1.chunks_all_versions_live` exposes the current-representation
-  chunks of every non-deleted ready version for scoped reads.
+  chunks of every non-deleted ready version for scoped reads. Under
+  [proposed D162](split_oversized_chunks_design.md#publication), resolve the
+  published packing basis of that representation through hydration. Reference
+  links use that same basis.
 - **Source handles** use `source_open(version_id, representation_id)` (D115 already takes a
   version). Under D155 a **P3 path** is the movable, applied corpus folder for
   that selected version/representation. Return it only if the selection is served
@@ -531,7 +534,7 @@ header facts), the E2 header, and the `asserted_at` of claims freshly extracted 
 The version's own date remains on the version for everything else.
 
 **Reuse identity.** Each chunk also stores `reuse_identity_hash` — the date-free identity:
-own block hashes, neighbour block hashes, the header facts other than dates (title, file name,
+own and neighbour content hashes, the header facts other than dates (title, file name,
 source kind, language, the extraction-eligibility policy marker), `blockizer_version`,
 `structurer_version`, `extractor_version`, and canonical converter-origin hashes
 of the target and consumed same-section neighbors. Coordinates are relative to
@@ -550,6 +553,13 @@ reuse_identity_hash)`.
    `text_origin_at` (ties broken by `version_no`, then `ordinal`), and the chunk reuses that
    match's extraction; otherwise `text_origin_at = d` (possibly `NULL`, today's "date
    unknown") and the chunk is extracted or reused under today's key rules.
+
+[Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
+also admits the date of a verified byte-identical parent span when a new
+fragment matches an earlier legacy occurrence. These date candidates come from
+the earlier original grid, so repacking that version cannot change the match.
+Same-version repair copies the parent's committed origin, including unknown.
+Extraction reuse still requires equivalent consumed windows and checked spans.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the

@@ -808,12 +808,12 @@ reports the same current search-configuration attestation and freshness.
 `semantic_chunks`, `lexical_chunks`, and `fetch_chunk_bodies` share one body
 path. It obtains bytes only after PG confirms the current ready
 document/version/representation/section coordinate, then verifies the
-reproducible embedding-text hash and generated-prefix separation. The stored
-source-content hash remains a returned coordinate but is not claimed as
-body-byte verification in v1: it is composed from ordered block hashes whose
-inputs are not present in the P1 body row. A future store contract may add
-those reproducible inputs and then strengthen verification without weakening
-this rule. The path returns source body and D80 deterministic location header in separate columns;
+reproducible embedding-text hash and generated-prefix separation. Under
+[proposed D162](split_oversized_chunks_design.md#publication), confirmation
+and hydration resolve the published packing basis in the ranked-read snapshot.
+The stored content hash identifies ordered block hashes or exact fragment
+bytes. Body verification uses the rendered-input hash.
+The path returns source body and D80 deterministic location header in separate columns;
 the header is never asserted evidence. `fetch_chunk_bodies` is this exact path
 minus nomination: `input_ordinal` records first input position, duplicate IDs
 collapse to that first position, and more than 50 IDs fails

@@ -331,9 +331,12 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
   inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
   when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
-  under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
+  under `structurer_version`. [Proposed D162](split_oversized_chunks_design.md#2-coordinates-evidence-and-identities)
+  derives split-grid keys and remapping from the source slots E2 actually
+  consumes. It verifies those slots when carrying forward legacy results.
+  LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
-  `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
+  `extraction_input_hash = hash(own content hash + neighbor content hashes + stable header
   facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
   deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
@@ -344,11 +347,13 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
   versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
   and **not later than this version's own date** (so a back-filled older edition never inherits
-  a later date) — own and neighbour
-  block hashes, non-date header facts, consumed converter-origin hashes,
+  a later date) — own and neighbour content hashes, non-date header facts,
+  consumed converter-origin hashes,
   blockizer/structurer/extractor versions, indexed per
   lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
-  and replayed, never recomputed; deleting the origin version later does not change it. The
+  and replayed, never recomputed; deleting the origin version later does not change it.
+  D162 also verifies unchanged fragment text against its earlier unsplit
+  occurrence to inherit the existing D140 date across the first split. The
   E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
   in unchanged text stay resolved against the time the text was written, and a dated new
   version reuses its unchanged chunks (with the version's own date in the key, nearly every
@@ -376,6 +381,8 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   creates fresh work without changing packing or the embedding model/policy.
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
+  D162 repair verifies an interrupted predecessor attestation by exact ID,
+  including after the vector moves out of the serving projection.
   See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.
@@ -388,8 +395,10 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
   `chunk_content_hash` (§4), `extraction_input_hash` (§7), `section_id`, offsets; **D80**
   location-facts snapshot ref / bounded optional header, `embedding_text_hash`,
   `embedding_input_policy_version` and current embedder stamps. The normalized body and
-  vector live in the sole `chunk_search` sidecar; exact body remains in the artifact
-  (D37/D94). Detail: `e1_embedding_input_policy.md` §7.
+  vector serve from the sole passage search projection, `chunk_search`.
+  D162 keeps pending and superseded attestations in
+  private storage. Exact bodies remain in the artifact (D37/D94).
+  Detail in `e1_embedding_input_policy.md` §7.
 - `document_sections`: `block_start`/`block_end` ordinals (the grid representation, §3);
   char spans derived.
 - `document_representations` (D65): `blocks_uri` + `blockizer_version` live on the immutable
@@ -429,8 +438,7 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 8. **Embedding-input-policy quality (D63/D80/D94)** — model default remains
    `qwen3-embedding-8b` (conventional) and the reference dimension is fixed at
    1,536. The existing golden set may still compare body-only vs compact/full
-   location-header contribution and message-atom filtering; engine migration
-   does not introduce a new benchmark gate. See
+   location-header contribution and message-atom filtering. See
    `e1_embedding_input_policy.md` §10.
 
 ## References
@@ -442,5 +450,5 @@ D33, D37, D38, D39, D51, D54–D56, D63. Discussion record:
 `e1_embedding_input_policy.md` (normative embedding input), `e0_files_design.md` (conversion,
 artifacts), `evidence_lifecycle_design.md` (the reuse contract, currency, counting),
 `e2_e3_claims_relations_design.md` (bundles, grounding), `retrieval_design.md` (channels),
-`postgres_schema_design.md` §6–§8. Requirements: §Plane E (E1), §Imposed constraints
-(semchunk).
+`postgres_schema_design.md` §6–§8. Requirements: §Plane E (E1) and
+§Fixed choices & the reference deployment.

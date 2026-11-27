@@ -1778,6 +1778,12 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
+> **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
+> A repaired packing grid publishes its completed claim occurrences and currency
+> together. The same-version re-extraction check uses the predecessor and successor
+> occurrences and honours carriage on other eligible published bases. Counting
+> still uses distinct lineages.
+
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
 > claims-mode component version that applies the same currency and counting logic but opens no
@@ -2035,10 +2041,12 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
 > **Proposed amendment in [D162](#d162-split-oversized-chunks-before-embedding).**
-> On adoption, the whole-block and oversize edge rules below give way to a
-> hard embedding-input ceiling and lossless within-block cuts for oversized
-> candidates. Section ownership, anchors, non-overlap and the multi-grain
-> retrieval contract continue to apply.
+> The engine's anchored packer is the fixed choice in place of the semchunk
+> requirement below. On adoption, the whole-block and oversize edge rules
+> give way to lossless cuts at the hard embedding-input ceiling. The
+> `chunk_content_hash = hash(ordered block hashes)` clause applies to whole
+> candidates. Fragments use a distinct hash of exact source bytes. Section
+> ownership, anchors, non-overlap and multi-grain retrieval continue to apply.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2207,6 +2215,10 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
 > (since the D98 RC 1 amendment, a relational one-hop join instead of SQL/PGQ).
+
+> **Chunking clarification in [D162](#d162-split-oversized-chunks-before-embedding).**
+> The anchored, section-bounded engine packer is the fixed choice listed in
+> the requirements. It is part of the engine identity.
 
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
@@ -7236,6 +7248,11 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 ## D140. Declared effective periods, section keys, and version-aware references
 
+> **Proposed refinement in [D162](#d162-split-oversized-chunks-before-embedding).**
+> A new fragment can inherit the date of a verified unchanged span in an
+> earlier original grid. Same-version repair copies the parent occurrence's
+> date. D140's date eligibility across versions continues to apply.
+
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
 > nominate–confirm–continue loop, before the `k` cut, in one ranked-read snapshot. Scope,
@@ -8749,20 +8766,20 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27.
 
-**Decision.** E1 keeps the legacy anchored whole-block pack for fitting
-inputs. When the rendered input exceeds the qualified per-input ceiling, the
-chunker partitions the offending source span at deterministic structural
-boundaries or Unicode scalar boundaries. Every piece is independently
-embedded, with exact source coordinates. A deterministic rejection makes
-the affected embedding job fail with a typed error.
+**Decision.** E1 keeps the anchored whole-block pack for fitting inputs.
+When the full prepared input exceeds a qualified endpoint ceiling, the
+chunker partitions that span at deterministic structural or Unicode scalar
+boundaries. Each piece is embedded in full and keeps exact source
+coordinates. Every nonempty input needs a valid vector for completion.
 
 **Reuse boundary.** Only representations with an offending chunk receive
-the split packing generation and repair work. Fitting legacy grids retain
-their IDs, hashes, work identity and paid results. Repair reuses the recorded
-E0 reading and replaces the old searchable grid after the new embeddings are
-complete. Stored evidence retains its historical coordinates. Release
-requires provider conformance and unchanged benchmark corpora, including
-the frozen LoCoMo image readings.
+the split packing and delivery generation. Fitting grids retain IDs,
+hashes and paid products. Repair uses a verified predecessor and runs
+changed inputs once. Cutover switches the passage index and completed
+claim occurrences under the lineage fence, with published carriage
+governing testimony currency. Retained evidence keeps its coordinates.
+The protected LoCoMo and BEAM paths require qualified bindings and frozen
+input, grid, ordered retrieval and evidence parity.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
