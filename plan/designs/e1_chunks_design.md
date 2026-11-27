@@ -212,9 +212,9 @@ Each piece follows the same section, eligibility and non-overlap rules.
 - **Never cross a section boundary** (§3 makes this well-defined).
 - **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
-  tables). A chunk boundary is forced wherever eligibility changes between blocks, so every
-  chunk is wholly eligible or wholly ineligible; `chunks.extraction_eligible` records it and
-  E2 schedules Selection only for eligible chunks (`format_conversion_design.md` §4.5).
+  tables). Whole-block candidates cut where block eligibility changes. Split pieces cut at
+  changes in the eligibility of nonblank text, including in gaps. `chunks.extraction_eligible`
+  records the class for Selection. [D133 eligibility](format_conversion_design.md#45-extraction-eligibility).
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost

@@ -194,6 +194,7 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
    active policy and pinned model into batches within the qualified item, token and byte
    limits. A batch **never crosses** document, representation, lane, or embedder generation.
+   [D162 batch order and benchmark binding](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger`, including calls after batch bisection.
@@ -251,6 +252,8 @@ infrastructure). The operational surface over it is thin and deterministic:
   Each dead letter carries its diagnostic and preserved enqueue `payload`.
 - **Replay** — `embed_chunk` dead letters with `embedding.input_too_large`
   use [D162 CHUNK recovery](split_oversized_chunks_design.md#3-recover-an-unpublished-version).
+  A dead-lettered replacement CHUNK retains its lineage hold and pin until
+  bounded replay succeeds or explicit cancellation tombstones its version.
   For ordinary replay, set the row to `pending`, clear its retry defer reason,
   choose `not_before`, and raise `max_attempts` by the approved allowance above
   the consumed attempt count. Re-admit any pinned embed qualification before

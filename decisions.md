@@ -6391,7 +6391,8 @@ promising billed tokens or a fixed saving.
 
 > **Proposed D162 amendment.** Before reusing a Claimify completion, confirm
 > that the inputs admitted from frozen Selection match those of the original
-> completion or a verified equivalent after remapping.
+> completion or a verified equivalent after remapping. A split donor's
+> claims must also pass D32 grounding in the current occurrence.
 > [Reuse contract](plan/designs/document_reference_context_design.md#reuse-including-negative-dependencies).
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
@@ -8772,19 +8773,22 @@ READY versions retain their grids permanently. New versions use the fix.
 A typed size dead letter can restart at CHUNK if the stored input fails the
 qualified fit check, the version has never published, and there is no embed
 success or downstream work or evidence. Replay requires exclusive lineage
-processing through replacement CHUNK commit. Activation drains legacy CHUNK,
+processing through replacement CHUNK handoff. A replacement dead letter
+keeps the lineage hold and pin for bounded replay of that CHUNK or explicit
+cancellation by version tombstone. Activation drains legacy CHUNK,
 EMBED_CHUNK, Selection and Claimify handlers. CHUNK and EMBED_CHUNK share a
 qualification through retries and verify the current attempt on writes. Pin
-admission and P1 model changes use the same deployment lock. Repeat replay
-requires a changed fit decision.
+admission and P1 model changes use the same deployment lock. Repacking
+after another embed size rejection requires a changed fit decision.
 
 Split targets require matching split donors for paid reuse. Keep the stable
 D122 keys and verify the donor's admitted inputs before Claimify reuse.
+Recheck remapped claims from a split donor against current D32 grounding.
 An unverified legacy donor can require fresh Claimify on demand. Nonblank
 D80 inputs require usable vectors. Confirmed rejections are terminal.
 Unusable replies and capacity errors have bounded retries.
-Require offline full-row equality on frozen LoCoMo v45 and BEAM with a
-benchmark ceiling of at least 22,528 tokens.
+Require offline equality of legacy embedding requests and full rows on
+frozen LoCoMo v45 and BEAM with a benchmark ceiling of at least 22,528 tokens.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

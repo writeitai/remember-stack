@@ -1663,7 +1663,7 @@ CREATE TABLE chunks (
   token_count     integer,                     -- token length (sizing/budget)
   text_origin_at  timestamptz,                 -- D140: recorded once at creation: the text origin time of the earliest matching chunk (same reuse_identity_hash) in a non-deleted version of the lineage, else this version's source_modified_at or published_at; the E2 header date, the reuse-key date, and fresh claims' asserted_at
   reuse_identity_hash text,                    -- D140: date-free own and neighbour identity including converter origins, non-date header facts and blockizer/structurer/extractor versions for the text-origin lookup
-  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
+  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5 eligibility class of the chunk's nonblank text for D162 pieces
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
   -- stored here (D37); chunk_search holds normalized body + one current vector.

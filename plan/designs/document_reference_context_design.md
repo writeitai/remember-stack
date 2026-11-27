@@ -131,10 +131,17 @@ a difference in compared inputs or a failed remap disqualifies that candidate.
 Missing current results keep Claimify at the Selection barrier. Fresh Selection
 still permits Claimify reuse when an eligible donor's admitted inputs match.
 
-Keep `claimify_input_hash` on its stable input basis. A successful check
-still requires D119 to remap every claim span into the new occurrence before
-reattaching the same claim IDs under D56. Header date changes and changed
-chunk boundaries can change the inputs themselves.
+Keep `claimify_input_hash` on its stable input basis. Remap every claim span
+into the new occurrence under D119 before reattaching claim IDs under D56.
+For a split donor, apply the current occurrence's deterministic D32 checks
+to each remapped claim. Verify its citations against the current passages
+and its origin against current keeps. Test stored added context against
+the current target, header, same-section neighbours, typed D80 location
+elements and cited passages from admitted cards. Use D32's valid-time
+allowance for the claim's stored bounds. A grounding failure disqualifies
+the whole donor completion. If no donor passes, run Claimify from the
+current frozen Selection results.
+[D32 grounding](e2_e3_claims_relations_design.md#33-grounding--staying-honest-while-rewriting-d32).
 
 ## Relationship to E3 and entity resolution
 

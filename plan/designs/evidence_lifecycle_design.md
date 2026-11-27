@@ -377,9 +377,9 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
    A matching eligible donor lets the new chunk reuse prior claims after D119
-   remapping and D122 input verification. Vector carry-forward also matches
-   the full D80 input hash, policy and model. A split target needs a matching
-   split donor for each paid stage.
+   remapping and the [D122 reuse checks](document_reference_context_design.md#reuse-including-negative-dependencies).
+   Vector carry-forward also matches the full D80 input hash, policy and model.
+   A split target needs a matching split donor for each paid stage.
    [E1 reuse mechanics](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,
    stale no K pages.

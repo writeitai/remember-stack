@@ -221,9 +221,10 @@ The mechanism:
    after a blank line, which the blockizer treats as a block start. E0
    rejects a block spanning both eligibility classes.
 2. **E1 cuts at eligibility changes between blocks.** When refining a failing
-   candidate, E1 also respects labelled eligibility changes in gaps. Each
-   resulting slice stores `chunks.extraction_eligible` from the labelled ranges
-   and the policy version. [D162 split rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+   candidate, E1 uses the eligibility of nonblank text, including in gaps.
+   Separator-only intervals retain their bytes and provenance alongside the
+   adjacent text. Each piece stores `chunks.extraction_eligible` and the policy
+   version. [D162 split rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 3. **E2 schedules Selection only for eligible chunks.** An ineligible chunk completes
    deterministically with zero propositions and publishes no D122 reference cards; the Selection
    barrier counts it complete.

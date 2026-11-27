@@ -22,6 +22,12 @@ failing E1 candidates preserves grounding in the same Markdown. Each cut
 must be checked on its own rendered input since D80 can select a larger
 header for a shorter body. [Mode selection](../../src/rememberstack/core/embedding_input_policy.py#L204-L223).
 
+E0 accepts two eligible blocks separated by an ineligible label covering
+only `\n\n` because the label intersects neither block. Cutting at both label
+boundaries would force a blank piece. Determine the split's eligibility
+from nonblank text and retain separators and their provenance on the
+adjacent pieces. [E0 eligibility check](../../src/rememberstack/core/extraction_eligibility.py#L50-L71).
+
 The legacy row builder allocates UUIDv4 and stores the span and ordinal as
 separate fields. A split can move a following chunk's ordinal and change
 the count stored in every D80 location snapshot. Full-row equality holds
@@ -66,6 +72,15 @@ remapping. The ordered producer keys still cover the whole window, and
 generated text stays out of those keys.
 [Ranking and cap](../../src/rememberstack/core/selection_references.py#L277-L306) ·
 [Admitted passages and request](../../src/rememberstack/workers/e2.py#L911-L960).
+
+Renaming a section from `Orchard` to `Terrace` can leave the extraction keys,
+Selection decisions and cited text equal. The rename can remove the only
+D32 support for `Orchard` in a claim's added context. Run the existing
+grounding check against the successor's typed location and remapped
+evidence. A location change that still grounds every claim can reuse the
+completion under the same keys.
+[Claimify attachment](../../src/rememberstack/workers/e2.py#L832-L859) ·
+[D32 grounding elements](../../src/rememberstack/workers/e2.py#L1622-L1659).
 
 ## Why replay is limited to unpublished versions
 
@@ -149,6 +164,15 @@ so an embedding completing during setup cannot fall between the two checks.
 [Stored model guard](../../src/rememberstack/adapters/postgres_p1.py#L201-L222) ·
 [Semantic filter](../../src/rememberstack/adapters/postgres_p1.py#L874-L889).
 
+Replacement CHUNK can exhaust its attempts while EMBED_CHUNK is still
+dead-lettered. Binding the recovery pin to ordinary claimability would let
+setup switch models while the lineage still waits for a grid. Keep the
+hold and pin on the outstanding CHUNK recovery. The operator can reopen
+that row with fresh bounded attempts or cancel by tombstoning the failed
+version and repointing the lineage through the existing lifecycle path.
+[Terminal transition](../../src/rememberstack/spine/work_ledger.py#L793-L826) ·
+[Version tombstone](../../src/rememberstack/spine/lifecycle.py#L658-L709).
+
 OpenRouter rejects successful HTTP responses with missing or empty vectors.
 Legacy E1 can isolate that error and stamp a successful skip for a nonblank
 singleton. This can advance the version without a semantic passage. Require
@@ -181,3 +205,11 @@ these dependencies and recomputes D122 stamps and ordered producers.
 [D122 window](../../src/rememberstack/workers/extraction_references.py#L56-L63) ·
 [Body fetch](../../src/rememberstack/surfaces/query_sandbox/nomination.py#L811-L832) ·
 [E2 location handling](../../src/rememberstack/workers/e2.py#L1691-L1737).
+
+Legacy E1 removes skips and reused vectors before batching the remaining
+inputs in order by item count. A lower aggregate cap can split such a batch
+even when every input fits alone. Saved vectors indexed by individual input
+hash would mask that change. Compare whole requests at the provider boundary
+and qualify the benchmark binding against every legacy batch as sent.
+[Legacy batching](../../src/rememberstack/workers/e1.py#L388-L409) ·
+[Request framing](../../src/rememberstack/adapters/openrouter.py#L1034-L1046).
