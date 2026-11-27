@@ -103,13 +103,7 @@ inputs, not experiment identity.
 The command writes only under `--output`. It never edits the source run's
 `run.json`, `state.json`, answers or judges. A profile has its own checkpointed
 answers, judges, provider usage and summary. Rerunning the same command resumes
-missing items. A changed identity requires a new directory. Under proposed
-D163, ablation and review share the canonical output checkpoint lock from
-before load or creation through the final write. For live historical resumes,
-the launcher restores the recorded stack, verifies the effective evaluator
-provider settings and runs the pinned evaluator with the saved `ablation.json`
-options and, for `full`, `answer-prompt.txt`.
-[Benchmark admission](shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime)
+missing items; a changed identity fails closed and requires a new directory.
 
 ## 4. MCP profiles
 

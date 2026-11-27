@@ -1053,10 +1053,6 @@ CREATE TABLE review_queue (
 COMMENT ON TABLE review_queue IS
   'Cluster-level human review queue (D24/D99). Exact merge-proposal replay deduplicates by deterministic review_id; changed membership inserts a replacement and auto_resolves overlapping pending proposals without rewriting resolved history. Hub merges never auto-accept. Verdicts append reversible, provenance-stamped rows.';
 CREATE INDEX ix_review_pending ON review_queue (deployment_id, expected_impact DESC) WHERE status = 'pending';
--- Proposed D163 index. The populated upgrade builds it concurrently.
-CREATE INDEX ix_review_open_support_fact ON review_queue
-  (deployment_id, (candidate ->> 'fact_kind'), (candidate ->> 'fact_id'))
-  WHERE item_kind = 'support_withdrawn' AND status IN ('pending', 'deferred');
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- golden_pairs — the unbiased ER eval set (D22). Human-adjudicated (the cascade/LLM may propose,

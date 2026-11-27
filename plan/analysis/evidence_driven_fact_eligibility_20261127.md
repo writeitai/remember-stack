@@ -1,438 +1,96 @@
 # Evidence-driven fact eligibility on PostgreSQL 18
 
-The WriteIt brain Project spent 23.09 of 30.54 seconds confirming two batches
-of facts on 2026-11-27. PostgreSQL looked through a large fraction of the
-Project's chunks for each candidate before checking which claims belonged to
-that fact. The proposed D153 amendment keeps both the source and time checks
-and starts with the candidate's evidence. [Design](../designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule)
+On 2026-11-27, a read-only replay of `facts_context` took 30.54 s on the
+hosted WriteIt brain Project (2 vCPU, 4 GB, PostgreSQL 18.6, RememberStack
+v0.22.4 at `p9_55_0076`). Two P1 confirmation batches took 23.09 s.
+The replay used a stored vector and returned 50 facts and 40 evidence rows.
+[D163 design](../designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule)
 
-## Captured workload
+## Hosted workload and paired prototype
 
-The [hosted capture receipt](evidence_driven_fact_eligibility_hosted_capture_20261127.md)
-records file hashes, redacted plans, the paired SQL and native replay counters.
+The Project had 40 documents, 40 versions, 812 chunks, 3,274 claims and
+occurrences, 969 entities, 2,625 observations and 535 relations. Each claim
+had one occurrence. Chunk and occurrence tables had ten range leaves each,
+with Project rows in one. Evidence tables had 64 populated fact-ID hash
+leaves. The store had zero periodised versions and carried claims.
 
-The investigation ran on RememberStack v0.22.4 (`c1f15b783`, schema
-`p9_55_0076`) on a 2-vCPU/4-GB PostgreSQL 18.6 host. The Project contained
-40 documents and 40 versions, 812 chunks, 3,274 claims and 3,274 chunk–claim
-occurrences, 5,307 mentions and 969 entities. There were 2,625 observations
-with 2,651 evidence rows and 535 relations with 538 evidence rows. Each
-evidence table had 64 nonempty hash partitions by fact ID. The chunk and
-occurrence tables each had ten `created_at` partitions including default,
-with Project rows in one. All claims had one occurrence in this capture.
-Of the 812 chunks, 430 carried claims, averaging 7.61 links in those chunks
-(maximum 29). The store had zero periodised versions and zero carried claims.
+With normal join planning, PostgreSQL reordered the D140 check to start
+from roughly 380 chunks per candidate. It probed `chunk_claims` across the
+range leaves for each chunk and checked fact evidence last, producing
+1.23 million observation and 758,000 relation evidence probes. The paired
+SQL uses correlated `LATERAL` subqueries with `OFFSET 0` so the candidate
+binds its evidence, then each claim binds its occurrences and each chunk
+binds its reading. Both branches used identical candidate IDs, snapshot
+and time scope. Times below are branch execution times excluding planning.
 
-`native-replay.out` records a read-only `facts_context` replay at 18:38 UTC
-using one stored vector and zero paid calls. It returned 50 facts and 40
-evidence rows in 30.536 s wall and 30.2135 s SQL across 154 statements.
-At candidate depth 200, the first fetch requests up to `4 × (200 + 1) = 804`
-IDs per kind. The replay used one fetch per kind, followed by final hydration
-in groups of 30 split by kind. There was no negative result or refill.
-
-## Live confirmation plans
-
-`live-plans.out` contains the catalog, counts, and standalone observation and
-relation `EXPLAIN (ANALYZE, BUFFERS, VERBOSE, SETTINGS, FORMAT JSON)` plans
-at 18:35 UTC. These and the paired plans were read-only, with serving join
-planner settings, JIT off and a 3 GB effective cache estimate.
-
-| P1 confirmation | Input → eligible | Native SQL | Plan execution / planning | Shared hits | `chunk_claims` leaf probes | Late evidence probes |
+| Kind | Candidates | Old gate | Evidence-first gate | Shared hits (old → new) | Eligible IDs | Symmetric difference |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Observation | 804 → 786 | 13.224 s | 15.683 s / 198 ms | 8,155,986 | 3,093,280 | 1,232,750 |
-| Relation | 535 → 518 | 9.867 s | 12.178 s / 143 ms | 5,509,219 | 1,884,710 | 757,668 |
+| Observation | 804 | 16.400 s | 0.434 s | 8,155,984 → 70,616 | 786 | 0 |
+| Relation | 535 | 11.349 s | 2.919 s | 5,509,219 → 577,885 | 518 | 0 |
 
-Both plans had zero shared reads and temp writes. Inside the D140 support
-subplan the physical order was:
+The capture exercised the supports-only branch. Both relation plans still
+seeded 518,415 object walks, and both fact kinds reread unrelated historical
+claims during source membership. The receipt includes five file hashes,
+serving settings, plan counters and the native replay excerpt.
+[Redacted plans and paired SQL](https://github.com/writeitai/remember-stack/blob/d441b89d99524230d3e7ae3ab39479f62400dffb/plan/analysis/evidence_driven_fact_eligibility_hosted_capture_20261127.md)
 
-```text
-candidate fact
-  → chunks joined to version scope (394.05 / 364.34 chunk rows per gate call)
-  → chunk_claims Append, indexed by chunk_id across ten created_at leaves
-  → fact-ID hash leaf, test (fact_id, claim_id) and stance = supports last
-```
+## Candidate lookup boundaries
 
-The hot intermediate join estimated 13 rows per call and produced 1,568.38
-for observations and 1,462.68 for relations. The late probe counts above
-are summed across executing leaves. `src/rememberstack/core/text_scope.py`
-already spells the joins in evidence-first order. PostgreSQL can reorder
-ordinary inner joins, so the fact filter only became selective at the end
-of these plans. This creates work proportional to candidates reaching the
-gate times unrelated chunks visited times retained partitions, plus the
-claim links encountered. The evidence check is separate from D153's fact
-source membership and shared `entities_current` endpoint checks. [D140 gate](../../src/rememberstack/core/text_scope.py#L226) · [P1 batch builder](../../src/rememberstack/adapters/postgres_p1.py#L1664) · [Shared authority](../../src/rememberstack/spine/retrieval_eligibility.py#L172)
+PostgreSQL can treat an `EXISTS` with the candidate key only in its outer
+`WHERE` as a semi-join. It can also hash a simple correlated `NOT EXISTS`.
+Putting the fact key inside the evidence probe binds it before either claim
+arm runs. In a reduced PostgreSQL 18.7 fixture the unfenced raw-support
+absence check used all 64 leaves at 30,000 unrelated rows. With `OFFSET 0`
+it used one leaf per candidate at 30,000 and 300,000 rows.
+[PostgreSQL subquery planner](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/optimizer/plan/subselect.c#L243-L280)
 
-The relation's `fact_sources` subplan also applied its `object_entity_id`
-join filter after scanning all 969 entities for each of 535 source rows.
-That is 518,415 object-chain seeds and about 2.7 s in the live plan. The
-subject chain was already seeded by its stored entity ID. A smaller cost in
-both kinds came from re-reading a materialized historical-claim stream inside
-source qualification (about 1,567/1,460 rows per fact). The scope gate
-rewrite leaves these source-helper costs in its measured totals. They explain
-why the complete fact path also needs keyed endpoint and source-claim probes.
+A keyed claim alone leaves the origin chunk and visible-version joins
+reorderable. Keying the origin chunk first lets a missing origin skip
+readability probes, including in the carried branch's shared origin-absence
+check. A carried occurrence must be in the claim's own document because
+`chunk_claims` carries no document key. The production history predicate
+also admits ready origins in superseded versions or replaced readings.
+[Historical claim SQL](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L257) ·
+[Carried claim SQL](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174)
 
-## Paired evidence-first prototype
+The origin fence belongs in the bounded native path. A reduced PostgreSQL
+18.7 fixture with 120,000 claims, 480,000 chunks and 120 range leaves plus
+default showed why. Broad set-based history and current-testimony reads
+took 336 ms and 242 ms. Applying the origin fence to those views made both
+hit the five-second deadline. Broad fact and evidence reads inherit source
+qualification and can incur the same multiplication through that path.
 
-`candidate-driven-plans.out` at 18:36 UTC compares the two SQL shapes on the
-same candidate IDs, snapshot and scope. The rewritten branch uses correlated
-`LATERAL` subqueries with `OFFSET 0` to keep the outer fact's ID attached to
-the evidence lookup, then the claim ID to the occurrence lookup and the chunk
-ID to the reading lookup. Its hot order was:
-
-```text
-candidate fact ID → one fact-ID hash leaf
-  → chunk_claims by claim_id → chunks by chunk_id
-  → document_versions and document_version_scope by version/deployment
-```
-
-| Kind | Old branch | Evidence-first branch | Shared hits, old → rewrite | Eligible IDs on each side | Symmetric difference |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Observation | 16.400 s | 0.434 s | 8,155,984 → 70,616 | 786 | 0 |
-| Relation | 11.349 s | 2.919 s | 5,509,219 → 577,885 | 518 | 0 |
-
-These are executor times of the two CTE branches, excluding the paired
-statement's planning (394/288 ms) and difference computation. Both directions
-of `EXCEPT` returned no IDs. The support subplans executed one evidence leaf
-per gate call and, with early exit, touched 3,930 observation and 2,590
-relation occurrence leaves in total. The populated occurrence leaf used the
-existing `ix_chunkclaims_claim` child index. The small observation hash leaves
-sometimes used local sequential scans. The relation object walk still seeded
-518,415 chains in the rewritten plan. The capture measures the gate rewrite
-only. Hosted latency for the endpoint change and equivalence with periodised,
-replaced, deleted or contradiction-only evidence still need qualification.
-
-## Source helper and survivor probes
-
-The deployed memory survivor view joins the seed and terminal deployment
-around a walk that joins the entity registry again on each redirect. A
-correlated lookup of that view constrains its result. A seed keyed by the
-stored endpoint and a separately keyed lookup inside recursion constrain the
-work. Put the walk in the deployment-keyed view so the graph adapter can
-project it without maintaining a second walk.
-[Memory adapter](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L64) ·
-[Forward walk](../../src/rememberstack/spine/migrations/versions/p9_45_0066_fact_counts_demand.py#L13)
-
-PostgreSQL can pull up an `EXISTS` with the candidate correlation in its
-top-level `WHERE` as a semi-join. A claim lookup can be correctly keyed
-while that join still does broad evidence work. Putting the fact and
-deployment predicates inside the raw evidence lateral probe makes the
-dependence explicit before either claim arm runs.
-[PostgreSQL 18.6 planner](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/optimizer/plan/subselect.c#L1452-L1512) ·
-[Deployed source helper](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L316-L363)
-
-A disposable PostgreSQL 18.7 fixture used the seed and recursive hop keys
-from §4.3, the existing entity indexes, and 64 hash leaves per evidence
-table. The prepared source-helper query fixed the deployment, kind and
-fact ID. It used two fixed candidates per kind and grew unrelated entities
-and evidence rows per kind together. The positive relation had three
-subject and five object redirects. The positive observation used the same
-subject. The negative candidates had one invisible claim and one carried
-claim at a mismatched document coordinate.
-
-| Unrelated rows per table | Prepared plan modes | Relation subject index searches (seed + hops) | Relation object index searches (seed + hops) | Observation subject index searches (seed + hops) | Negative evidence per kind (leaves / rows returned by raw probe / rows rejected by raw probe) |
-| ---: | --- | ---: | ---: | ---: | ---: |
-| 1,000 | custom and generic | 1 + 3 | 1 + 5 | 1 + 3 | 1 / 2 / 7 |
-| 100,000 | custom and generic | 1 + 3 | 1 + 5 | 1 + 3 | 1 / 2 / 0 |
-| 1,000,000 | custom and generic | 1 + 3 | 1 + 5 | 1 + 3 | 1 / 2 / 0 |
-
-The entity index conditions used both deployment and entity ID. At 1,000
-unrelated rows the negative probes scanned one small leaf. At both larger
-sizes each used one fact-ID index search. The result was one row for each
-positive candidate and zero for each negative. Missing seeds, cycles,
-dangling targets and wrong-deployment seeds or redirects also returned no
-survivor. The fixture modeled claim visibility with boolean flags. Full
-qualification uses the migrated authority and real historical and carried
-membership paths. [D163 qualification](../designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
-
-## Round-two source checks
-
-- BEAM skips saved answers by arm and question ID and uses the supplied URL
-  for the rest. LoCoMo checks serving revision and discovery, which reads a
-  packaged manifest. Neither check proves which database serves the next
-  request. Compare the live catalog and verified restore binding in the
-  harness before any question runs. This also works with the published
-  engine, which needs no new endpoint.
-  [BEAM loop](../../benchmarks/rs_harness_beam/answer_agent.py#L725) ·
-  [LoCoMo checks](../../benchmarks/locomo/runner.py#L641) ·
-  [Discovery](../../src/rememberstack/surfaces/query_sandbox/discovery.py#L106)
-- The hosted replay exercised the supports-only path. A plain correlated
-  `NOT EXISTS` can be planned as a hashed scan across evidence leaves.
-  `OFFSET 0` inside that subquery prevents the rewrite. At the source-view
-  boundary, knowing the claim ID still leaves its chunk and visible version
-  as reorderable joins. Bind the chunk inside the historical view and reuse
-  that view for the carried path's origin-absence check. A missing origin
-  then skips the version and representation lookups.
-  [Hosted SQL](evidence_driven_fact_eligibility_hosted_capture_20261127.md#paired-sql) ·
-  [PostgreSQL 18.6 planner](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/optimizer/plan/subselect.c#L243-L280) ·
-  [Historical view](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L257) ·
-  [Carried view](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174)
-- `CREATE OR REPLACE VIEW` takes an exclusive lock on its target. A reader
-  can lock the fact view and then wait for its survivor dependency, while a
-  transaction replacing both waits for that reader. Each intermediate
-  definition supports the existing caller, so commit each in its own
-  revision and let the native runner retry ordinary lock timeouts from the
-  last committed revision.
-  [PostgreSQL 18.6 view replacement](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/commands/view.c#L89-L107) ·
-  [Native runner](../../src/rememberstack/spine/migrations/env.py#L68)
-
-The deployed survivor adapter checks the seed and terminal deployments.
-The same-deployment foreign key rules out a round trip through another
-deployment in normal writes. The new walk fails closed when legacy corruption
-breaks that invariant, so the oracle needs a specific exception for that chain.
-[Adapter](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L64) ·
+Bind each stored relation endpoint before recursion and bind its next
+redirect inside recursion. A reduced PostgreSQL 18.7 fixture used one seed
+and one lookup per hop for both endpoints (three and five hops) with
+1,000, 100,000 and 1,000,000 unrelated rows in custom and generic plans.
+Negative source probes stayed on one evidence leaf. The same-deployment
+foreign key prevents an A → B → A chain in normal writes. The deployed
+adapter checks the deployment at the seed and terminal, so it can accept
+such a legacy-corrupt round trip. The keyed walk rejects its first foreign
+hop. [Deployed adapter](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L64) ·
 [Redirect foreign key](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L32)
 
-## Round-three source checks
+The probes used existing indexes. `claims` has an unpartitioned primary
+key. Retained range-leaf costs apply to `chunk_claims` and `chunks`. Sparse
+statistics may have contributed to the hosted misestimate. A forced
+nested-loop plan timed out. Refreshed statistics would still leave the
+join order cost-based. The fences bind the inputs under default planning.
 
-- BEAM creates a client for every question. LoCoMo's Codex MCP child invokes
-  `remember mcp --read-only` and resolves its connection from its environment.
-  The host store lock coordinates restores and wipes. The normal shard restart
-  brings up the processing stack, and `restore --start` starts setup. A live
-  catalog check at admission still leaves time for a swap. The launcher can
-  reuse the lock and own a private API instance over a frozen scoring store.
-  [BEAM client](../../benchmarks/rs_harness_beam/answer_agent.py#L692) ·
-  [MCP child](../../benchmarks/locomo/ablation.py#L1821) ·
-  [Store lock](../../benchmarks/locomo/sharding/store_backup.py#L247) ·
-  [Shard restart](../../benchmarks/locomo/sharding/run_shard.sh#L334) ·
-  [Restore startup](../../benchmarks/locomo/sharding/store_backup.py#L1616)
-- Native LoCoMo `answer` checks the evaluator checkout against `run.json`.
-  The ablation resume check hashes the evaluator revision into its output
-  identity. Run the recorded evaluator under the external guard to preserve
-  both checks. The shard prepares one run directory for multiple stores.
-  Scoring-base verification already checks immutable input files and the
-  selected sample's ingests independently of later answer checkpoints.
-  [Native guard](../../benchmarks/locomo/runner.py#L1660) ·
-  [Ablation identity](../../benchmarks/locomo/ablation.py#L862) ·
-  [Shard store switch](../../benchmarks/locomo/sharding/run_shard.sh#L454) ·
-  [Scoring-base check](../../benchmarks/locomo/sharding/store_backup.py#L421)
-- Exact D54 counts aggregate the widened live claim view, whose evidence join
-  can reorder. Representative selection adds a separate occurrence check,
-  and document filters add another for a matching version. Reuse the
-  candidate-driven lookups in these reads while keeping their distinct time,
-  stance and document predicates.
-  [Counts](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L364) ·
-  [Live evidence join](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L234) ·
-  [Representatives](../../src/rememberstack/surfaces/query_engine.py#L6302) ·
-  [Document filters](../../src/rememberstack/core/document_filters.py#L232)
-- Saved tool calls record public inputs and outputs. The engine gets its
-  query vectors from the embedder and pins the operation clock separately.
-  SQL can also read its own transaction or statement clock. A paired replay
-  needs those inputs or a separately identified fixture that supplies them.
-  [Tool records](../../benchmarks/locomo/model.py#L373) ·
-  [Embedding request](../../src/rememberstack/surfaces/query_engine.py#L4838) ·
-  [Operation clock](../../src/rememberstack/adapters/bounded_postgres_read.py#L65) ·
-  [SQL clock](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L267)
+## Migration evidence
 
-## Round-four source checks
+An older D153 source definition lacks D159's rule making a withdrawal
+review moot while its claim's document is archived. Use the deployed
+`p9_55_0076` definition and its regression test for a fact with surviving
+support from another document.
+[Archive-aware DDL](../../src/rememberstack/spine/migrations/versions/p9_55_0076_archive.py#L187) ·
+[Archive regression](../../src/tests/workers/test_lifecycle_reconciliation.py#L2255)
 
-- The pinned self-host API derives the SQL query role and database name from
-  the primary URL but accepts separate `query_role_host` and `query_role_port`.
-  Opening a connection to the primary URL proves nothing about that route.
-  A launcher-owned PostgreSQL instance on the verified volumes gives every
-  pool one destination. Identical catalogs can exist in different stores.
-  [Pinned connection factory](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L784-L822)
-- BEAM reloads `questions.json`, skips by arm and ID, and uses ability to
-  select retrieval queries and prompt hints. The CLI model reaches synthesis
-  for each newly answered item. Hashing the ordered input file, pinning the
-  evaluator and capturing its resolved reader settings cover all three inputs.
-  [BEAM resume](../../benchmarks/rs_harness_beam/answer_agent.py#L725) ·
-  [CLI](../../benchmarks/rs_harness_beam/cli.py#L174)
-- Both LoCoMo backup manifests say version 2. The historical one requires six
-  archives, including the separate forget-manifest volume. The current one
-  requires five. The historical tool can stage without services, and
-  `restore --start` invokes setup. The historical graph check requires
-  PostgreSQL 19 and its Compose file specifies a PostgreSQL 19 RC1 image.
-  Recover the image from the recorded storage stack because the backup
-  manifest has no image field.
-  [Historical manifest](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/sharding/store_backup.py#L156-L172) ·
-  [Current manifest](../../benchmarks/locomo/sharding/store_backup.py#L154) ·
-  [Historical Compose](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/compose.yaml#L133-L150)
-- The published prompt and evaluator revisions differ. The pinned ablation
-  defaults to its own prompt and rebuilds the fingerprint from the effective
-  arguments. The saved prompt and options are the inputs that reproduce it.
-  [Published run](../../benchmarks/locomo/README.md#published-results) ·
-  [Historical fingerprint](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/ablation.py#L823-L853)
-- The pending review index orders by impact. An index over the existing JSON
-  fact keys, limited to open withdrawals, serves the exact probe without
-  backfilling columns. Representative counts and ranks use lineage keys
-  alone. Hydrating only the selected ranks lets their claim and document IDs
-  drive point reads while keeping exact totals.
-  [Review index](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L233) ·
-  [Representatives](../../src/rememberstack/surfaces/query_engine.py#L6365)
-- LoCoMo renders SQL response metadata. The request ID and elapsed time vary
-  across identical builds, and D163 changes the SQL surface hash. The
-  executor also emits its wall-clock start time. A same-build control with
-  that clock pinned can identify expected differences while the full render
-  still shows exactly what each reader sees.
-  [SQL result](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061) ·
-  [LoCoMo renderer](../../benchmarks/locomo/protocol.py#L717)
-
-## Round-five source checks
-
-- The pinned build label comes from `REMEMBERSTACK_BUILD_REVISION`.
-  The profile passes its resolved `retrieval_database_budget_s` separately
-  to `QueryEngine`. The pinned LoCoMo protocol specifies 120 seconds.
-  Matching a revision and catalog therefore leaves room for a different
-  executable or a different deadline. The API container's content identity
-  and effective retrieval configuration come from the original launch.
-  [Build label](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L137-L148) ·
-  [Query engine setup](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L1342-L1385) ·
-  [LoCoMo budget](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/protocol.py#L151-L154)
-- Stopping workers leaves the pinned API's ingest route mounted. Both
-  native and SQL embeddings use the primary engine's cost recorder,
-  which inserts a receipt and falls back to a counter upsert. If both
-  fail, the recorder raises. A read-route allowlist and narrow database
-  and object grants protect the restored data while the two existing
-  accounting tables remain writable.
-  [Ingest route](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/surfaces/http_api.py#L2171-L2180) ·
-  [Cost recorder](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/spine/surface_cost.py#L172-L217)
-- BEAM keeps one `state.json` for every arm. Each invocation loads the
-  whole file and rewrites it after each answer. Independent store locks
-  allow two writers to start from the same old file. A run-directory lock
-  serializes the entire read-modify-write sequence.
-  [BEAM checkpoint loop](../../benchmarks/rs_harness_beam/answer_agent.py#L737-L767)
-- The executor reads `transaction_timestamp()`, the SQL bridge exports
-  its snapshot with `now()`, and `facts_current` applies
-  `statement_timestamp()` to its rows. PostgreSQL exposes those through
-  SQL time functions and separately uses `GetCurrentTimestamp()` to
-  schedule timeouts. Injecting recorded instants at the evaluation sites
-  preserves statement behavior and real timeout scheduling. Editing view
-  definitions would also change the catalog being compared.
-  [Executor](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1166-L1171) ·
-  [SQL bridge](../../src/rememberstack/surfaces/query_sandbox/bridge.py#L445-L485) ·
-  [Fact view](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L267-L272) ·
-  [PostgreSQL time functions](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/adt/timestamp.c#L1608-L1624) ·
-  [Timeout scheduler](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/misc/timeout.c#L560-L574)
-- The public `claims_live` view selects current testimony from
-  `claims_visible_history`. BEAM also issues a text-filtered sample
-  without claim IDs. A fence on the public history join would constrain
-  both broad reads to origin probes across the chunk range leaves.
-  [Claim views](../../src/rememberstack/spine/migrations/versions/p9_01_0022_memory_v1_query_space.py#L509-L512) ·
-  [BEAM sample](../../benchmarks/rs_harness_beam/answer_agent.py#L62-L68)
-
-A disposable PostgreSQL 18.7 fixture modeled those origin joins under the
-interactive SQL limits. At 12,000 claims and 48,000 chunks across 12 range
-leaves plus the default, counts matched. Each set-based read scanned 13
-leaves. The fenced reads executed 156,000 leaf scans for history and 104,000
-for current testimony. At 120,000 claims and 480,000 chunks across 120 leaves
-plus the default, the set-based reads took 336 ms and 242 ms in the
-instrumented runs. Both fenced reads hit the five-second statement timeout.
-Confine the fence to the fact paths, where evidence supplies a claim ID.
-Full-schema measurements through the SQL sandbox remain a qualification gate.
-
-## Round-six source checks
-
-- A model-free BEAM probe returned successful operation discovery and then
-  raised a network error on every later API call. The retrieval loop rendered
-  those errors and reached the synthesis stub once. The synchronous failure
-  boundary must distinguish loss of the admitted route from a typed response
-  supplied by that engine. A supervisor stopping the process separately can
-  lose the race to the provider call.
-  [Transport](../../benchmarks/rs_harness_beam/answer_agent.py#L222-L240) ·
-  [Retrieval](../../benchmarks/rs_harness_beam/answer_agent.py#L449-L467) ·
-  [Dispatch](../../benchmarks/rs_harness_beam/answer_agent.py#L692-L705)
-- The pinned CLI constructs the native and full-profile answer and judge
-  providers from `OpenRouterSettings`. CLI and protocol routing overrides
-  leave environment-supplied completion limits, reasoning, endpoint and
-  timeout effective. `max_completion_tokens` becomes `max_tokens` in the
-  request and is absent from the saved ablation identity. Intercepting the
-  pinned client payload produced different `max_tokens` for both provider
-  constructions when only the launch setting changed.
-  [Pinned provider construction](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/cli.py#L154-L185) ·
-  [Settings resolution](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/cli.py#L271-L299) ·
-  [Request](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/adapters/openrouter.py#L330-L369) ·
-  [Ablation resume](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/ablation.py#L823-L853)
-- `facts_current` reads `facts_visible_history`. Both public evidence views
-  join the same fact authority. Fencing those view definitions can multiply
-  range-leaf probes by every fact's evidence even for SQL with a small result
-  limit. BEAM's aggregate exercises this path. Its sample as written requests
-  `label`, while the view and manifest expose `fact_label`. Use the exact
-  query to check error parity and `fact_label AS label` to qualify the intended
-  ordered read. The deployed set-based joins give broad SQL a usable plan
-  shape while native batches have the IDs needed to constrain the probes.
-  [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68) ·
-  [Current fact view](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L228-L272) ·
-  [Evidence views](../../src/rememberstack/spine/migrations/versions/p9_09_0030_fact_authority_performance.py#L140-L181)
-- The carried claim view matches `ch.doc_id = c.doc_id` inside the occurrence
-  join. `chunk_claims` has logical references and no document column. Keeping
-  the claim document in the chunk probe prevents a link to another lineage
-  from restoring source membership when the original chunk is gone.
-  [Carried view](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174-L197) ·
-  [Occurrence schema](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L583-L595)
-- Native LoCoMo answer and judge load and replace all of `state.json`.
-  Atomic replacement prevents a partial file but two writers on separate
-  stores can still overwrite each other's records. Ablation execution and
-  review similarly share their output's checkpoint. The store lock already
-  held by the shard runner can precede the checkpoint lock.
-  [Answer load](../../benchmarks/locomo/runner.py#L621) ·
-  [Answer write](../../benchmarks/locomo/runner.py#L823-L829) ·
-  [Judge write](../../benchmarks/locomo/runner.py#L946-L952) ·
-  [Ablation review](../../benchmarks/locomo/ablation.py#L643-L664) ·
-  [Shard lock](../../benchmarks/locomo/sharding/run_shard.sh#L85-L87)
-- BEAM writes the per-question file first and then truncates `state.json`.
-  Both resume and scoring read `state.json`, which already contains the full
-  answer payload. Committing it first by atomic replacement leaves enough
-  information to recover the per-question files after interruption.
-  [Write order](../../benchmarks/rs_harness_beam/answer_agent.py#L737-L767) ·
-  [Scoring input](../../benchmarks/rs_harness_beam/official_score.py#L419-L425)
-- The graph gate returns immediately for deployments with no declared
-  periods. Otherwise only a past belief pin with a later declaration,
-  retraction or mode event in the deployment calls the ledger-backed helper.
-  All other pins use the current projection.
-  [Graph gate](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L1230-L1258)
-
-A reduced PostgreSQL 17.11 fixture executed the shipped fact and carried
-view definitions. BEAM's original sample failed with `42703` and the
-`fact_label AS label` sample returned the row. The carried view excluded
-the other-document chunk and accepted the same-document control.
-
-## Prior qualification and alternatives
-
-- D142's 300k-chunk gate measured BM25 chunk retrieval at 263/267 ms unfiltered
-  p95 on an 8-vCPU/64-GB host. It scoped exact ranking and attested broad
-  nomination. Fact support checks were outside that latency workload.
-  [D142 latency amendment](../../decisions.md#d142-ranked-search-nominates-from-the-index-and-confirms-in-one-snapshot)
-- #542 cut median fact SQL from 12.30 s to 2.22 s on analyzed conv-47 data
-  (31 documents, 889 facts, 822 chunk–claim links). Growing unrelated entities
-  to 100k held facts and mentions fixed. The change made unused counts prunable,
-  bound hydration to IDs and reused identical request embeddings. The
-  following #561 replay measured 2.253 s median and 2.345 s p95 for facts.
-  [#542](https://github.com/writeitai/remember-stack/pull/542) · [#561](https://github.com/writeitai/remember-stack/pull/561) · [Work amplification analysis](retrieval_work_amplification_20261106.md)
-- D153 qualified fixed-store native fact reads below 20 s on retained conv-26
-  and conv-30 copies (584/514 visible facts). Scoped facts took 9.17/6.74 s,
-  and broad conv-26 facts took 9.62 s. Its 120-month coverage and
-  million-document bridge tests measured other parts of the read path. D153
-  permits linear leaf probes for **a known coordinate**. This incident is
-  the multiplication of those probes by unrelated coordinates.
-  [D153 qualification](shared_eligibility_qualification_20261112/qualification-summary.md)
-- A join-method override can help one statement and remove efficient indexed
-  point lookups elsewhere. The whole-query nested-loop override timed out in
-  the investigation. In #542, restoring ordinary join planning reduced a
-  fenced 100k-entity replay from 31.4 s to 2.45 s. Query-local correlated
-  inputs express the real dependency under normal planning. A full-project
-  materialization, persisted flags, a new global coordinate map or more CPU
-  would either add unrelated work or introduce a new state or capacity cost.
-  The prototype used the existing serving indexes and showed the gain with
-  the existing partition layout. [Commit 52de39926](https://github.com/writeitai/remember-stack/commit/52de39926fc6b4c22b055db8993d9c731f5df9e8) · [#542 replay](retrieval_work_amplification_20261106.md#bound-the-final-hydration-too)
-
-## Statistics after bulk ingestion
-
-The catalog showed valid/ready `ix_chunkclaims_claim` and both D153 indexes
-(mention lookups and the ordered document bridge). The sampled partition
-parents had neither manual nor automatic analysis recorded. Only 9 of 64
-observation-evidence leaves and 0 of 64 relation-evidence leaves showed
-autoanalyze. The populated occurrence leaf last autoanalyzed at 12:50 UTC
-and estimated 3,055 tuples with 3,274 live. All 64 leaves per evidence table
-held rows, including relation leaves with single-digit populations.
-
-Sparse statistics plausibly contributed to the bad cost estimate. The
-morning plan is unavailable and the capture ran no `ANALYZE`, so neither the
-trigger for the plan change nor the effect of refreshed statistics is known.
-PostgreSQL 18 autoanalyzes individual leaves above a modification threshold
-with a default 50-change base. Autovacuum does not analyze the partition
-parent. `ANALYZE` on a named parent samples the partition tree and by default
-also refreshes the leaves. On a restored copy, compare both SQL shapes with
-sparse and refreshed statistics, measuring plans, row work and latency.
-Targeted parent analysis after bulk ingestion or restore is operator
-maintenance where that experiment shows a benefit. The evidence-first plan
-must pass with sparse statistics too. PostgreSQL 18 references checked
-2026-11-27. [ANALYZE](https://www.postgresql.org/docs/18/sql-analyze.html) · [Autovacuum thresholds](https://www.postgresql.org/docs/18/runtime-config-vacuum.html#guc-autovacuum-analyze-threshold)
+A reduced PostgreSQL 18.7 fixture reproduced a `40P01` deadlock when one
+transaction replaced both a survivor view and a dependent fact source
+view while a reader held the fact view and waited for the survivor.
+Separate compatible revisions let the fixture upgrade and downgrade
+after `55P03`. Full-schema equivalence, migration and latency are
+implementation gates.
+[D161 runner](../../src/rememberstack/spine/migrations/env.py#L68) ·
+[D163 qualification](../designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)

@@ -1312,11 +1312,10 @@ surviving semantic requirement is redirect-safe, deployment-keyed, temporal
 graph views over PostgreSQL authority data. D98 drops the six snapshot-export
 `v_graph_*` views named below and replaces them with no-row private live source
 views plus SQL/PGQ metadata (the metadata was removed by the D98 RC 1
-amendment; the views remain). `v_graph_survivor` remains as private identity
-infrastructure. [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
-proposes moving the single walk into `v_memory_entity_survivor` and keeping
-`v_graph_survivor` as its two-column projection. The graph design owns the
-current graph schema and contracts.
+amendment; the views remain). `v_graph_survivor` remains private identity
+infrastructure. D163 proposes making it a projection of the shared walk in
+`v_memory_entity_survivor`. The graph design owns the current graph contract.
+[D163](#d163-drive-fact-eligibility-from-its-own-evidence)
 
 **Decision.** The Postgres→LadybugDB (P2) projection is defined by a set of read-only **Postgres views**
 (`v_graph_entities`, `v_graph_documents`, `v_graph_relates`, `v_graph_mentioned_in`, `v_graph_crossref`,
@@ -8189,10 +8188,10 @@ must qualify before advertising chargeable evidence.
 > amends the migration lock wait and retry policy. The session guard and
 > resumable concurrent-index procedure still apply.
 
-> **Proposed fact-path amendment (2026-11-27).** Apply the fact gate's
-> per-partition allowance to claim and chunk coordinates reached through
-> the candidate's evidence. Bind the seed and each hop of survivor walks
-> and retain D153's source, visibility and sharing rules. [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
+> **Proposed fact-path amendment (2026-11-27).** D163 binds each
+> candidate's evidence, claim/chunk coordinates and survivor lookups.
+> D153's source, visibility and sharing rules still apply.
+> [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
 
 **Status:** accepted design on this PR's merge; implementation not yet qualified.
 **Date:** 2026-11-12. **Authority:** owner requested Claude Opus approval before
@@ -8208,7 +8207,7 @@ UUID-text order that avoids competing UUID-key scans under skew. Opus approved
 this measured physical amendment at `68e156154` ([review](https://github.com/writeitai/remember-stack/pull/587#issuecomment-6830637190)). Claim/chunk scope uses the same
 canonical mention relation in entity-driven and candidate-driven directions.
 A private source-qualified fact helper owns actual D140 carried-claim membership
-and presentation/counts; the only runtime-composed fact authority is the tested
+and presentation/counts. D153's original runtime builder composes the tested
 subject/object visibility conjunction. Full eligibility precedes each cut.
 
 **Tradeoffs and consequences.** Add a mention chunk-lookup B-tree with native
@@ -8220,10 +8219,9 @@ No ranking thresholds, public row shapes, ingestion generations, ID minting,
 model calls or paid reuse keys change. No cache, persisted visibility flag,
 legacy fallback, reranker or automatic DLQ repair is introduced.
 
-**Original D153 qualification.** The pre-D153 oracle was a database migrated
-to `p9_46_0067`. Row/count, deletion/merge/time, 120-partition, unrelated-data,
-concurrency/cancellation, manifest/ACL and native completion gates are in
-the delivery record. D163 uses the later archive-aware schema.
+**Original D153 qualification.** The oracle was a real `p9_46_0067`
+database. The full-row, visibility, scale, concurrency, manifest/ACL and
+completion gates are in the delivery record. D163 uses `p9_55_0076`.
 
 **Design:** [shared retrieval eligibility](plan/designs/shared_retrieval_eligibility_design.md).
 **Analysis:** [measured SQL amplification](plan/analysis/retrieval_filtering_reliability_20261112.md).
@@ -8748,38 +8746,20 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27. **Amends:** D153's physical fact path.
 
-**Decision.** Bind the fact's raw evidence before claim source qualification
-and before the D140 occurrence and readable-version probes. Reuse the keyed
-lookups for counts and representative evidence. Key the origin chunk from
-its claim within fact reads and the raw-support absence check from its fact.
-Keep public claim, fact and evidence scans set-based with shared predicates.
-Use the same gate in nomination and confirmation before eligibility cuts. Key
-the single forward merge walk by deployment and entity at the stored endpoint
-and at every redirect. Keep D153's shared survivor visibility checks.
+Bind each candidate's raw evidence before source qualification and the D140
+occurrence and readable-version checks. Use the same gate in P1 nomination
+and final confirmation. Resolve a relation's survivors from its two stored
+endpoints, keying every redirect by deployment and entity ID.
 
-**Why.** On the hosted WriteIt brain, the planner made about 1.99 million
-evidence probes after starting from chunks. A paired evidence-first probe
-returned the same eligible IDs in 0.43 s and 2.92 s. The remaining relation
-cost included a repeated deployment-wide survivor walk. Lookups in
-`chunk_claims` by claim ID and `chunks` by chunk ID can still visit each
-retained range leaf. The candidate's evidence supplies those keys.
+The hosted planner checked evidence last and made about 1.99 million
+probes. Starting from the candidate's evidence removed the unrelated-chunk
+multiplier and produced the same eligible IDs in the paired prototype.
 
-**Consequences.** Use normal join planning and add one partial, fact-keyed
-index for open support reviews. Read representative rows by key after exact
-totals and ranks. Preserve D140 scope, D142 ranking and budgets, #542 count
-pruning and embedding reuse, D153 sharing, D159 archive behavior and D56
-ingestion identities. Qualify against `p9_55_0076` at fixed snapshots and
-measure work and latency at scale. Commit compatible view replacements
-separately. On benchmark start and resume, verify the running API image and
-effective retrieval settings and bind every database connection to the
-frozen scoring data through the last checkpoint. Permit cost receipts on
-the private restore. LoCoMo pins each sample's store, its original evaluator
-and the evaluator's resolved provider settings. All writers serialize by
-canonical checkpoint path. BEAM pins the ordered questions, evaluator and
-reader settings. It makes admitted route loss fatal before synthesis or
-publication and uses atomic run state to recover individual answer files.
-D163 evaluation requires explicit opt-in under a fresh run identity.
+Qualify equal eligible ID sets on retained LoCoMo and hosted-shaped stores
+against the archive-aware `p9_55_0076` gate, with a latency gate on hosted-size
+hardware. Commit compatible view replacements separately under D161. D142
+ranking and D56 ingestion identities continue to use their existing inputs.
 
-[D153 §4.3](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
+[Fact path](plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
 [Qualification](plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·
-[Hosted evidence](plan/analysis/evidence_driven_fact_eligibility_20261127.md).
+[Hosted evidence](plan/analysis/evidence_driven_fact_eligibility_20261127.md)

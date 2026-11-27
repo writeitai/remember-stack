@@ -910,16 +910,14 @@ excludes that edition. The gate closes this without touching fact windows:
   filtering is forbidden"), in-scope support is part of the eligibility check of every
   nomination channel (semantic, lexical, entity-anchored and graph expansion) and of
   confirmation, before the relevance cut (for P1 channels, D142's confirmation step).
-  The current-belief check asks whether a path exists from the fact's evidence through
-  `chunk_claims` and the chunk to `document_version_scope`. The proposed D163 amendment
-  binds the native probes in that order and keeps the raw-support absence check scoped
-  to the candidate fact's evidence. For a past open-query `believed_at`,
-  `fact_in_scope_support` uses the fact's occurrence lineages to read the declaration
-  ledgers, using `versions_in_scope(…, believed_at, doc_ids)` for periodised evidence.
-  Context candidate depth comes from `ContextRetrievalBudget.candidate_depth`.
-  It uses the supplied `candidate_k` or defaults to `max(4 × k, 60)`. A fact supported
-  only by out-of-force text takes no result slot. Evidence is hydrated after confirmation
-  and only from in-scope claims. [D153 fact-path design](shared_retrieval_eligibility_design.md#evidence-driven-d140-time-gate)
+  Under proposed D163, the current-belief native check binds the fact's raw evidence,
+  then its claim occurrences, chunks and readable versions. For a past open-query
+  `believed_at`, `fact_in_scope_support` reads the declaration ledgers using
+  `versions_in_scope(…, believed_at, doc_ids)` on the fact's occurrence lineages.
+  `ContextRetrievalBudget.candidate_depth` uses the supplied `candidate_k` or
+  defaults to `max(4 × k, 60)`. Evidence is hydrated after confirmation and only
+  from in-scope claims.
+  [D163 fact gate](shared_retrieval_eligibility_design.md#evidence-driven-d140-time-gate)
 - The gate never changes stored counts (D54), windows (D118) or currency; it is a visibility
   rule on evidence.
 - **Inside graph traversal.** The graph role that runs traversal cannot read evidence, so it
@@ -931,11 +929,11 @@ excludes that edition. The gate closes this without touching fact windows:
   ineligible edge never spends a budget or a result slot, and the gate and the traversal can
   never see different data. The gate is evaluated lazily, only until a level's budget is
   filled. A deployment that has never declared a period returns `true` immediately
-  and traversal relies on the graph's surviving-provenance rule. For other deployments,
-  the graph helper reads `document_version_scope`, including when a past `believed_at`
-  has no later declaration, retraction or effective-time mode event in the deployment.
-  When `believed_at` precedes `evaluated_at` and any such event is later than
-  `believed_at`, it calls `memory_v1.fact_in_scope_support` to read the ledgers.
+  and traversal relies on surviving provenance. For other deployments, the helper
+  reads the ledgers through `memory_v1.fact_in_scope_support` only when `believed_at`
+  precedes `evaluated_at` and a declaration, retraction or effective-time mode event
+  in the deployment follows `believed_at`. It uses `document_version_scope` for the
+  remaining reads, including past pins with no later event.
 
 - **Conflicting dates.** The gate and the fact window are independent conditions and both
   must hold. If a claim's own validity says "from 2025" but its only occurrences are in an

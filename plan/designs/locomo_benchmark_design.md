@@ -14,8 +14,7 @@ The adapter is repository tooling around the public `MemoryClient`. Every real
 run must satisfy these gates:
 
 - exact dataset and manifests validate locally;
-- conversion and LLM worker classes run during ingestion and complete the
-  protocol's required stages;
+- the stock self-host profile composes all eleven continuous handlers;
 - D155 P3 publications for selected versions are complete over the same stores
   the API reads; full reconcile is available as repair. Live-graph readiness and
   committed-edge visibility are verified directly in PostgreSQL;
@@ -499,16 +498,9 @@ returns at most 400 lines from a file no larger than 256 KiB. These operative
 limits are present in the hashed descriptors, not only in implementation
 constants.
 
-Reader tools use `MemoryClient` and the normal P3 mount. Under proposed D163,
-a launcher verifies the running API image, resolved retrieval settings,
-live schema and database connections against the original run and the
-sample's frozen store on start and resume. It keeps the private service
-bound through the last checkpoint, with retrieval data read-only and cost
-receipts enabled on the restore. It verifies the evaluator's resolved
-non-secret OpenRouter settings and dispatches the recorded evaluator with the
-restored mount and original inputs. Using D163 requires explicit opt-in under
-a fresh run identity.
-[Benchmark admission](shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime)
+No benchmark tool reads Postgres, the object store, graph files, or internal
+handlers directly. Product reads go through `MemoryClient`; filesystem reads
+stay inside the normal P3 mount.
 
 ## 7. Answer loop
 
@@ -787,9 +779,6 @@ These comparison controls change no ingestion or D56 paid-reuse boundary.
 
 `run.json`, manifests, and rendered document hashes are immutable. `state.json` is atomically
 replaced after each ingestion, readiness checkpoint, answer, and judge.
-Under proposed D163, every writer holds the canonical checkpoint path lock
-from before state load or creation through its final write.
-[Checkpoint lock](shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime)
 
 ### No cross-revision ingest adoption
 
@@ -833,8 +822,7 @@ fresh prepared run and fresh ingestion rather than resuming over those records.
   response says a new version was created; before answering, the same exact
   checkpointed tuples equal the complete prepared sample.
 - Explicit ingestion model IDs are set; no rotating model router.
-- Run both the conversion and LLM worker classes during ingestion and
-  verify completion of the protocol's required stages.
+- All eleven workers are running.
 - Every prepared session has an ingest record.
 - Selected document P3 publication markers match current export inputs; live-graph
   catalog/grant/helper readiness and a committed-edge visibility probe passed.

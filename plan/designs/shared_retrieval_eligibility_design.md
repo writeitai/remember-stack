@@ -10,9 +10,10 @@ record why the existing document index must change. This amends D142/D149's
 physical execution and D23's unsupported UUID-derived pruning assumption;
 eligibility, ranking, finite budgets and D56 reuse semantics remain intact.
 
-> **Proposed amendment (D163, 2026-11-27).**
-> §4.3 and §9.1 specify evidence-first fact probes and stored-endpoint survivor
-> lookups. The approvals above cover D153. [D163](../../decisions.md#d163-drive-fact-eligibility-from-its-own-evidence) · [Hosted plan evidence](../analysis/evidence_driven_fact_eligibility_20261127.md)
+> **Proposed D163 amendment (2026-11-27).** §§4.3, 6.1 and 9.1 specify
+> evidence-first fact eligibility and stored-endpoint survivor lookups.
+> [D163](../../decisions.md#d163-drive-fact-eligibility-from-its-own-evidence) ·
+> [Hosted evidence](../analysis/evidence_driven_fact_eligibility_20261127.md)
 
 ## 1. Problem, evidence and intended result
 
@@ -354,13 +355,8 @@ is required on populated data. The PostgreSQL procedure is supported by
 
 ### 4.3 Facts: one source-qualified projection, one endpoint rule
 
-Public fact and evidence reads use the deployed set-based source joins in
-`v_memory_fact_source_qualified`, `v_memory_fact_claim_live` and
-`v_memory_claim_carried_periodised`. A broad SQL read can join eligible claims
-and facts as sets, avoiding a range-leaf probe for each fact's claim origins.
-Bounded native reads render the same source-qualified projection with the
-keyed probes below. Author the visibility, grouping and presentation
-expressions once for both forms. The source projection has these ordered columns.
+The private view `public.v_memory_fact_source_qualified` provides the
+source and presentation rows in this column order.
 
 ```text
 deployment_id, fact_kind, fact_id, subject_entity_id, predicate,
@@ -370,83 +366,25 @@ evidence_count_current, contradict_count_current, support_state_current,
 valid_precision
 ```
 
-Its per-kind `UNION ALL` arms keep the raw relation and observation fields.
-In the keyed form, look up each stored endpoint in `v_memory_entity_survivor`
-through an inner `LATERAL (... OFFSET 0)` filtered by the fact's deployment
-and endpoint ID. An observation resolves its subject. A relation resolves
-its subject and object.
+Its per-kind `UNION ALL` arms expose the stored relation and observation
+fields with resolved survivor IDs. Source membership requires raw evidence
+of either stance whose deployment, claim and document match a historical or
+carried claim. Keep the D54 demand-prunable lineage counts through
+`v_memory_evidence_lineage_live` and the D159 archive-aware support state.
+Use the deployed `p9_55_0076` definition for these expressions. Source
+membership is independent of the displayed counts and support state.
 
-Put the one forward merge walk in `v_memory_entity_survivor`. Its exposed
-`(deployment_id, entity_id)` comes directly from the `entities` seed,
-so the caller's two predicates bind that row before recursion. For each
-redirect, the recursive term uses its own `LATERAL (... OFFSET 0)` point
-lookup with `deployment_id = seed.deployment_id` and
-`entity_id = chain.merged_into` inside the lookup. Recursive `UNION`
-deduplicates `(entity_id, merged_into)` pairs, and only a terminal row
-with `merged_into IS NULL` emits a survivor. Missing seeds, dangling
-targets, cycles and cross-deployment redirects emit no row. The existing
-two-column `v_graph_survivor` projects this same walk.
+`v_memory_fact_visible` also requires the subject survivor to match
+`entities_current` by deployment and ID. A relation requires the same for
+its object. `memory_v1.facts_visible_history` projects the eighteen columns
+above explicitly. Preserve existing output types and column sets, including
+for whole-row and `*` consumers.
 
-In each keyed source-membership `EXISTS`, first select raw evidence through a
-`LATERAL (... OFFSET 0)` probe of the kind's evidence table. Put the
-deployment and candidate fact ID in that probe's `WHERE`. A second
-`LATERAL (... OFFSET 0)` probe binds the evidence row's
-`(deployment_id, claim_id, doc_id)` in both branches of the historical and
-carried claim `UNION ALL`. Binding the raw evidence inside its probe prevents
-semi-join conversion even when no claim qualifies. Either stance can qualify,
-including claims carried by a newer occurrence after loss of the origin.
-
-Use the private `v_memory_claim_history_by_id` only where a fact's evidence
-supplies claim IDs. Bind the claim by deployment and ID, then look up its
-origin chunk in `LATERAL (... OFFSET 0)` using the claim's
-`(deployment_id, doc_id, chunk_id)`. From that chunk, use a second such
-lookup to check its visible version and ready representation by their full
-coordinates. Both forms use `documents_live`, `document_versions_visible`
-and the same ready-representation check, including ready origins in
-superseded versions or replaced representations.
-Use set-based joins in `memory_v1.claims_visible_history` and its
-current-testimony subset `memory_v1.claims_live`. This lets broad reads
-join origins in one pass, avoiding a range-leaf probe for each origin.
-
-In the keyed carried branch, use `NOT EXISTS (... OFFSET 0)` against the
-private history view keyed by the claim's deployment and ID. Keep the
-current-testimony and period predicates. Bind the occurrence by deployment
-and claim ID. Inside the keyed chunk probe, match its deployment and chunk
-ID and require `ch.doc_id = claim.doc_id`. Check that the chunk belongs to a
-non-deleted version's current ready reading.
-
-Reuse the same keyed evidence and claim probes for current-lineage membership.
-Filter the private history view by `is_current_testimony` and include the
-keyed carried branch.
-
-For keyed D54 counts, apply the `v_memory_evidence_lineage_live` grouping to
-the keyed current-testimony rows, then aggregate with a left lateral join.
-Bind deployment, fact kind and fact ID below the grouping so the raw scan
-reads only that fact's evidence leaf and key. Count every eligible lineage
-once per stance, including exact zero totals. PostgreSQL can omit the
-aggregate when the caller requests no counts. Cast fact precision to text.
-For keyed `support_state_current`, bind deployment, fact kind and fact ID
-inside a `LATERAL (... OFFSET 0)` probe of `review_queue`. Use the partial
-B-tree `ix_review_open_support_fact` on
-`(deployment_id, (candidate ->> 'fact_kind'), (candidate ->> 'fact_id'))`
-for `support_withdrawn` reviews in `pending` or `deferred` status. The
-text keys match the stored JSON and the existing comparison. For each
-matching review, use a fenced `NOT EXISTS` check with keyed claim and
-document lookups to exclude it while its claim's document is archived
-(D159). Any remaining review marks the fact withdrawn. Endpoint visibility
-is checked separately.
-
-`v_memory_fact_visible` requires the subject survivor to match
-`entities_current` by deployment and ID. For a relation the object must
-match too. `memory_v1.facts_visible_history` projects the same
-eighteen columns explicitly from `v_memory_fact_visible`. The helper owns
-fact presentation. Preserve existing output shapes for consumers of
-whole-row or `*` projections.
-
-The native builder composes the keyed source projection with the same
-endpoint conjunction. Check that conjunction structurally against the
-migration's wrapper and compare complete rows across both forms. The shared
-D140 time gate below supplies the request-specific predicate.
+Under D163, `fact_eligibility_ctes` uses the keyed probes below for both
+candidate IDs and confirmed fact rows. Broad claim, fact and evidence SQL
+keeps set-based source joins. Share visibility and presentation predicates
+across the two forms, including the D54 and D159 expressions. Keep migration
+definitions immutable and verify the runtime endpoint rule against the public wrapper.
 
 For a native statement, materialize source-qualified **candidate IDs and
 required endpoint/ranking/time fields only** through per-ID constrained
@@ -459,125 +397,93 @@ equal has one lookup but retains distinct-entity coverage; either missing
 endpoint excludes it. Hydration obtains presentation/count fields only for
 eligible candidates. No `SELECT *` forces counts into nomination materialization.
 
+#### Candidate-bound source membership and survivor resolution
+
+For each kind, select the fact's raw evidence with deployment and fact ID
+inside a correlated `LATERAL (... OFFSET 0)` lookup. Feed those rows into
+the historical and carried membership arms. Bind deployment, claim ID
+and document inside each arm. The lateral lookup receives keys from the
+previous row, and `OFFSET 0` keeps PostgreSQL from flattening it into a
+join that can start with unrelated evidence.
+
+In the private `v_memory_claim_history_by_id` lookup, use the claim's
+deployment, document and origin chunk ID inside a fenced chunk lookup.
+Check the live document and fence the visible-version and ready-representation
+probes by the chunk's full coordinates. Preserve ready origins in superseded
+versions or replaced readings. The carried arm uses the same keyed origin
+check inside `NOT EXISTS (... OFFSET 0)`. It requires current testimony in
+a periodised live document and an occurrence in a non-deleted version's current
+ready reading. Bind the occurrence by deployment and claim ID, then its chunk
+by deployment and chunk ID with `ch.doc_id = claim.doc_id` inside the probe.
+[Deployed history](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L257) ·
+[Deployed carried membership](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174)
+
+Resolve each stored endpoint in its own `LATERAL (... OFFSET 0)` lookup
+of `v_memory_entity_survivor`. The fact's deployment and stored subject ID
+bind the seed. A relation supplies its stored object ID for the second
+lookup. The view exposes the seed's deployment and entity ID directly.
+At each redirect, use a fenced point lookup on the seed deployment and
+the previous row's `merged_into` ID. Recursive `UNION` deduplicates
+`(entity_id, merged_into)` pairs, and only a row with `merged_into IS NULL`
+yields a survivor. Missing seeds, dangling targets, cycles and foreign
+hops yield no survivor. `v_graph_survivor` projects this same walk in its
+existing two-column shape. Apply the shared `entities_current` check to the
+resolved endpoints as above.
+
 #### Evidence-driven D140 time gate
 
-One typed `fact_in_scope` builder in `core/text_scope.py` serves both the
-nomination/confirmation paths in PostgreSQL P1 and final fact hydration in
-`surfaces/query_engine.py`. Use the predicate per fact, in the same D142
-snapshot and before each eligible cut. Scoped or keyed exact nomination uses
-it in the ranked statement. Broad nomination keeps its join-free index
-cursor and uses it in batch confirmation. Final confirmation and contradiction
-members use the same predicate and keep the request's ranks and filters.
+Use the same typed `fact_in_scope` predicate in scoped or keyed P1
+nomination, batch confirmation of the broad index cursor, final fact
+confirmation and contradiction membership. Apply it per candidate in the
+same D142 snapshot and scope before each eligible cut. Keep the broad
+cursor on its existing D142 index path. Reuse the existing
+ranking, tie breaks, filters, budgets, and presentation of confirmed facts.
 
-For the current-belief arm, the following is the SQL shape of one occurrence
-existence probe. Render the observation arm with its own fixed evidence table
-and ID column. `supports_only` is a branch constant and `f` is the bounded
-candidate fact. A lateral lookup takes inputs from the previous row.
-`OFFSET 0` keeps PostgreSQL from flattening that lookup into freely reorderable
-joins. Existence testing can stop at the first qualified occurrence.
+For current belief, use correlated `LATERAL (... OFFSET 0)` lookups in
+this order for both fact kinds.
 
-```sql
-EXISTS (
-  SELECT 1 FROM LATERAL (
-    SELECT e.deployment_id, e.claim_id FROM public.relation_evidence e
-    WHERE e.deployment_id = f.deployment_id AND e.relation_id = f.fact_id
-      AND (NOT :supports_only OR e.stance = 'supports')
-    OFFSET 0
-  ) e CROSS JOIN LATERAL (
-    SELECT cc.deployment_id, cc.chunk_id FROM public.chunk_claims cc
-    WHERE cc.deployment_id = e.deployment_id AND cc.claim_id = e.claim_id
-    OFFSET 0
-  ) occ CROSS JOIN LATERAL (
-    SELECT c.deployment_id, c.version_id, c.representation_id FROM public.chunks c
-    WHERE c.deployment_id = occ.deployment_id AND c.chunk_id = occ.chunk_id
-    OFFSET 0
-  ) c CROSS JOIN LATERAL (
-    SELECT 1 FROM public.document_versions v
-    JOIN public.document_version_scope s
-      ON s.deployment_id = v.deployment_id AND s.version_id = v.version_id
-    WHERE v.deployment_id = c.deployment_id AND v.version_id = c.version_id
-      AND v.current_representation_id = c.representation_id
-      AND (NOT s.periodised OR (s.selectable AND s.in_force && :scope_window))
-    OFFSET 0
-  ) readable
-)
-```
+1. Bind raw evidence by deployment and fact ID, with the requested stance.
+2. Bind `chunk_claims` by that evidence row's deployment and claim ID.
+3. Bind `chunks` by the occurrence's deployment and chunk ID.
+4. From the chunk, bind the version and `document_version_scope` by
+   deployment and version. Require the chunk's representation to be the
+   version's current reading. For undeclared lineages, any live version
+   satisfies the time check. For periodised lineages, require a selectable
+   version whose in-force interval overlaps the inclusive `TextScope` window.
 
-Accept if the supports-only probe succeeds, or if a fact-ID probe finds
-**zero raw `supports` rows** and the either-stance probe succeeds. In both
-fact kinds, put `OFFSET 0` inside the raw-support `NOT EXISTS` along with the
-correlated deployment and fact IDs and `stance = 'supports'`. This keeps
-PostgreSQL from turning the absence check into a hashed scan of unrelated
-evidence. A raw support row disables contradiction fallback even when its
-only occurrence was deleted or left in a replaced reading. An empty evidence
-set fails. `scope_window` is D140's inclusive `TextScope` window.
-The scope row enforces live lineage/version membership. Undeclared lineages
-keep their any-live-version case, while periodised lineages require a
-selectable version overlapping the window. Reused claims qualify through
-their recorded occurrences. D118 fact clocks and D54 presentation are
-independent. The historical-belief ledger arm and reconstructed identity use
-their existing authorities. D140's pending-lineage counterfactual stays a
-freshness probe with the distinct content regime in §4.2.
+Pass when a supporting occurrence qualifies, or when there are zero raw
+`supports` rows and an occurrence of either stance qualifies. Place
+`OFFSET 0` **inside** the raw-support `NOT EXISTS` with the fact ID,
+deployment and stance, so the planner cannot hash unrelated evidence.
+Support outside the scope, including in a deleted version or replaced
+reading, still disables the either-stance branch. Empty evidence fails.
+The pinned-belief ledger path and reconstructed identity use their existing
+authorities. The pending-lineage counterfactual in §4.2 supplies freshness
+metadata only.
 
-The time and source gates reuse the existing serving indexes. The fact ID
-selects one hash leaf and leads its evidence primary key.
-`ix_chunkclaims_claim` retrieves occurrences by claim ID and the
-`chunks_pkey` prefix retrieves their chunks. Version and
-scope probes use the primary keys `document_versions(version_id)` and
-`document_version_scope(deployment_id, version_id)`. Source membership uses
-the unpartitioned `claims` primary key. The survivor walk uses existing
-entity keys, with the deployment bound at the seed and each hop.
-
-With `E` evidence rows and `O` matching occurrences for one candidate, one
-occurrence probe needs up to `E × P_occ + O × P_chunk` range-leaf lookups,
-where each `P` is that table's retained partition count. Sum these and the
-fact-evidence and version lookups over candidates, with a bounded number
-of stance checks per fact. This applies D153's per-partition allowance to
-known claim and chunk coordinates, removing the unrelated-chunk multiplier.
-Retain per-leaf planning and index costs in the measurements. Use default
-PostgreSQL join planning for eligibility SQL. The D142 index cursor retains
-its existing attestation contract.
-
-#### Representative evidence and document filters
-
-Start `_facts_context_evidence` from confirmed fact keys. Apply the keyed
-current-lineage lookup by deployment, kind and fact ID before grouping.
-Reuse the claim-keyed occurrence and readable-version probes from
-`fact_in_scope` in `claim_in_scope` and when fetching the chosen claims'
-displayed occurrences. Keep D140's existing selectors for each read. Use
-those probes in the D156 fact paths too. In `fact_supported_matching`, bind
-the supporting evidence and claim with the same lookup boundaries and keep
-the live-claim predicate.
-`matching_occurrence_exists` checks scope and document metadata on the same
-occurrence, with the metadata lookup bound to that occurrence's version.
-
-Keep the existing D54 grouping by lineage and stance. Compute exact
-in-scope and matching-lineage totals and ranks from that grouping, then
-materialize the rows within each stance's display limit. From each selected
-row, read `claims` by deployment, representative claim ID and lineage ID
-inside a `LATERAL (... OFFSET 0)` lookup. Read the display metadata from
-`memory_v1.documents_live` through a second such lookup by deployment and
-document ID. The claim read uses its stored fields even if its origin chunk
-has been deleted. Preserve D156's matching-first order, timestamp and ID
-tie breaks, stance budgets and citation coordinates. The fact's current
-lineage counts remain independent of the request's time and document filters.
+Use the existing indexes under normal join planning. A fact ID selects one
+evidence hash leaf. `ix_chunkclaims_claim` and the `chunks_pkey` prefix
+can probe each retained range leaf for a known claim or chunk ID. For a
+fact with `E` evidence rows and `O` matching occurrences, a stance probe
+uses at most `E × P_occ + O × P_chunk` such probes, where each `P` is
+that table's retained leaf count. The base `claims` key is unpartitioned.
+This removes the unrelated-chunk multiplier seen in the hosted plans.
+[Hosted evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#hosted-workload-and-paired-prototype)
 
 #### Consumers and exact scope
 
 | Consumer | Required integration |
 | --- | --- |
-| `facts_visible_history`, `facts_current` | Project the set-based authority through `v_memory_fact_visible` with existing columns, counts and time rules |
-| `fact_claim_evidence_live`, `evidence_lineage`, `v_memory_page_citation_visible`, `changes_visible` | Use the same set-based membership through `v_memory_fact_visible` and verify complete rows, including whole-row projections |
-| P1 scoped/keyed and scored fact nomination, broad fact-loop confirmation | Shared bounded source/endpoint builder and D140 gate before the cut, with the existing kind/time/evidence/model/filter/coverage predicates |
-| `_CONFIRM_FACTS_CONTEXT_BY_KIND` | Same bounded builder and gate for full eligible hydration and original nomination ranks |
-| `_facts_context_evidence`, selected evidence occurrences | Keyed live-claim and occurrence probes, exact totals and ranks, then keyed representative reads within the display limits |
-| `_FACTS_CONTEXT_CONTRADICTION_MEMBERS` | Enumerate matching group fact IDs, then apply shared endpoint qualification and the D140 gate with existing group count/member semantics and deadline |
+| `facts_visible_history` | Explicit eighteen-column projection of the full authority; same rows, types, counts and values |
+| `fact_claim_evidence_live`, `evidence_lineage`, `v_memory_page_citation_visible`, `changes_visible` | Keep complete membership through `v_memory_fact_visible`; audit whole-row projections, preserve all public values and do not add a second source/endpoint truth query |
+| `_FACT_AUTHORITY_JOIN`: scoped nomination, fact loop and scored fact search | Replace per-row endpoint checks with the shared bounded builder, preserving kind/time/evidence/model/filter/coverage predicates |
+| `_CONFIRM_FACTS_CONTEXT_BY_KIND` | Same bounded builder for full eligible hydration and original nomination ranks |
+| `_FACTS_CONTEXT_CONTRADICTION_MEMBERS` | Enumerate matching group fact IDs with current time predicates, then shared endpoint qualification; exact existing group count/member semantics, same deadline, no invented group cap |
 | `graph_queries.py`, SQL sandbox `nomination.py` | Preserve complete public authority for graph traversal/sandbox SQL; use shared builder where they call bounded native fact nomination. No private helper becomes caller-reachable |
 
-Keep the source and keyed claim history helpers in
-`AUTHORIZATION_HELPER_VIEWS` as hashed dependencies. Both are owned by
-`rememberstack_view_owner` and stay outside public discovery and query-role
-reachability.
+Register the new helper in `AUTHORIZATION_HELPER_VIEWS`, revoke PUBLIC and all
+query-role grants, and assign `rememberstack_view_owner`. Its AST becomes a
+hashed dependency; it is absent from public discovery/reachability.
 
 A scope below the unchanged 50,000 raw-row budget may still have expensive
 source qualification or many distinct
@@ -613,54 +519,75 @@ thresholds or adding a new public exact-search mode is outside this change.
 
 ## 6. Implementation contracts and migration
 
-D163 starts from a database migrated to `p9_55_0076` (v0.22.4). Use its
-deployed definitions as the upgrade and downgrade reference, including
-D159's archive-aware `FACT_SOURCE_ARCHIVE_DDL`. The `p9_46_0067` oracle and
-pin transitions belong to [D153's historical delivery](../plans/shared_retrieval_eligibility.md).
-[Archive migration](../../src/rememberstack/spine/migrations/versions/p9_55_0076_archive.py#L187)
+The original D153 migration contract records the transition from
+`p9_46_0067`. The proposed D163 migration uses §6.1.
 
-Build `ix_review_open_support_fact` concurrently in its own Alembic
-revision. Reuse the session lock and invalid-index retry checks in §4.2
-and verify the index definition and validity before use. Create or replace
-one view per revision, in this order.
-
-1. `v_memory_entity_survivor`, with the deployment-bound walk.
-2. `v_graph_survivor`, projecting that walk.
-3. Create `v_memory_claim_history_by_id` with the keyed origin probe.
-
-Downgrade in reverse order, restoring the exact `p9_55_0076` definitions and
-comments and dropping the new view after its callers are restored. Then drop
-the review index concurrently in its own revision.
-Between the survivor replacements both views walk `entities` directly,
-so callers can use either view and see the same results on valid chains.
-Preserve columns, types, owners, grants and public comments at every step.
-Each commit releases the target's exclusive lock. A reader can then
-finish through a dependency before the migration needs an exclusive lock on
-the reader's caller view. Keep historical migrations immutable. Native
-statements use typed builders with fixed SQL identifiers and bound values.
-
-Verify that the set-based claim, fact and evidence forms match the deployed
-public DDL. Register the new and replaced DDL in
-`source_definitions.py`, with the private views in the hashed dependency set.
-Regenerate the manifest and any affected deletion matrix, verify catalog
-definitions and ACLs, and run normal saved-query revalidation. A changed private dependency changes the
-manifest identity even with stable public columns. Advance the D152
-schema-head pins in `storage_capture_guard.py` and `storage_capture_catalog.py` from
-`p9_55_0076` to the new head. Add the review index and private view to the
-native catalog inventory and qualify the guards and resource inventory there.
-Protected benchmark identities follow §9.1.
-
-Verify previous-release reads and writes at each intermediate revision under
-D160. Keep the D161 session migration lock across the commits, with the
-three-second default lock wait and bounded `55P03` retry from the last
-committed revision. Start the new release at the final head.
-[Migration compatibility](packaging_distribution_design.md#61-migration-compatibility)
+- Add simple typed SQL builders at the engine-owned core/spine boundary.
+  Source/presentation authority is the new private helper; only the small
+  endpoint conjunction is assembled at runtime and pinned to the migration.
+  Variable table/column fragments are internal enums/literals. Every SQL path
+  binds deployment and IDs normally.
+- Replace the per-row claim/chunk coverage aggregates and obsolete callers
+  in the same change. Keep no feature-flagged old SQL path or hidden fallback.
+- Install private fact projection/wrapper and entity-provenance view changes
+  through a new Alembic migration. Historical migration files remain immutable;
+  the working runtime/source manifest has one current authority definition.
+- Keep private helper ACLs/ownership consistent with the existing query-space
+  design: not part of `memory_v1`, no grant to PUBLIC or the query role, and no
+  new route around the public SQL sandbox's reachability checks.
+- Correct the existing source-manifest gap: `source_definitions.py` currently
+  hashes the pre-D140 fact helper instead of the widened deployed definition,
+  and omits `v_memory_claim_carried_periodised`. Register that carried-claim
+  helper and the actual widened `v_memory_fact_claim_live`/fact authority text
+  as hashed dependencies, with private ACLs/ownership. Re-emit the widened
+  `v_memory_fact_claim_live` body as literal current migration DDL, unchanged
+  semantically; hash that literal, not a stale pre-D140 definition. Do not claim a complete
+  dependency hash while leaving that gap unresolved.
+- Register changed authored DDL in query-space source definitions, regenerate
+  the canonical manifest/deletion matrix where affected and exercise normal
+  saved-query revalidation. Published view and every column comment remain
+  explicit literal migration output, including `facts_visible_history`.
+- Update `catalog_contract.py`'s `EXPECTED_INDEXES` and `EXPECTED_VIEWS` for
+  the new index/helper. Move the single current schema-head pins in
+  `storage_capture_guard.py` and `storage_capture_catalog.py` from
+  `p9_46_0067` to the actual new head; do not add an old-head fallback. Qualify
+  D152 capture guards, resource classification/inventory and index allocation
+  at that head. The new index changes retained physical allocation. Public columns/types remain stable, but a changed
+  public view AST is a real query-space identity change, not an unchanged pin.
+- Update current LoCoMo surface pins if their qualified manifest changes;
+  preserve frozen historical profiles and results. New validation/answer runs
+  record their actual source and execution identity; do not edit old fingerprints.
 
 No converter, structurer, extractor, resolver, normalizer or embedding generation
 changes. No new paid-product key, source identity or source-origin input.
 Existing documents, claims, facts and vectors are reused without ingestion.
 D56 remains unchanged. A schema/read-path migration does not authorize a
 paid rebuild or relabeling existing ingestion metadata.
+
+### 6.1 D163 migration
+
+Start from the deployed archive-aware `p9_55_0076` schema. Use separate
+Alembic revisions in the following upgrade order.
+
+1. Replace `v_memory_entity_survivor` with the walk directly over `entities`.
+2. Replace `v_graph_survivor` with a projection of the memory survivor view.
+3. Create the private keyed claim history lookup.
+
+Downgrade in reverse order, restoring the deployed definitions. Under D160,
+both survivor views serve previous-release readers between commits.
+Replacing a dependency and its caller together can deadlock a reader
+holding the caller's lock and waiting on the dependency. Commit each
+replacement before acquiring the next exclusive view lock. Under D161 the
+runner holds its migration session lock across commits and retries
+`55P03` from the last committed revision using its bounded schedule and
+three-second default lock wait.
+[D160 and D161](packaging_distribution_design.md#61-migration-compatibility)
+
+Preserve owners, grants, column contracts and comments at each step.
+Register changed definitions as hashed dependencies with the existing
+private helper ACLs, refresh affected manifest and deletion metadata
+and run saved-query revalidation. Advance the catalog and D152 head pins.
+Reuse stored documents, claims, facts and vectors under D56.
 
 ## 7. Failure, security and operational behavior
 
@@ -682,20 +609,11 @@ operational validation. Prototype and production results have separate
 provenance. The unrelated partial-ingestion failure in the active campaign
 must not be relabeled a retrieval failure or silently marked ready.
 
-After bulk ingestion or restore, operators can refresh stale statistics on
-affected `chunk_claims`, `chunks` and fact-evidence parents. PostgreSQL 18's
-ordinary parent `ANALYZE` also refreshes its leaves, including small evidence
-leaves that seldom reach the autoanalyze threshold. Adopt this maintenance
-where before/after measurements on a restored copy justify it. Both SQL
-shapes are measured before and after. The serving query must qualify with
-sparse statistics. [Statistics evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#statistics-after-bulk-ingestion)
-
 ## 8. Economics and alternatives
 
-The partial review index adds storage and write work for open withdrawals.
-Record index size, build duration and WAL. Request-local ID and coverage
-materialization can spill to disk. Keep projected fields narrow and inspect
-temporary block usage.
+No new model/provider calls, persistent search copy or per-document paid work
+is introduced. Request-local ID/coverage materialization uses PostgreSQL memory
+and may spill; keep projected fields narrow and inspect temp block usage.
 Work grows with actual bounded scope/provenance, not just requested k.
 Exact ranking 50,000 1,536-dimensional vectors still examines 76.8 million
 components. Do not claim it is free or make all-project exact scans the default.
@@ -715,9 +633,10 @@ Rejected alternatives:
 
 ## 9. Acceptance and approval gates
 
-These are D153's original implementation gates. They retain the baseline,
-schema transitions and approval record for that change. D163's proposed
-qualification is in §9.1.
+The required Claude Opus design approval is recorded in the linked round-3
+review; prior blocking reviews and inputs are retained alongside it. The
+following gates describe the original D153 implementation. D163 has its own
+qualification in §9.1.
 
 1. **Independent complete oracle:** build a dedicated database by migrating
    the repository to **`p9_46_0067`**, including D140's real widened helper
@@ -774,375 +693,88 @@ qualification is in §9.1.
    the widened D140 dependency ASTs and carried-claim helper are actually hashed.
    Publish actual limits and risks.
 
+A full LoCoMo answer/judge replay can follow the merged, qualified fix using
+the retained stores and original model/prompt policy, with separately saved
+answers and verified GCS backups. It cannot be used in place of eligibility
+or concurrency qualification.
+
 ### 9.1 D163 fact-path qualification
 
-**Equivalence oracle.** Compare the v0.22.4 native SQL and its actual
-`p9_55_0076` views against D163 on isolated copies with identical data,
-frozen vectors and pinned clocks. Use PostgreSQL 18 copies of retained
-LoCoMo conv-26/30 and conv-47 data and a hosted-shaped store with the
-observed partition and evidence distribution. Compare gate booleans on
-complete input IDs and both directions of the `(fact_kind, fact_id)` set
-difference before cuts. Compare ordered native results with multiplicities,
-scores, counts, representative evidence coordinates, filters, and freshness
-and boundary metadata. Include scoped and keyed nomination, broad batch
-confirmation, final hydration and contradiction members. Apply §9's
-visibility, snapshot and cancellation checks to the changed path. Exercise
-populated upgrade and downgrade with live catalog and row comparisons at
-`p9_55_0076` and at the new head. In both directions, admit a previous-release
-reader between replacements and hold its transaction open through the next
-contended view replacement. Check that the reader completes and that the
-migration resumes from the last committed revision after `55P03`. Any `40P01`
-fails the test.
+**Equivalence oracle.** Restore LoCoMo conv-26, conv-30 and conv-47 and a
+hosted-shaped fixture at the deployed v0.22.4 schema, `p9_55_0076`. Run that
+gate and D163 on paired copies with identical data, vectors, filters and read
+instants. Require empty set differences in both directions on
+`(fact_kind, fact_id)` for the complete candidates at each eligible cut.
+Exercise scoped and keyed nomination, broad batch confirmation and final
+confirmation, including agreement between stages for the same inputs.
+Run the baseline to completion with a recorded diagnostic timeout if needed.
+Equal eligible sets prove that completed LoCoMo reads supply the same retrieval
+inputs to the existing ranking, tie breaks and hydration.
 
-Use a legacy-corruption fixture with a redirect from deployment A through
-deployment B to a terminal in A. The composite redirect foreign key prevents
-this in normal writes. The deployed adapter accepts that chain because its
-seed and terminal share a deployment. D163 rejects the first foreign hop, so
-the chain has no survivor and a fact using that endpoint is absent. Record
-those differences explicitly in the oracle and require equality on valid
-chains.
+- Cover D140 `current`, `at`, `overlap` and `history` with disjoint periods,
+  exact boundaries, retractions, a cleared declaration mode and an earlier
+  belief pin. Include undeclared historical support, an unready in-force
+  edition with an older readable version, a replaced reading, version
+  deletion, archive/forget and carried claims with a missing origin or
+  several occurrences. Test a sole carried occurrence in a different
+  document in the same deployment, with a same-document positive control.
+- Include absent evidence, contradiction-only evidence, and raw support
+  outside scope with an in-scope contradiction. Check D118 time filters,
+  high-ranked ineligible facts and pending-lineage freshness. Keep the D159
+  regression for a fact still supported by another document when a pending
+  or deferred withdrawal review on an archived claim becomes moot. Check
+  that it applies again on unarchive and that reviews on active claims
+  still apply.
+  [Archive regression](../../src/tests/workers/test_lifecycle_reconciliation.py#L2255)
+- Compare resolved endpoints on valid chains, including self-relations,
+  invisible endpoints, merges and unmerges. Test cycles, dangling and foreign
+  hops. In a separate corrupt-store fixture, A → B → A passes the old
+  adapter's seed/terminal deployment check but fails at the foreign hop in
+  D163, excluding the dependent fact. The redirect foreign key prevents
+  this chain on valid stores.
 
-Seed the hosted-shaped store with both fact kinds under D140 `current`, `at`,
-`overlap` and `history`, including disjoint periods, exact interval boundaries,
-retractions, a cleared declaration mode and a pinned earlier belief. Exercise
-an unready in-force edition with older readable text, historical support in
-undeclared lineages, a replaced reading, version deletion, archive/forget,
-a carried claim with a deleted origin and a periodised claim with multiple
-occurrences. Include absent evidence, contradiction-only evidence, support
-outside the scope alongside an in-scope contradiction, mixed valid evidence
-and both D118 clock filters. Verify invisible, merged and self-relation
-endpoints. Check that an ineligible high-scoring fact takes no result slot
-and that pending nomination supplies only freshness metadata. Retain the
-D159 regression for a fact still supported by another document. Check both
-pending and deferred withdrawals. A review on the archived document's claim
-stops marking the fact withdrawn while archived and applies again on
-unarchive. An open review on another active document still applies.
-[Archive regression](../../src/tests/workers/test_lifecycle_reconciliation.py#L2255)
+**Executed work and latency.** Use PostgreSQL 18 on 2 vCPU / 4 GB with
+normal join planning and fixed vectors. Inspect custom and generic plans
+with sparse and refreshed statistics. Vary unrelated rows, retained leaves
+and candidate evidence fanout independently. Check one evidence leaf per
+probe in the raw-support absence test and separately in source membership
+when neither claim arm qualifies. Check keyed origin work as chunks grow
+in the same document, with and without qualifying carried evidence. Check
+claim/chunk-coordinate probes and one seed plus one keyed lookup per hop
+for both stored relation endpoints. Report planning, buffers and leaf work.
 
-**Work and latency.** Collect actual plans with buffer counts and separately
-time uninstrumented SQL including planning, with at least 40 warm samples per
-stratum. Report p50/p95, planning time, leaf loops, rows read and rejected,
-temp spill and completion. Vary unrelated rows, retained partitions and
-candidate-owned evidence/occurrences independently. Require one evidence hash
-leaf per probe, claim/chunk-keyed range probes and one seed per stored endpoint.
-Hold candidate IDs and leaf counts fixed as unrelated rows grow. Measure
-both relation endpoints separately with multi-hop chains and verify that
-each step visits only its next entity. Explain both keyed source arms
-separately from the time gate. Use the keyed history and carried branches with
-a missing origin chunk, testing both a qualifying carried occurrence and no
-qualifying occurrence. Grow unrelated chunks in the claim's own document
-and require origin work to stay keyed to its chunk ID, with only the
-existing range-leaf overhead. A visible origin still excludes the claim
-from the carried branch. Compare the keyed view's complete rows with the
-public history view at the same keys, and compare its current-testimony
-subset with `claims_live`. Give a periodised claim with a missing origin just
-one occurrence, in a current ready reading of another document in the same
-deployment. Require both source qualification and live-evidence membership
-to reject it for relations and observations, through the native and public
-paths. A same-document occurrence is the positive control.
+Run uninstrumented SQL including planning and native `facts_context`
+under the existing budgets (`k=50`, candidate depth 200, at least 40 warm
+samples per stratum). Record p50/p95 and completion. These are qualification
+targets for warm single-reader p95.
 
-Qualify SQL reads of both public claim views with no claim ID predicate
-against `p9_55_0076`. Include a broad aggregate and BEAM's text-filtered,
-ordered sample. Grow corpus size and range-leaf count independently.
-Compare results, executed rows, leaf loops, buffers and completion under
-the same SQL deadline. Require comparable work and completion wherever
-the baseline completes. [BEAM claim sample](../../benchmarks/rs_harness_beam/answer_agent.py#L62-L68)
+| Store | P1 confirmation | Native wall time |
+| --- | --- | --- |
+| Hosted shape, 804 observation and 535 relation inputs | ≤1 s per batch | ≤5 s |
+| 300k and 3M chunks, ten range leaves, fixed candidate evidence | ≤2 s | ≤10 s for broad and bounded scoped reads |
+| 120 monthly leaves plus default, same candidates and evidence | ≤5 s | Existing operation deadline |
 
-Use the SQL sandbox with its existing deadline and caps to compare broad fact
-and evidence reads against `p9_55_0076`. Run both BEAM `facts_current` queries
-as written. Require the same typed SQL error for the sample's `label`
-reference. Also time the ordered sample with `fact_label AS label` and broad
-reads of `fact_claim_evidence_live` and `evidence_lineage` without fact IDs.
-Vary fact count, evidence per fact and retained range leaves independently.
-Compare values, completion, executed work and buffers. Require comparable
-work and completion for each valid query where the baseline completes, with
-set-based source joins that avoid per-fact origin probes at scale.
-[BEAM fact queries](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L61) ·
-[Public columns](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L228-L246)
+Require completion and exercise the 50,000-raw-row scoped boundary.
+For the shared view dependency, check broad `claims_visible_history`,
+`claims_live`, `facts_current`, `fact_claim_evidence_live` and `evidence_lineage`
+reads without ID filters. Keep baseline rows, work and completion comparable
+under the existing sandbox deadline as corpus size, evidence fanout and
+partitions grow independently. Include both BEAM fact queries, keeping the
+typed error for `label` and timing `fact_label AS label`.
+[BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)
 
-Exercise the raw-support absence check for both kinds with in-scope
-contradictions. A contradiction-only fact passes. Adding raw support whose
-occurrences are all out of scope makes it fail. Confirm from executed plans
-that the absence check visits only the candidate evidence leaf as unrelated
-evidence grows, including in that leaf. Also measure source qualification
-when raw evidence exists and no historical or carried claim qualifies.
-Require bounded rows read and rejected as unrelated rows grow.
+**Migration check.** Upgrade and downgrade a populated store. Admit a
+previous-release reader between replacements and hold it open through
+the next contended replacement in each direction. Require reader completion,
+`55P03` recovery from the committed revision and zero `40P01` deadlocks.
+Check the resulting definitions, grants and eligible sets at each head.
 
-Collect executed plans for full fact hydration with counts, support state,
-representatives and displayed occurrences, with and without `documents`
-filters. Keep requested facts, their evidence, reviews and partition counts
-fixed. Independently grow unrelated open reviews in the same deployment,
-claims, documents and occurrences. Require fact-keyed review probes even
-when nothing qualifies, and claim and document point reads only for the
-selected representatives. Compare support state, both stance counts, in-scope
-and matching totals, representative order and citation coordinates against
-the oracle. Include several claims from one lineage. Verify that a reused
-claim with one in-scope occurrence and a different metadata-matching
-occurrence fails the matching-occurrence check. Retain the counts-omitted
-plan check for ID-only reads.
+#### Follow-ups (not part of D163)
 
-Run forced custom and generic prepared plans under sparse and refreshed
-statistics. At each scale, pair full native runs on the same data. Include
-absent and high-fanout evidence, cold cache and eight-reader behavior under
-the existing deadline. [PostgreSQL 18 probe evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#source-helper-and-survivor-probes)
-
-Proposed warm single-reader p95 targets on PostgreSQL 18.6, 2 vCPU/4 GB, with
-frozen vectors and the existing `k=50` and candidate depth 200:
-
-| Stratum | Qualification target |
-| --- | --- |
-| Hosted shape, 804 observation and 535 relation inputs | ≤1 s per P1 confirmation statement and ≤5 s for native `facts_context` wall time |
-| 300k and 3M chunks, fixed candidate evidence, ten retained range leaves | ≤2 s per P1 batch and ≤10 s native wall time for matched broad and bounded scoped requests |
-| 120 monthly leaves plus default, same candidates and their evidence | ≤5 s per P1 batch, with linear leaf-probe overhead and planning time reported separately |
-
-The timed requests must complete without early stops. Also measure the
-unchanged 50,000-raw-row scoped edge under the existing operation deadline.
-Keep the recorded values distinct from these proposed acceptance targets.
-
-#### Benchmark admission and lifetime
-
-An external launcher guards LoCoMo `answer` and live `retrieval-ablation`,
-and BEAM `answer-retrieval`, on every start and resume, including BEAM
-`--force`. Keep immutable pins alongside the run manifests for endpoint,
-serving revision, API image digest, resolved server retrieval settings,
-packaged manifest hash, live Alembic revision and expected presence and
-definitions of the views affected by D163. Match the running container's
-platform-specific image digest to the original run, using the immutable
-image ID for an original local build. Run the recorded API entry point
-and serve code from that image. Also check the API's environment-supplied
-revision. Resolve the non-secret settings from the actual launch with the
-recorded build's defaults and overrides. Compare the database budget
-(`retrieval_database_budget_s`), pool and admission limits, embedding model
-and routing, and effective graph and SQL limits. [Pinned profile](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L1342-L1398) ·
-[Build label](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L2158-L2164)
-
-When the scoring store is frozen, pin its deployment ID, verified snapshot
-or restore manifest digest and storage image identities. Key the store
-binding by run and sample in LoCoMo and by run and arm in BEAM. Recover
-legacy pins only from original run records or a verified restore that
-attests them. Missing or mismatched pins abort before retrieval, provider
-calls or checkpoint writes.
-
-For BEAM, also pin the SHA-256 of the complete ordered `questions.json`,
-the evaluator revision and the effective reader settings, including the
-answer model after defaults are resolved. Run the clean evaluator with
-its locked dependencies, a read-only snapshot of the verified questions
-and the pinned settings. Question text and ability drive retrieval and
-prompting even when IDs match.
-[BEAM resume](../../benchmarks/rs_harness_beam/answer_agent.py#L725) ·
-[BEAM CLI](../../benchmarks/rs_harness_beam/cli.py#L174)
-
-Every checkpoint writer takes a filesystem lock keyed by the canonical
-output `state.json` path before load or creation. Use a stable lock file
-outside the output directory and hold it through the final write and writer
-exit. Native LoCoMo samples and commands, including `judge`, share the lock
-for their run. Ablation writers, including review, lock their ablation
-output. BEAM arms share their run's lock, including with `--force`.
-
-Acquire the store lock first when both locks are needed, reusing the shard
-runner's lock when it already holds it. Start or verify the store while
-holding the store lock. Restore, wipe and service replacement share that
-lock. Keep setup, migrations, workers, projection refresh, partition
-maintenance and automatic restarts disabled.
-
-Expose the pinned API only through the launcher's allowlist of read methods,
-routes and operation names. Reject ingest and other mutations there, including
-when the underlying self-host API has no authentication. Serve objects with
-read/list credentials and mount the corpus read-only. Keep database ownership
-and administrative credentials with the launcher. Use a non-owner,
-non-superuser API login with read grants, graph reader role membership and
-permission to set the existing `temp_file_limit`. Check effective grants, including
-role memberships and `PUBLIC`, for denial of retrieval data changes, schema
-changes and mutation routines. Keep the sandbox role read-only.
-
-The primary API login also gets `INSERT` on `surface_cost_ledger` and the
-`INSERT`, `SELECT` and `UPDATE` privileges needed by the fallback upsert on
-`surface_cost_meter_state`. These grants let native and SQL semantic reads
-write their receipts on the private copy while retrieval relations stay
-read-only. [Pinned cost recorder](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/spine/surface_cost.py#L269-L299) ·
-[Pinned graph connection](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/surfaces/graph_queries.py#L411-L426)
-
-Bind every effective API database connection, including the primary,
-retrieval and graph pools and the open-query role, to the same private
-PostgreSQL listener and database on the verified restored volumes.
-Resolve the running instance's connection settings, including
-`query_role_host`, `query_role_port` and driver overrides. Allow only that
-database destination. Before dispatch, confirm each role connects to the
-process serving the verified volumes. Check the packaged manifest and verify
-`public.alembic_version` and the pinned view catalog using `pg_get_viewdef` on
-that database.
-[Pinned query-role factory](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/profiles/selfhost.py#L784-L822)
-
-Give every reader the route to that exact API. LoCoMo's `codex-p3-mcp` child
-receives the route and credentials through `REMEMBER_API_URL` and
-`REMEMBER_API_KEY`. Bind the route exclusively to the admitted API, with
-redirects and fallback disabled. Service loss invalidates the route and
-ends the invocation. Hold the store lock and binding through evaluator and
-reader child exit and the last checkpoint write. The shard can then switch
-to the next sample's verified store while holding its lock.
-[BEAM client](../../benchmarks/rs_harness_beam/answer_agent.py#L692) ·
-[MCP child](../../benchmarks/locomo/ablation.py#L1821) ·
-[Store lock](../../benchmarks/locomo/sharding/store_backup.py#L247)
-
-Run the pinned BEAM retrieval routine with a client bound to that admission.
-Route loss or an incomplete transport response invalidates the invocation
-and raises a fatal error out of every retrieval branch. Typed deadlines and
-errors returned by the admitted engine follow the reader's existing policy.
-Use the same binding to verify liveness synchronously at synthesis dispatch
-and at checkpoint publication, ordering both with invalidation. A lost
-binding stops the invocation and leaves the in-flight answer uncommitted.
-
-BEAM's `state.json` is the authoritative checkpoint for resume and scoring.
-Under the checkpoint lock, write the complete state to a temporary file in
-the same directory. Flush and sync the file, atomically replace `state.json`
-and sync the directory. Publish per-question answer files from that committed
-state and repair missing or stale files on resume before skipping completed
-questions.
-
-Stage a LoCoMo restore into empty targets using the recorded backup tool
-and archive layout, keeping later answer checkpoints separate. Restore
-without `--start`. Start the recorded backing-service images, then the
-private API with its Compose setup dependency disabled. The published
-94.09% run uses six archives including the forget-manifest volume,
-its recorded PostgreSQL 19 image and extensions, engine and evaluator
-`78a83408011fddbd1d62ed8957b799f456b23bbd` and schema `p9_48_0069`.
-[Historical restore](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/sharding/store_backup.py#L1483-L1609) ·
-[Historical graph check](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/spine/graph_catalog.py#L88-L98) ·
-[Published run](../../benchmarks/locomo/README.md#published-results)
-
-Run LoCoMo in a clean checkout with the recorded evaluator's locked
-environment, existing checkpoint and restored mount. Native `answer` takes
-its evaluator revision from `run.json`. An ablation takes it from
-`ablation_runner_revision` in `ablation.json`. For `full`, pass the output's
-frozen `answer-prompt.txt` with `--answer-prompt`. Recreate the fingerprinted
-CLI arguments from `ablation.json`, including the profile, selected items,
-answer and judge models, ordered provider allowlist, worker count, API
-timeout and judge-prompt choice, where applicable. Preserve optional
-settings according to the recorded evaluator's rules. The pinned CLI
-enforces its original revision, readiness, protocol and fingerprint checks.
-[Native guard](../../benchmarks/locomo/runner.py#L1660) ·
-[Historical ablation resume](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/ablation.py#L823-L853)
-
-Pin the non-secret OpenRouter settings that affect calls for each LoCoMo
-answer and judge provider. Resolve them using the recorded CLI's defaults,
-launch environment, protocol and command overrides. Include the endpoint,
-timeout, completion token limit, reasoning settings, provider allowlist and
-order, data-retention setting and retry policy. Dispatch only with verified
-settings that match the pins. Recover historical provider pins from original
-run records. [Pinned provider setup](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/benchmarks/locomo/cli.py#L271-L299)
-
-Through both LoCoMo CLI paths, resume a historical partial checkpoint on
-a historical-format restore with its recorded PostgreSQL image. Complete a
-remaining question with the fingerprint, prior answers and readiness checks
-intact. Use the published prompt override and saved options for the
-full-profile ablation test. Resume a partial BEAM run on its pinned store with
-its original reader inputs. Test a two-sample shard that accepts each
-sample's own restore and rejects the other's.
-
-Reject an endpoint change, a store swap at the same endpoint and a migrated
-copy behind the pinned image. In both harnesses, test a different API image
-with the same reported revision and catalog. Independently change only the
-server's `retrieval_database_budget_s`. Also point only the SQL role at a
-migrated clone or a separate copy with a matching schema. In LoCoMo native
-answering and `full` ablation, change only
-`REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` with the saved fingerprints
-held fixed. For BEAM, change the question text or ability under the same ID,
-reorder the file, change the evaluator revision and change `--model` in
-independent cases. Each mismatch must abort before retrieval, provider calls
-or output writes and leave checkpoints byte-identical. Cover starts and
-resumes, including BEAM `--force`.
-
-In a synchronized test, pause after admission and again before the last
-checkpoint. Attempt same-address service replacement, store swap, migration
-and corpus writes while the lock is held. Verify that every reader, including
-the MCP child, and each new checkpoint receive data only from the admitted
-service and store. Through the admitted route, submit a valid ingest request
-and require refusal. Verify that the serving credentials cannot write
-retrieval rows, run schema changes or mutate objects. Complete an
-embedding-backed native read and an embedding-backed SQL read, with a cost
-receipt for each on the private restore.
-
-Disconnect BEAM immediately after operation discovery and, separately, after
-the final retrieval response. Require zero synthesis calls and zero new
-checkpoint entries in both cases. Disconnect during synthesis and require
-zero new checkpoint entries. Verify that BEAM handles an admitted engine's
-typed deadline and SQL error as before.
-
-Overlap BEAM invocations for different arms and native LoCoMo invocations
-for different samples, with distinct stores in each pair. Pause the first
-after state load and require the second to wait. Both sets of answers must
-survive and ordinary resume must skip the completed work. Also contend
-native answering with judging, and two invocations of one ablation through
-different paths to the same output. Verify that each resume reuses the
-checkpointed answers and grades without repeating provider calls.
-
-Start with a partial BEAM checkpoint. Interrupt during the temporary state
-write and, separately, after committing state but before publishing the
-per-question file. The prior or newly committed state must be readable.
-Resume repairs the answer files and skips synthesis for every committed answer.
-
-#### Model-free qualification for benchmark adoption
-
-Require explicit D163 opt-in with a fresh run identity and output directory.
-Save it with the pins and verify it on resume. Test that D163 is rejected
-without opt-in and that an existing protected run refuses conversion.
-
-Replay LoCoMo's saved tool calls and run BEAM's retrieval and rendering on
-paired restores under the original budgets. Archive each retrieval call's
-query vectors in embedding call order with the model, dimensions and exact
-input text, including embeddings used by SQL semantic calls. Archive the
-evaluation instant, world and belief times, SQL transaction and statement
-times used by the query or its views, and the rendered SQL
-`execution_started_at`. Feed the vectors through a replay-only embedding
-adapter with provider access disabled. Inject application evaluation and
-envelope timestamps at their call sites.
-
-Use a disposable PostgreSQL test build for replay. Load a clock schedule
-for each replay connection before dispatch. At SQL evaluation, substitute
-the recorded transaction instant in `now()` and `transaction_timestamp()`,
-and the recorded instant for that statement in `statement_timestamp()`.
-Apply this to native and sandbox connections, including SQL bridge snapshot
-export and its imported reads. Cover other SQL clock expressions if they
-are used by the recorded query or its dependencies. Preserve function
-volatility, statement text, catalog definitions and MVCC. Leave the server's
-wall clock, PostgreSQL timeout scheduling and application monotonic
-deadlines live at the recorded limits.
-[SQL bridge](../../src/rememberstack/surfaces/query_sandbox/bridge.py#L445-L485) ·
-[SQL clock functions](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/adt/timestamp.c#L1608-L1624) ·
-[Timeout scheduler](https://github.com/postgres/postgres/blob/REL_18_6/src/backend/utils/misc/timeout.c#L560-L574)
-
-Qualify the clock hook with a `facts_current` query just before and at an
-exclusive validity end, keeping the transaction instant fixed. Check the
-reported clocks and the row leaving the result at the boundary. Hold a
-conflicting lock past a sandbox statement's recorded timeout, which is
-shorter than the fixture's lock timeout. Require PostgreSQL cancellation
-at that deadline (`57014`) and the same typed outcome and comparable real
-elapsed time as a control with the hook disabled.
-
-A missing or mismatched vector or clock fails the replay before it can report
-parity. Tool traces omit vectors and can omit internal clocks. Where exact
-historical inputs are missing, run a separately identified paired fixture
-with its own captured vectors and clocks. The fixture qualifies that input
-set only.
-[Tool records](../../benchmarks/locomo/model.py#L373) ·
-[Embedding call](../../src/rememberstack/surfaces/query_engine.py#L4838) ·
-[SQL snapshot clock](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1166)
-
-Run a same-build control on two identical restores with the same reader,
-calls, vectors and clocks. Include SQL calls in the control. In both
-comparisons, report retrieval equivalence over ordered calls and responses,
-including rows, evidence, limits, typed negatives, errors and deadlines.
-Omit only `request_id`, `elapsed_ms` and `surface_manifest_hash` from SQL
-result envelopes for this comparison. The first two can vary in the control
-and D163 changes the manifest hash.
-
-Also retain and diff the full rendered reader inputs byte for byte, including
-those SQL fields. A deadline becoming a success changes the reader input.
-Exact rendered equality is required for answer parity. A score for changed
-inputs requires fresh answering and judging under the new identity.
-Preserve original answers, grades and run identities.
-[SQL response fields](../../src/rememberstack/surfaces/query_sandbox/executor.py#L1061) ·
-[LoCoMo rendering](../../benchmarks/locomo/protocol.py#L717)
+- LoCoMo and BEAM benchmark admission, protected restores and checkpoint/resume guards.
+- Full-hydration lookup bounds for live evidence, `support_state_current`/`review_queue` and representative rows.
+- Reader-visible SQL metadata and full rendered-input replay parity.
+- General benchmark checklist edits.
 
 ## 10. Binding authority and delivery record
 

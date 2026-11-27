@@ -1,18 +1,41 @@
-# Response to the D163 design review, round 6
+# D163 rescope after six review rounds
 
-Review of PR #682 at `5fe71c90d`. Verified the findings against the branch's
-migrations, query-space manifest and harness source, and the pinned LoCoMo
-evaluator at `78a834080`. [Source checks](../../plan/analysis/evidence_driven_fact_eligibility_20261127.md#round-six-source-checks)
+PR #682 now covers the evidence-driven D140 and shared eligibility checks
+for P1 nomination and final confirmation, the stored-endpoint survivor
+walk, its D161 migration, and eligible-ID equivalence and latency gates.
+The review record through round six is preserved at the former branch tip.
+[Earlier responses](https://github.com/writeitai/remember-stack/tree/12bba03fe68a61123e16c18aaf30ff74d795ad0a/design/reviews)
 
-| Finding | Resolution |
-| --- | --- |
-| P0 · BEAM route loss | A mocked disconnect after operation discovery reached the synthesis stub. Make transport loss fatal in the retrieval loop and admit synthesis and checkpoint publication synchronously through the same live binding. Preserve typed engine replies. Require zero synthesis calls and zero new checkpoint entries on disconnect after discovery. [Retrieval loop](../../benchmarks/rs_harness_beam/answer_agent.py#L449-L467) · [Admission](../../plan/designs/shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime) |
-| P0 · LoCoMo evaluator provider settings | The pinned CLI resolves OpenRouter settings from the launch environment and sends `max_completion_tokens` as `max_tokens`. Verify the effective non-secret answer and judge settings before dispatch. Vary only `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` in native and full-profile runs and require refusal before retrieval, provider calls or checkpoint writes. [Pinned request](https://github.com/writeitai/remember-stack/blob/78a83408011fddbd1d62ed8957b799f456b23bbd/src/rememberstack/adapters/openrouter.py#L330-L369) · [Admission](../../plan/designs/shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime) |
-| P1 · Broad public fact SQL | Keep the deployed set-based fact and evidence joins and render keyed probes for bounded native candidates with the same predicates. BEAM's aggregate exercises the source path. Its sample fails column resolution because it requests `label` and the view exposes `fact_label`. Check error parity for the original sample and time the `fact_label AS label` variant, the aggregate and both broad evidence views under the existing sandbox deadline. Scale facts, fanout and range leaves independently. [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L61) · [View columns](../../src/rememberstack/spine/migrations/versions/p9_30_0051_mutable_fact_windows.py#L228-L246) · [Qualification](../../plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) |
-| P1 · Carried claim document | Bind `ch.doc_id = claim.doc_id` inside the keyed chunk lookup. The deployed view requires it and `chunk_claims` supplies no document constraint. Give a claim with a missing origin a sole occurrence in another document of the same deployment and require both fact kinds to reject the evidence. [Carried view](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174-L197) · [Qualification](../../plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) |
-| P1 · LoCoMo checkpoint writers | Atomic replacement still permits lost updates from two whole-state writers. Lock the canonical checkpoint path across load and final write for every writer, including native judging and same-output ablation. Exercise overlapping samples on separate restores and verify that resume skips the saved work. [Answer write](../../benchmarks/locomo/runner.py#L823-L829) · [Judge write](../../benchmarks/locomo/runner.py#L946-L952) · [Admission](../../plan/designs/shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime) |
-| P1 · BEAM checkpoint interruption | Resume and scoring already read the complete payload in `state.json`. Commit it atomically before publishing derived answer files. Interrupt before and after the state commit and require readable state, repaired answer files and reuse of each committed answer. [Write order](../../benchmarks/rs_harness_beam/answer_agent.py#L737-L767) · [Scoring input](../../benchmarks/rs_harness_beam/official_score.py#L419-L425) · [Admission](../../plan/designs/shared_retrieval_eligibility_design.md#benchmark-admission-and-lifetime) |
-| P2 · Graph belief time | Document the immediate `true` result for deployments that have never declared a period and the projection path for past pins with no later declaration, retraction or mode event in the deployment. Only a past pin with such a later event reads the ledgers. [Graph gate](../../src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py#L1230-L1258) · [D140 §8.1](../../plan/designs/effective_time_and_section_references_design.md#81-the-evidence-gate-deterministic-read-time) |
+## Findings retained
 
-Full-schema SQL, historical restore and guarded resume tests are implementation
-acceptance gates. [Qualification](../../plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification)
+- **R1.** Fence both source-membership arms at raw evidence. Key both
+  survivor endpoints and each redirect. Use the archive-aware baseline and
+  carry the moot-review regression, auditable hosted plans and current
+  candidate-depth reference.
+- **R2–R3.** Commit compatible view replacements separately and test both
+  directions with an intervening reader. Fence raw-support absence and share
+  the keyed origin and origin-absence check. Exercise the corrupt redirect
+  exception separately from valid-store equivalence. The range leaves are
+  in `chunk_claims` and `chunks`.
+- **R5–R6.** Confine the origin and source fences to bounded candidates and
+  check broad SQL for regressions through shared dependencies. Bind carried
+  chunks to the claim's document and cover the graph's projection and
+  ledger cases in the D140 description.
+
+[D163 fact path](../../plan/designs/shared_retrieval_eligibility_design.md#43-facts-one-source-qualified-projection-one-endpoint-rule) ·
+[Qualification](../../plan/designs/shared_retrieval_eligibility_design.md#91-d163-fact-path-qualification) ·
+[Hosted evidence](../../plan/analysis/evidence_driven_fact_eligibility_20261127.md)
+
+## Follow-ups (not part of D163)
+
+| Rounds | Findings moved | Why |
+| --- | --- | --- |
+| R1–R2 | Protected run identities, engine/schema/store admission, start and resume checks including `--force` | The SQL oracle compares fixed stores and completes both gates under controlled inputs. |
+| R3–R4 | Lifetime binding, per-sample stores, historical resume and restore, SQL-role connection, BEAM reader inputs, frozen LoCoMo prompt and options | These establish benchmark-run provenance across invocations. |
+| R5–R6 | API artifact and effective settings, metering on frozen stores, evaluator provider settings, BEAM route loss, concurrent writers and interrupted checkpoints | These concern harness execution and checkpoint integrity. |
+| R3–R4 | Full-hydration work on D54 live evidence/counts, document filters, `support_state_current`/`review_queue` and representative rows | These bound presentation work after eligibility. D163 uses the existing presentation logic. |
+| R1, R3–R5 | Ordered reader payloads and deadline responses, archived replay vectors and clocks, reader-visible SQL metadata, and clock injection | These qualify full rendered replay. Equal eligible IDs with fixed gate inputs establish retrieval membership, and the latency gate measures completion. |
+| R4 | General benchmark checklist edits for ingestion worker classes | These concern benchmark ingestion readiness. |
+
+This revision verifies the documentation and the existing evidence receipt.
+Database equivalence, migration and latency runs are implementation gates.
