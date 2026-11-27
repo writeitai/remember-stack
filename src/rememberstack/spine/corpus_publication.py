@@ -121,10 +121,15 @@ class CorpusPublicationLock:
         """Use the lock session for a short SQL operation and end its transaction."""
         if self.connection.closed or self.connection.invalidated:
             raise CorpusLockLostError("corpus publication session was lost")
-        with self.connection.begin():
-            if check:
-                self._check_on()
-            yield self.connection
+        try:
+            with self.connection.begin():
+                if check:
+                    self._check_on()
+                yield self.connection
+        except DBAPIError as error:
+            if not error.connection_invalidated:
+                raise
+            raise CorpusLockLostError("corpus publication session was lost") from error
 
     def _check_on(self) -> None:
         try:

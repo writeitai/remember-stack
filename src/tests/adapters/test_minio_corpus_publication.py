@@ -1001,7 +1001,8 @@ def test_lost_owner_refuses_further_publication_requests(
                     {"p": event},
                 )
         else:
-            lock.connection.execute(text("SELECT pg_advisory_unlock_all()"))
+            with lock.transaction() as connection:
+                connection.exec_driver_sql("SELECT pg_advisory_unlock_all()")
         with pytest.raises(CorpusLockLostError):
             state.publisher.publish_corpus(
                 deployment_id=state.source.deployment_id,
@@ -1330,7 +1331,8 @@ def test_owner_loss_between_deletes_refuses_the_next_request(
             original(**kwargs)
             deleted.append(kwargs["key"].root)
             if loss == "lock":
-                lock.connection.execute(text("SELECT pg_advisory_unlock_all()"))
+                with lock.transaction() as connection:
+                    connection.exec_driver_sql("SELECT pg_advisory_unlock_all()")
             else:
                 with state.engine.begin() as connection:
                     connection.execute(
