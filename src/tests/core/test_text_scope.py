@@ -88,7 +88,7 @@ def test_fact_gate_reads_the_projection_or_the_ledgers() -> None:
     current = fact_in_scope(fact_kind="relation", fact_id="fact.fact_id")
     assert "public.relation_evidence" in current
     assert "fact_in_scope_support" not in current
-    assert "NOT gate_relation_scope.periodised" in current
+    assert "NOT scope.periodised" in current
     pinned = fact_in_scope(
         fact_kind="observation", fact_id="fact.fact_id", pinned_belief=True
     )

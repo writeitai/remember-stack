@@ -1313,7 +1313,7 @@ graph views over PostgreSQL authority data. D98 drops the six snapshot-export
 `v_graph_*` views named below and replaces them with no-row private live source
 views plus SQL/PGQ metadata (the metadata was removed by the D98 RC 1
 amendment; the views remain). `v_graph_survivor` remains private identity
-infrastructure. D163 proposes making it a projection of the shared walk in
+infrastructure. D163 makes it a projection of the shared walk in
 `v_memory_entity_survivor`. The graph design owns the current graph contract.
 [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
 
@@ -8188,7 +8188,7 @@ must qualify before advertising chargeable evidence.
 > amends the migration lock wait and retry policy. The session guard and
 > resumable concurrent-index procedure still apply.
 
-> **Proposed fact-path amendment (2026-11-27).** D163 binds each
+> **Fact-path amendment (2026-11-27).** D163 binds each
 > candidate's evidence, claim/chunk coordinates and survivor lookups.
 > D153's source, visibility and sharing rules still apply.
 > [D163](#d163-drive-fact-eligibility-from-its-own-evidence)
@@ -8744,7 +8744,8 @@ generations, retrieval and rendering use their existing code and identities.
 
 ## D163. Drive fact eligibility from its own evidence
 
-**Status:** Proposed. **Date:** 2026-11-27. **Amends:** D153's physical fact path.
+**Status:** accepted; implementation on this branch. **Date:** 2026-11-27.
+**Amends:** D153's physical fact path.
 
 Bind each candidate's raw evidence before source qualification and the D140
 occurrence and readable-version checks. Use the same gate in P1 nomination

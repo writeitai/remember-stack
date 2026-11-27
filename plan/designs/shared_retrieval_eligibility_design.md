@@ -10,7 +10,7 @@ record why the existing document index must change. This amends D142/D149's
 physical execution and D23's unsupported UUID-derived pruning assumption;
 eligibility, ranking, finite budgets and D56 reuse semantics remain intact.
 
-> **Proposed D163 amendment (2026-11-27).** §§4.3, 6.1 and 9.1 specify
+> **D163 amendment (2026-11-27).** §§4.3, 6.1 and 9.1 specify
 > evidence-first fact eligibility and stored-endpoint survivor lookups.
 > [D163](../../decisions.md#d163-drive-fact-eligibility-from-its-own-evidence) ·
 > [Hosted evidence](../analysis/evidence_driven_fact_eligibility_20261127.md)
@@ -527,7 +527,7 @@ thresholds or adding a new public exact-search mode is outside this change.
 ## 6. Implementation contracts and migration
 
 The original D153 migration contract records the transition from
-`p9_46_0067`. The proposed D163 migration uses §6.1.
+`p9_46_0067`. The D163 migration uses §6.1.
 
 - Add simple typed SQL builders at the engine-owned core/spine boundary.
   Source/presentation authority is the new private helper; only the small
@@ -860,6 +860,8 @@ typed error for `label` and timing `fact_label AS label`.
 while the previous manifest is authoritative. After every DDL commit, run an
 active customer saved query on `facts_visible_history` through the
 previous-release API and require its expected rows and the previous hash.
+Run the previous-release one-hop read through the graph role after every
+DDL commit in both directions and require its expected rows.
 
 In each direction, hold a reader's lock on `v_memory_entity_survivor` and
 require its replacement to report `55P03` at the three-second lock timeout.

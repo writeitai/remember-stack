@@ -73,13 +73,14 @@ MATRIX_CONTRACT: Final = "memory_v1.d48_deletion_matrix/2"
 #: The checked-in coverage artifact the schema gate executes cell by cell.
 MATRIX_PATH: Final = Path(__file__).with_name("d48_deletion_matrix.json")
 
-#: The merge authority and its deployment-labelled adapter. Their cells are
+#: The merge authority and its graph projection. Their cells are
 #: discharged by non-reachability because they deliberately keep resolving an
 #: entity whose provenance is gone.
 SURVIVOR_HELPERS: Final = ("public.v_graph_survivor", "public.v_memory_entity_survivor")
 
 GATED_HELPERS: Final = (
     "public.v_memory_claim_carried_periodised",
+    "public.v_memory_claim_history_by_id",
     "public.v_memory_fact_source_qualified",
     "public.v_memory_evidence_lineage_live",
     "public.v_memory_fact_claim_live",
@@ -244,6 +245,7 @@ DELETION_TARGETS: Final = (
             "public.v_memory_fact_visible",
             "public.v_memory_fact_source_qualified",
             "public.v_memory_claim_carried_periodised",
+            "public.v_memory_claim_history_by_id",
             "public.v_memory_page_citation_visible",
         ),
     ),
@@ -276,6 +278,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.document_effective_periods_live",
             "memory_v1.document_versions_visible",
             "memory_v1.testimony_currency_events_visible",
+            "public.v_memory_claim_history_by_id",
         ),
     ),
     DeletionTarget(
@@ -324,6 +327,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.evidence_lineage",
             "memory_v1.fact_claim_evidence_live",
             "memory_v1.mentions_live",
+            "public.v_memory_claim_history_by_id",
             "public.v_memory_evidence_lineage_live",
             "public.v_memory_fact_claim_live",
             "public.v_memory_mention_current_content",
@@ -380,6 +384,7 @@ DELETION_TARGETS: Final = (
             "memory_v1.documents_live",
             "memory_v1.page_evidence_visible",
             "memory_v1.sections_live",
+            "public.v_memory_claim_history_by_id",
             "public.v_memory_page_citation_visible",
         ),
     ),

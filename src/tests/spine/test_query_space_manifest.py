@@ -396,6 +396,7 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
         "public.v_memory_fact_visible",
         "public.v_memory_fact_source_qualified",
         "public.v_memory_claim_carried_periodised",
+        "public.v_memory_claim_history_by_id",
         "public.v_memory_mention_current_content",
         "public.v_memory_page_citation_visible",
     }
@@ -404,11 +405,11 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
         for surface in surfaces
         if isinstance(surface, dict) and not surface["caller_reachable"]
     ]
-    # All nine helpers are unreachable to a caller; seven of them additionally
+    # All ten helpers are unreachable to a caller; eight of them additionally
     # compile a deletion rule, so their cells execute rather than resting on
     # non-reachability alone.
-    assert len(private) == 9
-    assert sum(1 for surface in private if surface["compiles_deletion"]) == 7
+    assert len(private) == 10
+    assert sum(1 for surface in private if surface["compiles_deletion"]) == 8
 
     deferred = [target for target in DELETION_TARGETS if target.deferred]
     assert {target.target_id for target in deferred} == {"p1_candidate", "corpus_body"}

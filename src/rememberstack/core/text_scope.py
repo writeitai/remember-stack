@@ -17,9 +17,8 @@ that sits *inside* the ranked statement, before its ``ORDER BY … LIMIT``:
   a selected version; a claim of an undeclared lineage keeps today's
   current-testimony rule;
 - a **fact** passes the evidence gate when a supporting claim occurs in a
-  selected version or in any live version of an undeclared lineage. A fact
-  with no live supporting occurrence at all rests on no document text, so
-  the gate does not apply to it.
+  selected version or in any live version of an undeclared lineage. If it
+  has no raw supporting evidence, an occurrence of either stance can pass.
 
 The window is the inclusive instant range the mode stands for: ``current``
 is the evaluation instant, ``at`` one instant, ``overlap`` its inclusive
@@ -209,6 +208,13 @@ _EVIDENCE: dict[str, tuple[str, str]] = {
 }
 
 
+def fact_evidence_relation(*, fact_kind: str) -> tuple[str, str]:
+    """The engine-owned raw evidence table and fact ID column for a fact kind."""
+    if fact_kind not in _EVIDENCE:
+        raise ValueError(f"unknown fact kind {fact_kind!r}")
+    return _EVIDENCE[fact_kind]
+
+
 def _current_reading(*, chunk: str, alias: str) -> str:
     """JOIN that keeps a chunk only when it lies in its version's current reading.
 
@@ -223,34 +229,48 @@ def _current_reading(*, chunk: str, alias: str) -> str:
     )
 
 
-def _support_occurrences(
-    *, fact_kind: str, fact_id: str, alias: str, stance: str | None = "supports"
+def _in_scope_fact_occurrence(
+    *, fact_kind: str, fact_id: str, supports_only: bool
 ) -> str:
-    """FROM/JOIN/WHERE of a fact's evidence claim occurrences in live versions.
-
-    Only occurrences in a version's current reading count (D65). ``stance``
-    ``None`` takes evidence of either stance.
-    """
-    table, column = _EVIDENCE[fact_kind]
-    stance_filter = (
-        "" if stance is None else f"   AND {alias}_evidence.stance = '{stance}'"
-    )
-    return (
-        f"FROM {table} {alias}_evidence"
-        f" JOIN public.chunk_claims {alias}_occurrence"
-        f"   ON {alias}_occurrence.deployment_id = {alias}_evidence.deployment_id"
-        f"  AND {alias}_occurrence.claim_id = {alias}_evidence.claim_id"
-        f" JOIN public.chunks {alias}_chunk"
-        f"   ON {alias}_chunk.deployment_id = {alias}_occurrence.deployment_id"
-        f"  AND {alias}_chunk.chunk_id = {alias}_occurrence.chunk_id"
-        f"{_current_reading(chunk=f'{alias}_chunk', alias=f'{alias}_version')}"
-        f" JOIN public.document_version_scope {alias}_scope"
-        f"   ON {alias}_scope.deployment_id = {alias}_chunk.deployment_id"
-        f"  AND {alias}_scope.version_id = {alias}_chunk.version_id"
-        f" WHERE {alias}_evidence.deployment_id = :deployment_id"
-        f"   AND {alias}_evidence.{column} = {fact_id}"
-        f"{stance_filter}"
-    )
+    """Bind evidence, then its occurrences and their coordinates (D163)."""
+    table, column = fact_evidence_relation(fact_kind=fact_kind)
+    stance = "AND raw.stance = 'supports'" if supports_only else ""
+    return f"""
+    EXISTS (
+      SELECT 1
+      FROM LATERAL (
+        SELECT raw.deployment_id, raw.claim_id
+        FROM {table} AS raw
+        WHERE raw.deployment_id = :deployment_id AND raw.{column} = {fact_id}
+          {stance}
+        OFFSET 0
+      ) AS evidence
+      CROSS JOIN LATERAL (
+        SELECT cc.deployment_id, cc.chunk_id
+        FROM public.chunk_claims AS cc
+        WHERE cc.deployment_id = evidence.deployment_id AND cc.claim_id = evidence.claim_id
+        OFFSET 0
+      ) AS occurrence
+      CROSS JOIN LATERAL (
+        SELECT ch.deployment_id, ch.version_id, ch.representation_id
+        FROM public.chunks AS ch
+        WHERE ch.deployment_id = occurrence.deployment_id AND ch.chunk_id = occurrence.chunk_id
+        OFFSET 0
+      ) AS chunk
+      CROSS JOIN LATERAL (
+        SELECT 1 FROM public.document_versions AS version
+        WHERE version.deployment_id = chunk.deployment_id
+          AND version.version_id = chunk.version_id
+          AND version.current_representation_id = chunk.representation_id
+        OFFSET 0
+      ) AS reading
+      CROSS JOIN LATERAL (
+        SELECT 1 FROM public.document_version_scope AS scope
+        WHERE scope.deployment_id = chunk.deployment_id AND scope.version_id = chunk.version_id
+          AND (NOT scope.periodised OR (scope.selectable AND scope.in_force && {WINDOW_SQL}))
+        OFFSET 0
+      ) AS in_scope
+    )"""
 
 
 def fact_in_scope(*, fact_kind: str, fact_id: str, pinned_belief: bool = False) -> str:
@@ -272,37 +292,9 @@ def fact_in_scope(*, fact_kind: str, fact_id: str, pinned_belief: bool = False) 
     a past belief instant the fact's bounded evidence lineages are evaluated
     from the ledgers through ``memory_v1.fact_in_scope_support``.
     """
-    if fact_kind not in _EVIDENCE:
-        raise ValueError(f"unknown fact kind {fact_kind!r}")
-    alias = f"gate_{fact_kind}"
-    table, column = _EVIDENCE[fact_kind]
-
-    def in_scope_occurrence(*, stance: str | None, suffix: str) -> str:
-        scoped = f"{alias}{suffix}"
-        occurrences = _support_occurrences(
-            fact_kind=fact_kind, fact_id=fact_id, alias=scoped, stance=stance
-        )
+    table, column = fact_evidence_relation(fact_kind=fact_kind)
+    if pinned_belief:
         return (
-            f"EXISTS (SELECT 1 {occurrences}"
-            f" AND (NOT {scoped}_scope.periodised"
-            f" OR ({scoped}_scope.selectable"
-            f" AND {scoped}_scope.in_force && {WINDOW_SQL})))"
-        )
-
-    if not pinned_belief:
-        unsupported = (
-            f"NOT EXISTS (SELECT 1 FROM {table} {alias}_any"
-            f" WHERE {alias}_any.deployment_id = :deployment_id"
-            f" AND {alias}_any.{column} = {fact_id}"
-            f" AND {alias}_any.stance = 'supports')"
-        )
-        in_scope = (
-            f"{in_scope_occurrence(stance='supports', suffix='')}"
-            f" OR ({unsupported}"
-            f" AND {in_scope_occurrence(stance=None, suffix='_all')})"
-        )
-    else:
-        in_scope = (
             "memory_v1.fact_in_scope_support("
             f":deployment_id, '{fact_kind}', {fact_id},"
             " CAST(:scope_mode AS text), CAST(:scope_at AS timestamptz),"
@@ -311,7 +303,20 @@ def fact_in_scope(*, fact_kind: str, fact_id: str, pinned_belief: bool = False) 
             " CAST(:scope_evaluated_at AS timestamptz),"
             " CAST(:scope_believed_at AS timestamptz))"
         )
-    return f"({in_scope})"
+    # The offset belongs inside NOT EXISTS so the planner cannot hash the
+    # support rows of other facts. All raw support disables the second arm.
+    return f"""(
+      {_in_scope_fact_occurrence(fact_kind=fact_kind, fact_id=fact_id, supports_only=True)}
+      OR (
+        NOT EXISTS (
+          SELECT 1 FROM {table} AS support
+          WHERE support.deployment_id = :deployment_id AND support.{column} = {fact_id}
+            AND support.stance = 'supports'
+          OFFSET 0
+        )
+        AND {_in_scope_fact_occurrence(fact_kind=fact_kind, fact_id=fact_id, supports_only=False)}
+      )
+    )"""
 
 
 def fact_in_scope_by_kind(*, kind: str, fact_id: str) -> str:

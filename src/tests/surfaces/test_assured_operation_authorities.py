@@ -78,7 +78,7 @@ def test_facts_context_uses_fact_and_contradiction_authorities() -> None:
     )
     evidence_sql = str(_CURRENT_FACT_EVIDENCE)
     ranked_sql = inspect.getsource(PostgresP1Index.search_facts_scored)
-    assert "public.v_memory_fact_source_qualified" in confirmation_sql
+    assert "public.v_memory_claim_history_by_id" in confirmation_sql
     assert "memory_v1.entities_current" in confirmation_sql
     assert "requested AS MATERIALIZED" in confirmation_sql
     assert "CROSS JOIN LATERAL" in confirmation_sql
@@ -95,18 +95,13 @@ def test_facts_context_uses_fact_and_contradiction_authorities() -> None:
     assert "CAST(:fact_kinds AS text[])" not in confirmation_sql
     assert "JOIN relations" not in confirmation_sql
     assert "JOIN observations" not in confirmation_sql
-    assert "review_queue" not in confirmation_sql
-    # D140 §8.1: the evidence gate is the only evidence read in confirmation.
+    assert "moot_document.archived_at IS NOT NULL" in confirmation_sql
+    # D140 §8.1 uses the shared evidence predicate alongside source membership.
     gates = (
         fact_in_scope(fact_kind="relation", fact_id="fact.fact_id"),
         fact_in_scope(fact_kind="observation", fact_id="fact.fact_id"),
     )
     assert all(gate in confirmation_sql for gate in gates)
-    ungated = confirmation_sql
-    for gate in gates:
-        ungated = ungated.replace(gate, "")
-    assert "relation_evidence" not in ungated
-    assert "observation_evidence" not in ungated
     assert "v_memory_fact_claim_live" in evidence_sql
     assert claim_in_scope(claim="evidence.claim_id") in evidence_sql
     assert "memory_v1.evidence_lineage" not in evidence_sql
@@ -151,7 +146,7 @@ def test_facts_context_bounds_planning_and_keeps_contradictions_kind_qualified()
         "SET LOCAL max_parallel_workers_per_gather = 0",
     ]
     contradiction_sql = str(_FACTS_CONTEXT_CONTRADICTION_MEMBERS)
-    assert "public.v_memory_fact_source_qualified" in contradiction_sql
+    assert "public.v_memory_claim_history_by_id" in contradiction_sql
     assert "memory_v1.entities_current" in contradiction_sql
     assert "fact.ingested_at <= :evaluated_at" in contradiction_sql
     assert "fact.fact_kind AS kind" in contradiction_sql

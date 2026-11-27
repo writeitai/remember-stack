@@ -515,13 +515,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "4de14ac968bc3f7826fa7b8c3a990f45c67f2c21700bb594af0cac93313e17ac",
-      "source_digest": "df108b63e1776f99fb2b528235f54e5ef7bd4bc59091046eb5673a42292d7588"
+      "schema_profile_digest": "012c1af650f4a256b0127e7b39887a4544272e9fb68f8fcf2ff1a7bb355b06a4",
+      "source_digest": "7a0618b46709a581e33be5ea0ed50cb23b1fcc3ac96aca1ac6d7b7a0431622b5"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "9119200883a8e19d2436ba2fdfb90a1d1201612b7eefc1ae4ffd3a26e870370d",
+      "classification_digest": "023ea0de0c67658957a44b5fcee043333cebe68429d22b65010479c18ec4e03b",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1150,24 +1150,24 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "9dd9f9d96dea5ddd9e2792e7fc24d88ff4db4a20f9f16f913a4e38bc8c3ea819",
+      "profile_digest": "7d6d527ea5533e37198de2804f007ad50c50e54de9f58fcaf49835ddc5ed1d57",
       "release_margin_us": 500000,
-      "schema_digest": "94b11685978c28a38f523f98a035b7dc9934b704c7d1916f82a1bcefe2ae4ca6",
-      "schema_profile_digest": "4de14ac968bc3f7826fa7b8c3a990f45c67f2c21700bb594af0cac93313e17ac",
-      "source_digest": "df108b63e1776f99fb2b528235f54e5ef7bd4bc59091046eb5673a42292d7588",
+      "schema_digest": "82601d3a6dc890808358f0716e8606e4b3ff40ed689148f86168d3c1a0bd68b8",
+      "schema_profile_digest": "012c1af650f4a256b0127e7b39887a4544272e9fb68f8fcf2ff1a7bb355b06a4",
+      "source_digest": "7a0618b46709a581e33be5ea0ed50cb23b1fcc3ac96aca1ac6d7b7a0431622b5",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "9119200883a8e19d2436ba2fdfb90a1d1201612b7eefc1ae4ffd3a26e870370d",
+    "classification_digest": "023ea0de0c67658957a44b5fcee043333cebe68429d22b65010479c18ec4e03b",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "9dd9f9d96dea5ddd9e2792e7fc24d88ff4db4a20f9f16f913a4e38bc8c3ea819",
-    "operator_mapping_digest": "da119573cf7d4f0c32b107039ffa5a893ce1ef60a47abec2bb3c49a7dad323d7",
-    "schema_profile_digest": "4de14ac968bc3f7826fa7b8c3a990f45c67f2c21700bb594af0cac93313e17ac",
+    "native_capture_profile_digest": "7d6d527ea5533e37198de2804f007ad50c50e54de9f58fcaf49835ddc5ed1d57",
+    "operator_mapping_digest": "275722ee76b860a38f26e43138bedfdf297364d76c8f16d3caae837c10d96e89",
+    "schema_profile_digest": "012c1af650f4a256b0127e7b39887a4544272e9fb68f8fcf2ff1a7bb355b06a4",
     "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },
   "schema": {
@@ -1486,6 +1486,7 @@
       "EXPECTED_VIEWS": [
         "v_cost_receipts",
         "v_graph_survivor",
+        "v_memory_claim_history_by_id",
         "v_memory_entity_survivor",
         "v_memory_evidence_lineage_live",
         "v_memory_fact_claim_live",
@@ -1609,7 +1610,7 @@
       "template_public_testimony_currency_events",
       "testimony_currency_events"
     ],
-    "head": "p9_55_0076",
+    "head": "p9_58_0079",
     "migrations": {
       "__init__.py": "6c0a82ef11830b8d5cb49eac5ac1f0d2e967699377fab1cb34d751585c97366c",
       "p0_02_0001_extensions_enums.py": "d52a438d07c205fe7645249f286f1d7a8edde1215b0298cadc69d34eb999747d",
@@ -1687,7 +1688,10 @@
       "p9_52_0073_corpus_reconcile.py": "2c5593ed0f388f835f8c08da880ee15e7825aca44208db41ef881291739f7255",
       "p9_53_0074_document_tags.py": "82705ca088868fcd1b1f6d0a6d0fca4c9bc4d43688c18bf0bcfe583a371ac57a",
       "p9_54_0075_forget_records.py": "5f8f128b349140a73e83e45aa65437281a6355b52e2a764f1a0ba4f128cf0acd",
-      "p9_55_0076_archive.py": "5c609234e8cf4dd20c5a332b7aa807cee238d9d7edd4b0aee9b2550c121bec8a"
+      "p9_55_0076_archive.py": "5c609234e8cf4dd20c5a332b7aa807cee238d9d7edd4b0aee9b2550c121bec8a",
+      "p9_56_0077_keyed_memory_survivor.py": "c717d0aded146538211ab909dd25cbac5dd0d423b1f49fffc500b3d7f6910b8f",
+      "p9_57_0078_graph_survivor_projection.py": "78b5ebf4c3499b857fb893576ad4921e7d1ec77132fa5e40ba065472d38c8545",
+      "p9_58_0079_claim_history_by_id.py": "52d0881785edcd9709c126d36307243933ad2f9a66231759847c410e1cb2dd39"
     },
     "records": {
       "NativeCatalogAcquisition": {
@@ -2423,7 +2427,7 @@
             "type": "string"
           },
           "schema_head": {
-            "const": "p9_55_0076",
+            "const": "p9_58_0079",
             "title": "Schema Head",
             "type": "string"
           },

@@ -36,16 +36,27 @@ The `setup` service runs before the API and workers every time you run
    re-publishes the search channels, rebuilding entity profile vectors
    when needed.
 
-The API and the workers start only after `setup` exits successfully. When
-PostgreSQL reports a migration lock timeout, `setup` retries with a short
-backoff. If the retries run out or the migration fails for another reason,
+The API and the workers start only after `setup` exits successfully. The
+migration session waits up to three seconds per lock by default, and retries
+with a short backoff after a lock timeout. If the retries run out or the migration fails for another reason,
 `setup` exits with an error and `docker compose logs setup` shows why.
 
 Each migration revision commits separately. Online index phases can also
 commit inside a revision. If a later revision fails, completed revisions stay
-applied. Migrations only go forward. Some refuse to convert data in a way that
-would lose it, and there is no supported downgrade. To go back to an earlier
-release, restore a backup taken before the upgrade.
+applied. To go back to an earlier release, restore a backup taken before the
+upgrade unless the release documents a specific reversible migration.
+
+For the upgrade from `p9_55_0076` to `p9_58_0079`, operators keeping the
+previous API online run the incoming release's `alembic upgrade head` first.
+Drain the previous readers before running the incoming release's `setup`.
+Setup publishes the new SQL surface and moves active saved queries to pending
+revalidation in the same transaction. Revalidate those versions to resume them.
+
+For rollback after publication, drain incoming readers, run `alembic downgrade
+p9_55_0076` with the incoming release, then run the previous release's `setup`
+before restarting its API. Revalidate saved queries under the restored surface.
+Pause and drain managed storage captures before migrating in either direction.
+Install the target release's capture helpers before resuming captures.
 
 Upgrading does not reprocess documents already in the memory. They keep
 what the earlier release extracted from them; new documents are processed

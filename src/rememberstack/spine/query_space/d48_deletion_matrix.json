@@ -1,5 +1,5 @@
 {
-  "cell_count": 342,
+  "cell_count": 351,
   "cells": [
     {
       "basis": null,
@@ -223,6 +223,13 @@
       "expectation": "The lineage target's forbidden identifiers are reachable through public.v_memory_claim_carried_periodised before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "applicable",
       "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "lineage"
+    },
+    {
+      "basis": null,
+      "expectation": "The lineage target's forbidden identifiers are reachable through public.v_memory_claim_history_by_id before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_claim_history_by_id",
       "target_id": "lineage"
     },
     {
@@ -489,6 +496,13 @@
       "expectation": "public.v_memory_claim_carried_periodised publishes none of the identifier classes this target forbids (version, representation, structure_generation, section, chunk, claim, mention, currency_event); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "not_applicable",
       "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "version"
+    },
+    {
+      "basis": null,
+      "expectation": "The version target's forbidden identifiers are reachable through public.v_memory_claim_history_by_id before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_claim_history_by_id",
       "target_id": "version"
     },
     {
@@ -759,6 +773,13 @@
     },
     {
       "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_claim_history_by_id publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_history_by_id",
+      "target_id": "representation"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
       "expectation": "public.v_memory_evidence_lineage_live publishes none of the identifier classes this target forbids (representation, structure_generation, section, chunk); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "not_applicable",
       "surface": "public.v_memory_evidence_lineage_live",
@@ -1021,6 +1042,13 @@
       "expectation": "public.v_memory_claim_carried_periodised publishes none of the identifier classes this target forbids (claim); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "not_applicable",
       "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "claim"
+    },
+    {
+      "basis": null,
+      "expectation": "The claim target's forbidden identifiers are reachable through public.v_memory_claim_history_by_id before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_claim_history_by_id",
       "target_id": "claim"
     },
     {
@@ -1290,6 +1318,13 @@
       "target_id": "fact_provenance"
     },
     {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_claim_history_by_id publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_history_by_id",
+      "target_id": "fact_provenance"
+    },
+    {
       "basis": null,
       "expectation": "The fact_provenance target's forbidden identifiers are reachable through public.v_memory_evidence_lineage_live before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "applicable",
@@ -1553,6 +1588,13 @@
       "expectation": "public.v_memory_claim_carried_periodised publishes none of the identifier classes this target forbids (lineage, version, representation, structure_generation, section, chunk, claim, content_hash); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "not_applicable",
       "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "k_target"
+    },
+    {
+      "basis": null,
+      "expectation": "The k_target target's forbidden identifiers are reachable through public.v_memory_claim_history_by_id before the mutation, and no column of any row carries one of them after it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "applicable",
+      "surface": "public.v_memory_claim_history_by_id",
       "target_id": "k_target"
     },
     {
@@ -1825,6 +1867,13 @@
       "basis": null,
       "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
+      "surface": "public.v_memory_claim_history_by_id",
+      "target_id": "p1_candidate"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the P1 nomination path and the in-function PostgreSQL confirmation that drops a stale candidate are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
       "surface": "public.v_memory_evidence_lineage_live",
       "target_id": "p1_candidate"
     },
@@ -2085,6 +2134,13 @@
       "expectation": "public.v_memory_claim_carried_periodised publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
       "status": "not_applicable",
       "surface": "public.v_memory_claim_carried_periodised",
+      "target_id": "graph_edge"
+    },
+    {
+      "basis": "no_identifier_of_this_class",
+      "expectation": "public.v_memory_claim_history_by_id publishes none of the identifier classes this target forbids (fact); the gate proves that nothing from the forbidden set is reachable here, before or after the mutation, rather than assuming it. It is a private helper rather than a public relation, so this cell proves the rule where it is defined and the relations that project it prove it again where a caller reads.",
+      "status": "not_applicable",
+      "surface": "public.v_memory_claim_history_by_id",
       "target_id": "graph_edge"
     },
     {
@@ -2357,6 +2413,13 @@
       "basis": null,
       "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
       "status": "deferred",
+      "surface": "public.v_memory_claim_history_by_id",
+      "target_id": "corpus_body"
+    },
+    {
+      "basis": null,
+      "expectation": "Deferred to Batch C: the id-addressed chunk-body fetch and the corpus filesystem that return body bytes are Batch C, so this cell is recorded here with the batch that will execute it rather than left out of the enumeration.",
+      "status": "deferred",
       "surface": "public.v_memory_evidence_lineage_live",
       "target_id": "corpus_body"
     },
@@ -2399,11 +2462,11 @@
   "contract": "memory_v1.d48_deletion_matrix/2",
   "schema": "memory_v1",
   "status_counts": {
-    "applicable": 95,
-    "deferred": 76,
-    "not_applicable": 171
+    "applicable": 99,
+    "deferred": 78,
+    "not_applicable": 174
   },
-  "surface_count": 38,
+  "surface_count": 39,
   "surfaces": [
     {
       "caller_reachable": true,
@@ -2568,6 +2631,11 @@
     {
       "caller_reachable": false,
       "compiles_deletion": true,
+      "name": "public.v_memory_claim_history_by_id"
+    },
+    {
+      "caller_reachable": false,
+      "compiles_deletion": true,
       "name": "public.v_memory_evidence_lineage_live"
     },
     {
@@ -2633,6 +2701,7 @@
         "public.v_memory_fact_visible",
         "public.v_memory_fact_source_qualified",
         "public.v_memory_claim_carried_periodised",
+        "public.v_memory_claim_history_by_id",
         "public.v_memory_page_citation_visible"
       ],
       "executed_in": "A",
@@ -2665,7 +2734,8 @@
         "memory_v1.claims_visible_history",
         "memory_v1.document_effective_periods_live",
         "memory_v1.document_versions_visible",
-        "memory_v1.testimony_currency_events_visible"
+        "memory_v1.testimony_currency_events_visible",
+        "public.v_memory_claim_history_by_id"
       ],
       "executed_in": "A",
       "forbidden_identifiers": "The version id and every identifier derived from it: its representation, sections, chunks, claims, and mentions. The facts those claims evidenced keep their surviving historical provenance and are deliberately not forbidden.",
@@ -2713,6 +2783,7 @@
         "memory_v1.evidence_lineage",
         "memory_v1.fact_claim_evidence_live",
         "memory_v1.mentions_live",
+        "public.v_memory_claim_history_by_id",
         "public.v_memory_evidence_lineage_live",
         "public.v_memory_fact_claim_live",
         "public.v_memory_mention_current_content"
@@ -2764,6 +2835,7 @@
         "memory_v1.documents_live",
         "memory_v1.page_evidence_visible",
         "memory_v1.sections_live",
+        "public.v_memory_claim_history_by_id",
         "public.v_memory_page_citation_visible"
       ],
       "executed_in": "A",
