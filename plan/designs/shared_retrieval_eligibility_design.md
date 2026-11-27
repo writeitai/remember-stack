@@ -795,8 +795,9 @@ Require empty `EXCEPT ALL` differences in both directions so duplicate rows coun
 Compare `(fact_kind, fact_id)` at each eligible cut, including broad batch
 confirmation and agreement between stages on the same inputs. Include
 `distance` in scoped and keyed nomination and `coverage` when entity-scoped.
-Compare every final confirmation column, including `coverage` and
-`nomination_rank`. Require the same ordered top `k` with the normal limits.
+Compare every SQL column from each batch of native final confirmation before
+`facts_context` applies its result cap. Include `coverage` and `nomination_rank`.
+Require the same ordered top `k` with the normal limits.
 For each native read, compare the contradiction member SQL rows before the
 member cap. Compare the co-members in response order and the reported
 `returned` and `total` counts for each selected fact. Exercise groups of both
@@ -851,8 +852,9 @@ for both stored relation endpoints. Report planning, buffers and leaf work.
 
 Run uninstrumented SQL including planning and native `facts_context`
 under the existing budgets (`k=50`, candidate depth 200, at least 40 warm
-samples per stratum). Record p50/p95 and completion. These are qualification
-targets for warm single-reader p95.
+samples per stratum). Run standalone batches through P1's ranked-read connection
+and record its effective JIT and parallel-worker settings. Record p50/p95 and
+completion. These are qualification targets for warm single-reader p95.
 
 | Store | P1 confirmation | Native wall time |
 | --- | --- | --- |

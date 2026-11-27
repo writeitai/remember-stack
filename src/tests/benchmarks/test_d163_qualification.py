@@ -20,7 +20,7 @@ def _capture(*, head: str) -> dict[str, Any]:
         "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[head],
         "sandbox_settings": {"jit": "on"},
         "case": {},
-        "cuts": {"contradiction/broad": []},
+        "cuts": {"contradiction/broad": [], "native_final/broad": []},
         "raw": {},
         "ordered": {
             "final/broad": [("observation", "fact", {"returned": 1, "total": 2})]
@@ -95,6 +95,17 @@ def test_compare_requires_matching_sandbox_settings() -> None:
         qualification.compare(connection, baseline, target)
     target.pop("sandbox_settings")
     with pytest.raises(AssertionError, match="recapture both releases"):
+        qualification.compare(connection, baseline, target)
+    connection.execute.assert_not_called()
+
+
+def test_compare_requires_native_final_confirmation_cuts() -> None:
+    baseline = _capture(head=qualification.BASELINE_HEAD)
+    target = _capture(head=qualification.TARGET_HEAD)
+    connection = MagicMock(spec=Connection)
+    for record in (baseline, target):
+        record["cuts"].pop("native_final/broad")
+    with pytest.raises(AssertionError, match="native final confirmation cuts"):
         qualification.compare(connection, baseline, target)
     connection.execute.assert_not_called()
 

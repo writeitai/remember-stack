@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from benchmarks import d163_qualification as qualification
 from benchmarks.d163_qualification import _arguments
 from benchmarks.d163_qualification import _index
 from benchmarks.d163_qualification import _plans
@@ -390,6 +391,105 @@ def test_split_links_and_duplicate_survivors_at_every_eligible_cut(
             .all()
         )
     assert rows == [corpus.source_only]
+
+
+def test_native_final_capture_detects_a_label_change_outside_top_k(
+    d163_corpus: tuple[Engine, Corpus], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine, corpus = d163_corpus
+    original = capture(engine, corpus.case, timeout=20)
+    cut = "native_final/broad"
+    delivered = {
+        (kind, fact_id) for kind, fact_id, _ in original["ordered"]["final/broad"]
+    }
+    batch, uncapped = next(
+        (batch, row)
+        for batch, row in original["cuts"][cut]
+        if (row["kind"], str(row["fact_id"])) not in delivered
+    )
+    assert uncapped["coverage"] == 0
+    assert uncapped["nomination_rank"] >= 1
+    kind, fact_id = uncapped["kind"], uncapped["fact_id"]
+    statements = query_engine._CONFIRM_FACTS_CONTEXT_BY_KIND
+    label = "coalesce(fact.fact_label, fact.statement, fact.predicate)"
+    changed = text(
+        str(statements[kind]).replace(
+            f"{label} AS label",
+            f"CASE WHEN fact.fact_id = '{fact_id}'::uuid THEN 'native-only label' "
+            f"ELSE {label} END AS label",
+        )
+    )
+    confirm = query_engine._confirm_facts_context
+
+    def confirm_with_changed_label(**kwargs: Any) -> Any:
+        if kwargs["entity_ids"] or (kind, fact_id) not in kwargs["candidate_keys"]:
+            return confirm(**kwargs)
+        with monkeypatch.context() as native_batch:
+            native_batch.setitem(statements, kind, changed)
+            return confirm(**kwargs)
+
+    monkeypatch.setattr(
+        query_engine, "_confirm_facts_context", confirm_with_changed_label
+    )
+    modified = capture(engine, corpus.case, timeout=20)
+    assert original["ordered"] == modified["ordered"]
+    assert original["raw"] == modified["raw"]
+    assert (batch, {**uncapped, "label": "native-only label"}) in modified["cuts"][cut]
+    assert original["cuts"].keys() == modified["cuts"].keys()
+    differences = {}
+    with engine.connect() as connection:
+        for name, rows in original["cuts"].items():
+            missing, extra = connection.execute(
+                qualification._DIFFERENCES,
+                {
+                    "baseline": qualification._json(rows),
+                    "target": qualification._json(modified["cuts"][name]),
+                },
+            ).one()
+            if missing or extra:
+                differences[name] = (missing, extra)
+    assert differences == {cut: (1, 1)}
+
+
+def test_latency_inherits_p1_settings_for_each_timed_batch(
+    d163_corpus: tuple[Engine, Corpus], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine, corpus = d163_corpus
+    read_engine = create_engine(
+        engine.url,
+        connect_args={
+            "options": "-c jit=on -c jit_above_cost=-1 -c max_parallel_workers_per_gather=3"
+        },
+    )
+    observed = []
+    run = qualification._run
+
+    def inspect_batch(
+        connection: Connection, statement: qualification.Statement
+    ) -> list[Any]:
+        observed.append(
+            tuple(
+                connection.exec_driver_sql("""
+                SELECT current_setting('jit'),
+                       current_setting('max_parallel_workers_per_gather'),
+                       current_setting('transaction_read_only'),
+                       current_setting('transaction_isolation')
+            """).one()
+            )
+        )
+        return run(connection, statement)
+
+    monkeypatch.setattr(qualification, "_run", inspect_batch)
+    try:
+        report = qualification.latency(
+            read_engine, corpus.case, timeout=20, samples=1, explain=False
+        )
+    finally:
+        read_engine.dispose()
+    # One warm-up and one measured sample for each fact kind.
+    assert observed == [("on", "3", "on", "repeatable read")] * 4
+    assert report["p1_settings"]["jit"] == "on"
+    assert report["p1_settings"]["max_parallel_workers_per_gather"] == "3"
 
 
 def test_contradiction_capture_preserves_rows_before_and_after_the_member_cap(

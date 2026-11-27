@@ -71,22 +71,24 @@ read uses the corresponding default nomination depth. Keep captures private
 because they include labels, BEAM rows and other store data.
 
 The capture records the native broad read's HNSW batches before deduplication
-and its batch-gate SQL rows. It removes SQL caps for the keyed, default scoped
-and filtered scoped nomination cuts and records every column from final
-confirmation for each cut. Filtered confirmation receives the nominated IDs
-and the same predicate. The capture checks nomination-to-confirmation agreement
-on the same candidates and records the native operation's ordered final facts
-for broad and configured scoped modes. For each of those reads it records
-every contradiction member SQL row before the cap and the returned
-contradiction blocks, including the ordered co-members and both member counts.
+and its batch-gate SQL rows. For each broad or configured scoped native read,
+it records every column from each executed final confirmation statement before
+the result cap, including the SQL `coverage` and `nomination_rank`. Each row
+keeps its statement number so differences between batches are visible. The
+capture also removes SQL caps for keyed, default scoped and filtered scoped
+nomination and replays confirmation to check agreement on those inputs.
+Filtered confirmation receives the nominated IDs and the same predicate.
+For each native read the capture records ordered final facts, contradiction
+member SQL rows before the member cap, and the returned contradiction blocks
+with ordered co-members and both member counts.
 
 Compare requires the expected runtime manifest at each schema head and matching
 effective sandbox JIT settings. It checks ordered raw batches, ordered final
 facts with their contradiction blocks, and the BEAM statements' ordered rows
 and typed outcomes. It runs `EXCEPT ALL` in both directions over the SQL cuts,
-including contradiction membership, so repeated rows still count. Use a
-diagnostic timeout sufficient for the previous gate to finish. Regenerate both
-captures after updating the harness.
+including native final confirmation and contradiction membership, so repeated
+rows still count. Use a diagnostic timeout sufficient for the previous gate to
+finish. Regenerate both captures with the native confirmation cuts.
 
 [Oracle and latency harness](../../benchmarks/d163_qualification.py) ·
 [Staged restore](../../benchmarks/d163_staged_restore.py)
@@ -110,8 +112,13 @@ PYTHONPATH=src:. uv run python -m benchmarks.d163_qualification latency \
 Use `--stratum 300k`, `3m`, or `120-leaves` for the other gates. The latter
 uses 120 monthly leaves plus the default. The harness times SQL without
 EXPLAIN and includes the native operation at k=50, candidate depth 200.
-It checks the declared p95 limits and, with the query login, records the broad
-query-space reads. The native measurements use mention-backed endpoints.
+Each standalone batch sample uses a fresh P1 ranked-read transaction on
+`--database`, the P1 connection URL. The timer starts after connection setup
+and includes SQL planning and execution. The report's `p1_settings` records
+the inherited JIT thresholds and parallel worker limits. Use the deployment's
+P1 connection settings. The stratum gate checks the declared p95 limits and,
+with the query login, records broad query-space reads. The native measurements
+use mention-backed endpoints.
 The `sandbox` operation measures those reads separately. Pass the previous
 release on `PYTHONPATH` and its login to measure the same SQL on the reference.
 Use the deployment's query-login settings. The report's `sandbox_settings`
@@ -269,14 +276,33 @@ one row. Expressing that bound brought the aggregate's estimated cost from
 settings, both releases then completed all five broad view reads, the BEAM
 aggregate and the corrected sample under the five-second sandbox deadline.
 
+### Round-three oracle rerun
+
+Current, at, overlap and history matched 672 rows per release across 92 SQL
+cuts on physical PostgreSQL 18.6 clones. These included 154 rows from executed
+native confirmation statements. The ordered raw batches, native top-k and
+BEAM outcomes matched. A regression changed a single label in one native SQL
+batch on a row beyond top-k. That cut reported one missing and one extra row.
+The replay cuts and ordered results matched.
+
 ### Synthetic latency
+
+The round-three smoke run used 812 chunks and 121 leaves on a 2-vCPU, 3-GiB
+VM. P1 inherited `jit=on` and `max_parallel_workers_per_gather=2`. Across
+three warm samples, median wall time was 3.62 s for the 804-input observation
+batch and 4.37 s for the 535-input relation batch. Both native modes returned
+50 facts, and both custom and generic batch plans completed. Qualification
+requires 40 warm samples on the specified 2-vCPU, 4-GB hardware.
+
+The table below records standalone batch timings from the earlier harness with
+JIT and parallel-worker overrides. Standalone latency qualification uses the
+inherited settings recorded by the current harness.
 
 PostgreSQL 18.6 on local ARM64 VMs with two vCPUs and 4 GB. Each cell reports
 p50 / p95 seconds over 40 warm samples. The timing fixture used 804
 observation and 535 relation inputs, with 802 and 532 eligible, respectively.
 The 812-chunk read used sparse statistics after growth. The larger strata
-used refreshed statistics. Every native read completed with 50 facts, and
-all four strata met their latency targets.
+used refreshed statistics. Every native read completed with 50 facts.
 
 | Chunks and range leaves | Observation batch | Relation batch | Native broad | Native scoped |
 | --- | ---: | ---: | ---: | ---: |
@@ -342,6 +368,11 @@ The round-two selection passed 496 unit tests, 334 integration tests with
 PostgreSQL 18.6 and MinIO, and 23 ingestion reuse tests. The D122 reuse
 regression had its expected failure. Ruff formatting and lint, Pyright,
 the import contracts, the test inventory and the capture fixture check passed.
+
+The round-three harness and D163 eligibility selection passed all 18 tests
+with PostgreSQL 18.6. This included the native-only mutation and the test that
+reads inherited settings inside each timed P1 batch transaction. Ruff formatting
+and lint, Pyright, the import contracts and the test inventory passed.
 
 ```bash
 uv run ruff format --check src/ benchmarks/

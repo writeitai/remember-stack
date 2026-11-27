@@ -134,6 +134,7 @@ class Trace:
         self.gates: list[tuple[FactKind, Statement, list[Any]]] = []
         self.scoped: Statement | None = None
         self.contradiction_members: list[Any] = []
+        self.confirmation_batches: list[list[dict[str, Any]]] = []
         self._execute = Connection.execute
 
     def execute(
@@ -169,6 +170,11 @@ class Trace:
                 )
             )
             return frozen()
+        if "fact_ids" in parameters and "ranking_entity_ids" in parameters:
+            # Native final confirmation binds both arrays, even for broad reads.
+            frozen = result.freeze()
+            self.confirmation_batches.append([dict(row) for row in frozen().mappings()])
+            return frozen()
         if "groups" in parameters and "fact.contradiction_group" in query:
             frozen = result.freeze()
             self.contradiction_members.extend(tuple(row) for row in frozen.data)
@@ -183,6 +189,16 @@ class Trace:
             )
             self.scoped = Statement(text(unlimited), dict(parameters))
         return result
+
+    def native_cuts(self, name: str) -> dict[str, list[Any]]:
+        return {
+            f"native_final/{name}": [
+                (batch, row)
+                for batch, rows in enumerate(self.confirmation_batches)
+                for row in rows
+            ],
+            f"contradiction/{name}": self.contradiction_members,
+        }
 
 
 def _index(engine: Engine, case: Case) -> PostgresP1Index:
@@ -316,7 +332,7 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
         record: dict[str, Any] = {
             "raw": broad.raw,
             "ordered": {"final/broad": top},
-            "cuts": {"contradiction/broad": broad.contradiction_members},
+            "cuts": broad.native_cuts("broad"),
         }
         for batch, (kind, statement, rows) in enumerate(broad.gates):
             final = _run(
@@ -374,7 +390,7 @@ def capture(engine: Engine, case: Case, *, timeout: float) -> dict[str, Any]:
                 query, case, scoped=True, predicate=predicate
             )
             record["ordered"][f"final/{name}"] = final_top
-            record["cuts"][f"contradiction/{name}"] = native_trace.contradiction_members
+            record["cuts"].update(native_trace.native_cuts(name))
             for kind in KINDS:
                 expected = [(row[0], row[3]) for row in nominated if row[1] == kind]
                 scoped_rows = _run(
@@ -465,6 +481,14 @@ def compare(
         raise AssertionError("the two releases must use identical sandbox JIT settings")
     if "contradiction/broad" not in baseline["cuts"]:
         raise AssertionError("recapture both releases with native contradiction cuts")
+    for record in (baseline, target):
+        required = {
+            f"native_{name}" for name in record["ordered"] if name.startswith("final/")
+        }
+        if not required.issubset(record["cuts"]):
+            raise AssertionError(
+                "recapture both releases with native final confirmation cuts"
+            )
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
     counts = {}
@@ -576,14 +600,13 @@ def _percentiles(times: list[float]) -> dict[str, float]:
     return {"p50_s": median(times), "p95_s": sorted(times)[ceil(0.95 * len(times)) - 1]}
 
 
-def _measured(run: Callable[[], Any], *, samples: int) -> dict[str, Any]:
+def _measured(run: Callable[[], tuple[int, float]], *, samples: int) -> dict[str, Any]:
     run()
     times = []
     last = None
     for _ in range(samples):
-        start = monotonic()
-        last = run()
-        times.append(monotonic() - start)
+        last, elapsed = run()
+        times.append(elapsed)
     return {"samples": samples, **_percentiles(times), "last_rows": last}
 
 
@@ -618,6 +641,15 @@ def _plans(connection: Connection, statement: Statement) -> dict[str, Any]:
         return result
 
 
+def _timed_batch(
+    index: PostgresP1Index, statement: Statement, *, timeout: float
+) -> tuple[int, float]:
+    with index._ranked_connection(deadline=monotonic() + timeout) as connection:
+        start = monotonic()
+        rows = _run(connection, statement)
+        return len(rows), monotonic() - start
+
+
 def latency(
     engine: Engine,
     case: Case,
@@ -644,30 +676,39 @@ def latency(
     }
     if stratum is not None and statements.keys() != LATENCY_BATCH_SIZES.keys():
         raise AssertionError(f"{stratum} requires traced gates for both fact kinds")
-    with engine.connect() as connection:
-        connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-        connection.exec_driver_sql("SET LOCAL jit = off")
-        connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
-        connection.execute(
-            text("SELECT set_config('statement_timeout', :value, true)"),
-            {"value": str(int(timeout * 1000))},
-        )
+    batch_timeout = min(timeout, DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS)
+    with index._ranked_connection(deadline=monotonic() + batch_timeout) as connection:
         keys = _fact_keys(connection, case)
-        batches = {
-            kind: _fixed_batch(statement, keys, kind=kind, count=case.batch_sizes[kind])
-            if kind in case.batch_sizes
-            else statement
-            for kind, statement in statements.items()
-        }
-        report: dict[str, Any] = {}
-        for kind, statement in batches.items():
-            measured = _measured(
-                lambda statement=statement: len(_run(connection, statement)),
-                samples=samples,
+        settings = dict(
+            connection.execute(
+                text("""
+                    SELECT name, setting FROM pg_catalog.pg_settings
+                    WHERE name LIKE 'jit%'
+                       OR name IN ('max_parallel_workers_per_gather',
+                                   'max_parallel_workers', 'max_worker_processes')
+                """)
             )
-            measured["inputs"] = len(statement.parameters["batch_ids"])
-            report[f"batch/{kind}"] = measured
-            if explain:
+            .tuples()
+            .all()
+        )
+    report: dict[str, Any] = {"p1_settings": settings}
+    for kind, statement in statements.items():
+        if kind in case.batch_sizes:
+            statement = _fixed_batch(
+                statement, keys, kind=kind, count=case.batch_sizes[kind]
+            )
+        measured = _measured(
+            lambda statement=statement: _timed_batch(
+                index, statement, timeout=batch_timeout
+            ),
+            samples=samples,
+        )
+        measured["inputs"] = len(statement.parameters["batch_ids"])
+        report[f"batch/{kind}"] = measured
+        if explain:
+            with index._ranked_connection(
+                deadline=monotonic() + batch_timeout
+            ) as connection:
                 measured["plans"] = _plans(connection, statement)
 
     query = _query_engine(engine, index, case)
@@ -675,11 +716,12 @@ def latency(
     def native(entities: tuple[str, ...]) -> dict[str, Any]:
         incomplete: Counter[str] = Counter()
 
-        def measure() -> int:
+        def measure() -> tuple[int, float]:
+            start = monotonic()
             response = _native_read(query, case, entities=entities)
             if reason := _native_failure(response):
                 incomplete[reason] += 1
-            return len(response.facts)
+            return len(response.facts), monotonic() - start
 
         measured = _measured(measure, samples=samples)
         measured["incomplete"] = dict(incomplete)
@@ -761,6 +803,15 @@ def _record_native(
         )
     if reason := _native_failure(response):
         raise AssertionError(f"native final confirmation did not complete: {reason}")
+    confirmed = {
+        (row["kind"], row["fact_id"])
+        for batch in trace.confirmation_batches
+        for row in batch
+    }
+    if any((fact.kind, fact.fact_id) not in confirmed for fact in response.facts):
+        raise AssertionError(
+            "native final facts are missing captured confirmation rows"
+        )
     return trace, [
         (
             fact.kind,
