@@ -532,14 +532,37 @@ def test_d162_isolates_input_rejection_and_keeps_committed_batch(
 
 
 @pytest.mark.parametrize(
-    ("provider_code", "terminal_code"),
+    ("http_status", "provider_error", "terminal_code"),
     [
-        ("context_length_exceeded", "embedding.input_too_large"),
-        ("invalid_embedding_input", "embedding.input_rejected"),
+        pytest.param(
+            200,
+            {"code": "context_length_exceeded"},
+            "embedding.input_too_large",
+            id="size-error-in-success",
+        ),
+        pytest.param(
+            200,
+            {"code": "invalid_embedding_input"},
+            "embedding.input_rejected",
+            id="input-error-in-success",
+        ),
+        pytest.param(
+            502,
+            {
+                "code": 502,
+                "metadata": {"raw": {"error": {"type": "invalid_embedding_input"}}},
+            },
+            "embedding.input_rejected",
+            id="input-error-in-gateway-failure",
+        ),
     ],
 )
-def test_d162_error_only_success_response_records_typed_dead_letter(
-    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, provider_code: str, terminal_code: str
+def test_d162_provider_input_rejection_records_typed_dead_letter(
+    rig: _E1Rig,
+    monkeypatch: pytest.MonkeyPatch,
+    http_status: int,
+    provider_error: dict[str, object],
+    terminal_code: str,
 ) -> None:
     item = _saved_grid(rig, "Every traveler needs a receipt.")
     adapter = OpenRouterModelProvider(
@@ -550,12 +573,12 @@ def test_d162_error_only_success_response_records_typed_dead_letter(
             zdr=True,
         )
     )
-    submitted: list[str] = []
+    monkeypatch.setattr(openrouter.time, "sleep", lambda _: None)
+    submitted: list[bytes] = []
 
     def reject(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        submitted.extend(payload["input"])
-        return httpx.Response(200, json={"error": {"code": provider_code}})
+        submitted.append(request.content)
+        return httpx.Response(http_status, json={"error": provider_error})
 
     adapter._client.close()
     with httpx.Client(
@@ -563,9 +586,11 @@ def test_d162_error_only_success_response_records_typed_dead_letter(
     ) as client:
         adapter._client = client
         monkeypatch.setattr(rig.provider, "embed", adapter.embed)
-        assert _run_hosted(_hosted_worker(rig)) is RunResultOutcome.DEAD_LETTERED
+        outcome = _run_hosted(_hosted_worker(rig))
 
-    (rendered,) = submitted
+    assert len(submitted) == 1
+    assert outcome is RunResultOutcome.DEAD_LETTERED
+    (rendered,) = json.loads(submitted[0])["input"]
     with rig.engine.connect() as connection:
         attempts, error = connection.execute(
             text(

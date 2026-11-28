@@ -138,8 +138,10 @@ Claimify (`GROUND_CLAIMS`) workers, along with readers serving section history
 and resolved document references. Start the new workers and readers together
 after migration, then resume ingestion. The new workers enable split writes
 and embedding fit checks together and continue to use saved chunk grids.
-Once any split chunks exist, rolling back past the split marker migration
-requires restoring a pre-upgrade backup.
+
+The downgrade waits for an exclusive lock, then checks for split chunks,
+including any committed during the wait. If it finds a split, rolling back
+past the marker migration requires restoring a pre-upgrade backup.
 
 ## Several deployments on one PostgreSQL server
 

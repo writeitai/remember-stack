@@ -3187,8 +3187,16 @@ def test_d162_upstream_size_rejection_takes_precedence(
     assert waits == []
 
 
-def test_d162_throttling_stays_retryable_and_bounded(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [
+        (429, {"code": 429, "message": "rate limit"}),
+        (502, {"code": 502, "metadata": {"raw": {"error": {"type": "invalid_input"}}}}),
+    ],
+    ids=["throttle", "gateway-with-unqualified-code"],
+)
+def test_d162_capacity_retries_stay_bounded(
+    status: int, error: dict[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from rememberstack.adapters import openrouter
 
@@ -3200,16 +3208,14 @@ def test_d162_throttling_stays_retryable_and_bounded(
     waits: list[float] = []
     monkeypatch.setattr(openrouter.time, "sleep", waits.append)
 
-    def throttle(request: httpx.Request) -> httpx.Response:
+    def reject(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
-            429,
-            headers={"Retry-After": "3600"},
-            json={"error": {"code": 429, "message": "rate limit"}},
+            status, headers={"Retry-After": "3600"}, json={"error": error}
         )
 
     provider._client.close()
     with httpx.Client(
-        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(throttle)
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(reject)
     ) as client:
         provider._client = client
         with pytest.raises(OpenRouterProviderError) as rejected:
@@ -3220,7 +3226,7 @@ def test_d162_throttling_stays_retryable_and_bounded(
                     hosted_passage=True,
                 )
             )
-    assert rejected.value.status_code == 429
+    assert rejected.value.status_code == status
     assert waits == [30.0, 30.0, 30.0]
 
 

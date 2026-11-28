@@ -95,8 +95,11 @@ Add `span_kind` and its partial index online under [D160](packaging_distribution
 E1 attempts and handoffs settle. Retire outgoing CHUNK, EMBED_CHUNK, Selection, Claimify and both
 section-entry readers before enabling split writes and fit checks together. Keep the chunker
 version and work keys. Retries hand off saved grids as-is.
-The column downgrade checks for split rows under an exclusive lock. If any exist,
-rolling back requires restoring a backup from before the cutover.
+
+The online migration connection uses `READ COMMITTED` before Alembic reads the
+revision. The column downgrade checks for split rows in a fresh statement after
+acquiring the exclusive lock, so it sees split rows committed during the wait.
+If any exist, rolling back requires restoring a backup from before the cutover.
 
 ## 5. Terminal failure
 
@@ -104,11 +107,13 @@ For the hosted binding, require exactly one integer response index per requested
 Every vector arrives as a JSON array of numbers and must be finite, nonzero and of
 the configured dimension.
 `empty_body` is the successful skip. Isolate failures as needed. Local fit failures and
-confirmed per-input size rejections dead-letter as `embedding.input_too_large`, other deterministic
-rejections as `embedding.input_rejected`. A structured size code from OpenRouter or its
-upstream provider takes precedence over a generic rejection or a capacity status. Apply
-the same codes to explicit input rejections inside error-only success responses. Record
-chunk ID, rendered hash and binding.
+confirmed per-input size rejections dead-letter as `embedding.input_too_large`.
+Other explicit input rejections dead-letter as `embedding.input_rejected`. Honor input
+codes from OpenRouter or its upstream provider even when the outer status indicates
+capacity or the response is an error-only success envelope. A size code in either
+layer takes precedence over other input rejections. Record chunk ID, rendered hash
+and binding.
+
 Capacity errors, including error-only HTTP 200 envelopes with a request ID, take bounded
 retries. Outages and unusable responses use the existing retry budget. Keep committed
 batches and the saved grid. Use existing ledger operations and D159 unarchive.

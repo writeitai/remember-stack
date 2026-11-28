@@ -6,6 +6,8 @@ from datetime import timezone
 import logging
 from pathlib import Path
 from threading import Event
+from time import monotonic
+from time import sleep
 from uuid import uuid4
 
 from alembic import command
@@ -2230,6 +2232,17 @@ def test_d159_upgrade_guards_a_preparing_named_upload() -> None:
     assert _head_revision(database_url=database_url) == "p9_60_0081"
 
 
+_INSERT_D162_SPLIT_CHUNK = text("""
+    INSERT INTO chunks (
+        chunk_id, deployment_id, doc_id, version_id, representation_id,
+        ordinal, block_start, block_end, chunk_content_hash, extraction_input_hash,
+        char_start, char_end, span_kind
+    ) VALUES (gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),
+              gen_random_uuid(),gen_random_uuid(),0,0,0,'fragment','extraction',0,1,'split')
+    RETURNING chunk_id
+""")
+
+
 def test_d162_additive_span_kind_and_interrupted_partition_index() -> None:
     """Old writes keep the default and an interrupted concurrent build can resume."""
     from sqlalchemy.exc import DBAPIError
@@ -2304,17 +2317,7 @@ def test_d162_additive_span_kind_and_interrupted_partition_index() -> None:
                 ).scalar_one()
                 is True
             )
-            split = connection.execute(
-                text("""
-                    INSERT INTO chunks (
-                        chunk_id, deployment_id, doc_id, version_id, representation_id,
-                        ordinal, block_start, block_end, chunk_content_hash, extraction_input_hash,
-                        char_start, char_end, span_kind
-                    ) VALUES (gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),
-                              gen_random_uuid(),gen_random_uuid(),0,0,0,'fragment','extraction',0,1,'split')
-                    RETURNING chunk_id
-                """)
-            ).scalar_one()
+            split = connection.execute(_INSERT_D162_SPLIT_CHUNK).scalar_one()
         with pytest.raises(
             RuntimeError,
             match="D162 downgrade requires a database without split chunks",
@@ -2332,3 +2335,60 @@ def test_d162_additive_span_kind_and_interrupted_partition_index() -> None:
             )
     finally:
         engine.dispose()
+
+
+def test_d162_downgrade_sees_split_committed_during_lock_wait() -> None:
+    """The downgrade guard takes a fresh snapshot once it holds the table lock."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_59_0080")
+    config.set_main_option("sqlalchemy.isolation_level", "REPEATABLE READ")
+    config.set_main_option("migration_lock_timeout_seconds", "15")
+    engine = create_engine(database_url)
+    blocked_by_writer = text("""
+        SELECT EXISTS (
+            SELECT 1 FROM pg_locks
+            WHERE relation = 'public.chunks'::regclass
+              AND mode = 'AccessExclusiveLock' AND NOT granted
+              AND :writer_pid = ANY(pg_blocking_pids(pid))
+        )
+    """)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with engine.connect() as writer, engine.connect() as observer:
+                writer_pid = writer.exec_driver_sql(
+                    "SELECT pg_backend_pid()"
+                ).scalar_one()
+                split = writer.execute(_INSERT_D162_SPLIT_CHUNK).scalar_one()
+                pending = executor.submit(
+                    command.downgrade, config=config, revision="p9_58_0079"
+                )
+                deadline = monotonic() + 5
+                while not observer.execute(
+                    blocked_by_writer, {"writer_pid": writer_pid}
+                ).scalar_one():
+                    assert monotonic() < deadline, (
+                        "downgrade did not wait for the writer"
+                    )
+                    sleep(0.01)
+                writer.commit()
+            with pytest.raises(
+                RuntimeError,
+                match="D162 downgrade requires a database without split chunks",
+            ):
+                pending.result(timeout=10)
+        assert _head_revision(database_url=database_url) == "p9_59_0080"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT span_kind FROM chunks WHERE chunk_id=:id"),
+                    {"id": split},
+                ).scalar_one()
+                == "split"
+            )
+    finally:
+        engine.dispose()
+        command.upgrade(
+            config=_alembic_config(database_url=database_url), revision="head"
+        )

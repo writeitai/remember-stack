@@ -9300,7 +9300,8 @@ activates these checks. Error-only HTTP 200 capacity responses can retry even
 when they carry a request ID. An input above the ceiling or an explicit size code from
 OpenRouter or its upstream provider dead-letters as `embedding.input_too_large`.
 The size code takes precedence over a wrapper's generic rejection or capacity status.
-Other confirmed per-input rejections dead-letter as `embedding.input_rejected`.
+Other explicit per-input rejections dead-letter as `embedding.input_rejected`,
+including an upstream `invalid_embedding_input` wrapped in HTTP 502.
 These checks also cover error-only HTTP 200 responses. Malformed vector batches
 use the stage's retry budget.
 `last_error` includes the chunk ID, the rendered input hash and the binding.
@@ -10471,8 +10472,10 @@ Claimify (`GROUND_CLAIMS`) workers, along with readers serving section history
 and resolved document references. Start the new workers and readers together
 after migration, then resume ingestion. The new workers enable split writes
 and embedding fit checks together and continue to use saved chunk grids.
-Once any split chunks exist, rolling back past the split marker migration
-requires restoring a pre-upgrade backup.
+
+The downgrade waits for an exclusive lock, then checks for split chunks,
+including any committed during the wait. If it finds a split, rolling back
+past the marker migration requires restoring a pre-upgrade backup.
 
 ## Several deployments on one PostgreSQL server
 
