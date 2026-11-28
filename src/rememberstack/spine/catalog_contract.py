@@ -388,7 +388,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 122,
     "f": 150,
-    "n": 656,
+    "n": 657,
     "p": 87,
     "t": 7,
     "u": 40,
@@ -415,6 +415,7 @@ DECISION_OBJECTS: Final = {
     "D68": ("deployments", "ix_entities_name_trgm"),
     "D69": ("relations", "v_memory_entity_survivor"),
     "D159": ("forgets", "ix_forgets_content"),
+    "D162": ("chunks", "ix_chunks_split_version"),
     "D163": ("v_memory_claim_history_by_id", "v_memory_entity_survivor"),
     "D79": ("document_structure_generations", "document_skeleton_checks"),
     "D91": (
