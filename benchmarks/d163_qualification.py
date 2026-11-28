@@ -101,10 +101,14 @@ LATENCY_SCALES = {
     "120-leaves": (None, 121),  # vary the partition count independently
 }
 LATENCY_BATCH_SIZES = {"observation": 804, "relation": 535}
-_BEAM_SAMPLE_CORRECTED = dict(_OPEN_QUERY_SQL)["facts_sample"].replace(
-    "predicate, label", "predicate, fact_label AS label"
-)
-_BEAM_ORACLE_NAMES = (*dict(_OPEN_QUERY_SQL), "facts_sample_corrected")
+_BEAM_SQL = dict(_OPEN_QUERY_SQL)
+_BEAM_READS = {
+    "facts_predicates": _BEAM_SQL["facts_predicates"],
+    "facts_sample_corrected": _BEAM_SQL["facts_sample"].replace(
+        "predicate, label", "predicate, fact_label AS label"
+    ),
+    "claims_live_sample": _BEAM_SQL["claims_live_sample"],
+}
 
 
 class Case(BaseModel):
@@ -557,15 +561,8 @@ def compare(
             for view in BROAD_VIEWS
         ):
             raise AssertionError("recapture both releases with all broad sandbox cuts")
-        beam_evaluated_at = record.get("beam_evaluated_at")
-        if (
-            beam_evaluated_at is None
-            or beam_evaluated_at != record["case"].get("evaluated_at")
-            or set(_BEAM_ORACLE_NAMES) != record.get("beam", {}).keys()
-        ):
-            raise AssertionError(
-                "recapture both releases with fixed-instant BEAM sandbox responses"
-            )
+        if any(f"beam/{name}" not in record["cuts"] for name in _BEAM_READS):
+            raise AssertionError("recapture both releases with all unlimited BEAM cuts")
     if baseline["cuts"].keys() != target["cuts"].keys():
         raise AssertionError("different eligible cuts were captured")
     counts = {}
@@ -589,10 +586,6 @@ def compare(
                 baseline["sandbox"][view], target["sandbox"][view]
             )
             for view in BROAD_VIEWS
-        },
-        "beam_matches": {
-            name: _beam_comparable(name, baseline["beam"][name], target["beam"][name])
-            for name in _BEAM_ORACLE_NAMES
         },
         "ordered_raw": {
             kind: [len(batch) for batch in batches]
@@ -641,67 +634,6 @@ class _SandboxSampler:
         return result, elapsed
 
 
-def _beam_queries(
-    sampler: _SandboxSampler, *, evaluated_at: datetime | None = None
-) -> dict[str, Any]:
-    """Run BEAM through the interactive sandbox, pinning the fact source for capture."""
-    queries = dict(_OPEN_QUERY_SQL)
-    if evaluated_at is not None:
-        with sampler.sandbox._transaction(
-            limits_ms=INTERACTIVE_LIMITS,
-            statement_timeout_ms=INTERACTIVE_LIMITS.statement_timeout_ms_default,
-        ) as cursor:
-            pinned = _pinned_facts_current(cursor, evaluated_at).as_string(cursor)
-        queries["facts_sample_corrected"] = _BEAM_SAMPLE_CORRECTED
-        source = "FROM facts_current"
-        for name in ("facts_predicates", "facts_sample", "facts_sample_corrected"):
-            query = queries[name]
-            assert query.count(source) == 1, name
-            # Substitute only the clock-pinned view body. The sandbox still
-            # validates the full query and applies its normal response caps.
-            queries[name] = query.replace(source, f"FROM ({pinned}) AS facts_current")
-    return {
-        name: sampler.run(query, max_rows=_OPEN_QUERY_MAX_ROWS)[0].model_dump(
-            mode="json",
-            include={
-                "columns",
-                "rows",
-                "empty_result",
-                "elapsed_ms",
-                "limits",
-                "ordered_result",
-                "returned_row_count",
-                "termination_reason",
-                "truncated",
-                "truncation_reason",
-                "error_code",
-                "error_message",
-            },
-        )
-        for name, query in queries.items()
-    }
-
-
-def _beam_completed(name: str, result: Mapping[str, Any]) -> bool:
-    if name == "facts_sample":
-        return (
-            result["termination_reason"] == "failed"
-            and result["error_code"] == QueryErrorCode.EXECUTION_ERROR
-        )
-    return result["termination_reason"] == "completed" and result["error_code"] is None
-
-
-def _beam_comparable(
-    name: str, before: Mapping[str, Any], after: Mapping[str, Any]
-) -> bool:
-    fields = ("columns", "rows", "ordered_result", "truncation_reason", "limits")
-    return (
-        _beam_completed(name, before)
-        and _beam_completed(name, after)
-        and all(before[field] == after[field] for field in fields)
-    )
-
-
 def _pinned_facts_current(cursor: psycopg.Cursor, evaluated_at: datetime) -> sql.SQL:
     if evaluated_at.utcoffset() is None:
         raise AssertionError("the paired read instant requires a timezone")
@@ -719,29 +651,33 @@ def _pinned_facts_current(cursor: psycopg.Cursor, evaluated_at: datetime) -> sql
     return sql.SQL(cast("LiteralString", pinned))
 
 
-def _broad_view_rows(
+def _sandbox_cut_rows(
     sandbox: QuerySandboxExecutor, *, evaluated_at: datetime, timeout_ms: int
 ) -> dict[str, list[str]]:
-    """Export unfiltered rows before the response caps on the frozen fixture."""
+    """Export the complete view and BEAM rows in one repeatable-read snapshot."""
+    queries = {f"sandbox/{view}": f"SELECT * FROM {view}" for view in BROAD_VIEWS}
+    for name, query in _BEAM_READS.items():
+        unlimited, _, limit = query.rpartition(" LIMIT ")
+        if not limit.isdecimal():
+            raise AssertionError(f"expected a trailing LIMIT in BEAM {name}")
+        queries[f"beam/{name}"] = unlimited
+
     cuts = {}
     with sandbox._transaction(
         limits_ms=INTERACTIVE_LIMITS, statement_timeout_ms=timeout_ms
     ) as cursor:
         cursor.execute("SET LOCAL TIME ZONE 'UTC'")
         pinned = _pinned_facts_current(cursor, evaluated_at)
-        for view in BROAD_VIEWS:
-            source = (
-                sql.SQL("({})").format(pinned)
-                if view == "facts_current"
-                else sql.Identifier("memory_v1", view)
-            )
-            # PostgreSQL preserves JSON numbers and nulls without a Python round trip.
+        for name, query in queries.items():
+            # The CTE binds both direct fact reads and BEAM to the installed view's
+            # definition at the case instant. Encode every output column in PostgreSQL.
             cursor.execute(
-                sql.SQL("SELECT to_jsonb(view_row)::text FROM {} AS view_row").format(
-                    source
-                )
+                sql.SQL("""
+                    WITH facts_current AS ({})
+                    SELECT to_jsonb(view_row)::text FROM ({}) AS view_row
+                """).format(pinned, sql.SQL(cast("LiteralString", query)))
             )
-            cuts[f"sandbox/{view}"] = [row[0] for row in cursor.fetchall()]
+            cuts[name] = [row[0] for row in cursor.fetchall()]
     return cuts
 
 
@@ -766,12 +702,13 @@ def _sandbox_work(sandbox: QuerySandboxExecutor, query: str) -> dict[str, Any]:
 
 
 def _sandbox_queries(sampler: _SandboxSampler, *, samples: int) -> dict[str, Any]:
-    """Time broad SQL and the corrected sample under interactive limits."""
-    queries = {
-        **{view: f"SELECT * FROM {view}" for view in BROAD_VIEWS},
-        "beam_predicates": dict(_OPEN_QUERY_SQL)["facts_predicates"],
-        "beam_sample_corrected": _BEAM_SAMPLE_CORRECTED,
-    }
+    """Check broad reads and time the interactive workloads when requested."""
+    queries = {view: f"SELECT * FROM {view}" for view in BROAD_VIEWS}
+    if samples:
+        queries.update(
+            beam_predicates=_BEAM_READS["facts_predicates"],
+            beam_sample_corrected=_BEAM_READS["facts_sample_corrected"],
+        )
     report: dict[str, Any] = {}
     for name, query in queries.items():
         max_rows = _OPEN_QUERY_MAX_ROWS if name.startswith("beam_") else None
@@ -1311,7 +1248,6 @@ def main() -> None:
             failed = not (
                 result["raw_batches_match"]
                 and result["ordered_top_k_match"]
-                and all(result["beam_matches"].values())
                 and all(result["sandbox_completion_matches"].values())
             ) or any(
                 count["missing"] or count["extra"] for count in result["cuts"].values()
@@ -1411,21 +1347,10 @@ def main() -> None:
             if sandbox is not None:
                 sampler = _SandboxSampler(sandbox)
                 result["sandbox_settings"] = sandbox_settings
-                result["beam"] = _beam_queries(
-                    sampler,
-                    evaluated_at=case.evaluated_at
-                    if args.operation == "capture"
-                    else None,
-                )
-                failed |= any(
-                    not _beam_completed(name, outcome)
-                    for name, outcome in result["beam"].items()
-                )
                 if args.operation == "capture":
-                    result["beam_evaluated_at"] = case_json["evaluated_at"]
                     timeout_ms = int(args.timeout * 1000)
                     result["cuts"].update(
-                        _broad_view_rows(
+                        _sandbox_cut_rows(
                             sandbox,
                             evaluated_at=case.evaluated_at,
                             timeout_ms=timeout_ms,

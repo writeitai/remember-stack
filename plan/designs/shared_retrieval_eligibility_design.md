@@ -878,21 +878,29 @@ facts attached to entities absorbed by the requested survivors. Add one raw
 fact to that scope and require the `entity_scope_too_broad` response at 50,001.
 For the shared view dependency, check broad `claims_visible_history`,
 `claims_live`, `facts_current`, `fact_claim_evidence_live` and `evidence_lineage`
-reads without ID filters. Compare every column before result caps using
-`EXCEPT ALL` in both directions. In that diagnostic, bind the installed
-`facts_current` statement clock to the case instant so both releases use the
-same boundary for membership and the reported time. Record executed plans and
-typed completion for the original statements under the existing interactive
-sandbox limits as corpus size, evidence fanout and partitions grow independently.
-A paired timeout records matching deadline behavior. Full row equivalence still
-requires the complete diagnostic export. Use that same fixed instant for the
-BEAM fact source. Compare the ordered responses returned by the interactive
-sandbox under the shipped ordering and limits, including when equal counts
-span the aggregate's 25-row cutoff. Record the typed outcome for the shipped
-`label` query. Compare the corrected `fact_label AS label` sample at the same
-instant and time it with the other interactive statements. Use the query login's
-effective JIT settings and pace interactive requests under the rolling quotas.
-Report admission failures and time only executed queries.
+reads without ID filters. Also run the BEAM predicate counts, corrected
+`fact_label AS label` sample and live-claim sample with their trailing
+`LIMIT` removed and their ordering clauses intact. Run these diagnostic reads
+as the query login in one repeatable-read snapshot per copy of the same frozen
+store. Bind the installed `facts_current` statement clock to `case.evaluated_at`
+for both releases. This fixes both which facts qualify and the reported time
+in the broad fact read and supplies the same fact source to BEAM.
+
+Compare the complete results with every output column using `EXCEPT ALL`
+in both directions. Each duplicate contributes to its row's count, and
+row order is irrelevant. Two predicates tied for the last place of the
+shipped 25-row aggregate can appear in either order and either can be cut
+off. The complete result includes both and proves equality of the candidates
+available to the limited query.
+
+Record executed plans and typed completion for the broad statements under
+the existing interactive sandbox limits as corpus size, evidence fanout and
+partitions grow independently. A paired timeout records matching deadline
+behavior. Full row equivalence requires the complete diagnostic export.
+Time the shipped BEAM predicate aggregate and the corrected fact sample with
+their limits. Use the query login's effective JIT settings and pace interactive
+requests under the rolling quotas. Report admission failures and time only
+executed queries.
 [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)
 
 **Migration check.** On a populated store, run `alembic upgrade head` and

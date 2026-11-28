@@ -248,7 +248,7 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
             record = qualification.capture(engine, case, timeout=20)
             sampler = qualification._SandboxSampler(sandbox)
             record["cuts"].update(
-                qualification._broad_view_rows(
+                qualification._sandbox_cut_rows(
                     sandbox, evaluated_at=case.evaluated_at, timeout_ms=20_000
                 )
             )
@@ -259,23 +259,14 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
                 "case": case_json,
                 "sandbox_settings": {"jit": "off"},
                 "sandbox": qualification._sandbox_queries(sampler, samples=0),
-                "beam_evaluated_at": case_json["evaluated_at"],
-                "beam": qualification._beam_queries(
-                    sampler, evaluated_at=case.evaluated_at
-                ),
             }
 
         baseline = snapshot(BASELINE_HEAD)
         current = baseline["cuts"]["sandbox/facts_current"]
-        assert current
+        assert len(baseline["cuts"]["beam/facts_sample_corrected"]) == len(current) > 40
         assert {
             datetime.fromisoformat(json.loads(row)["evaluated_at"]) for row in current
         } == {case.evaluated_at}
-        early = qualification._broad_view_rows(
-            sandbox, evaluated_at=datetime(2023, 1, 1, tzinfo=UTC), timeout_ms=20_000
-        )
-        assert early["sandbox/facts_current"] == []
-
         cut = "sandbox/evidence_lineage"
         original = baseline["cuts"][cut]
         state = baseline["sandbox"]["evidence_lineage"]
@@ -293,10 +284,10 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
                 f"CREATE OR REPLACE VIEW memory_v1.evidence_lineage AS {changed}"
             )
         target = snapshot(TARGET_HEAD)
+        target["cuts"]["beam/facts_predicates"].reverse()
         with engine.connect() as connection:
             report = qualification.compare(connection, baseline, target)
             assert report["raw_batches_match"] and report["ordered_top_k_match"]
-            assert all(report["beam_matches"].values())
             assert all(report["sandbox_completion_matches"].values())
             assert {
                 name: (counts["missing"], counts["extra"])
@@ -313,7 +304,7 @@ def test_d163_compare_detects_public_view_value_and_multiplicity_changes() -> No
             }
 
 
-def test_beam_oracle_uses_the_case_clock_at_exclusive_validity_end() -> None:
+def test_sandbox_oracle_uses_the_case_clock_at_exclusive_validity_end() -> None:
     with scratch_database(BASELINE_HEAD) as engine:
         corpus = seed_corpus(engine)
         valid_until = datetime(2025, 1, 2, tzinfo=UTC)
@@ -330,46 +321,39 @@ def test_beam_oracle_uses_the_case_clock_at_exclusive_validity_end() -> None:
         with _connect(engine) as connection:
             _provision_query_role_password(connection=connection, engine=engine)
 
-        ordered = []
+        snapshots = []
         for head in (BASELINE_HEAD, TARGET_HEAD):
             if head == TARGET_HEAD:
                 command.upgrade(config=migration_config(engine), revision=TARGET_HEAD)
             sandbox = _executor(engine, corpus, qualification.MANIFEST_BY_HEAD[head])
-            sampler = qualification._SandboxSampler(sandbox)
-            before = qualification._beam_queries(sampler, evaluated_at=before_end)
-            at = qualification._beam_queries(sampler, evaluated_at=valid_until)
-            broad = qualification._broad_view_rows(
+            before = qualification._sandbox_cut_rows(
                 sandbox, evaluated_at=before_end, timeout_ms=20_000
-            )["sandbox/facts_current"]
+            )
+            at = qualification._sandbox_cut_rows(
+                sandbox, evaluated_at=valid_until, timeout_ms=20_000
+            )
             assert (
-                sum(count for _, count in before["facts_predicates"]["rows"])
-                == len(broad)
+                sum(json.loads(row)["n"] for row in before["beam/facts_predicates"])
+                == len(before["sandbox/facts_current"])
                 > 0
             )
-            assert [
-                "relation",
-                str(corpus.facts["relation", "multi_source"]),
-                "works_for",
-                "multi_source",
-            ] in before["facts_sample_corrected"]["rows"]
+            assert {
+                "fact_kind": "relation",
+                "fact_id": str(corpus.facts["relation", "multi_source"]),
+                "predicate": "works_for",
+                "label": "multi_source",
+            } in [json.loads(row) for row in before["beam/facts_sample_corrected"]]
             assert (
-                at["facts_predicates"]["rows"]
-                == at["facts_sample_corrected"]["rows"]
+                at["sandbox/facts_current"]
+                == at["beam/facts_predicates"]
+                == at["beam/facts_sample_corrected"]
                 == []
             )
-            for name in ("facts_predicates", "facts_sample_corrected"):
-                assert at[name]["termination_reason"] == "completed"
-            assert before["facts_sample"]["error_code"] == "execution_error"
-            assert before["facts_sample"]["termination_reason"] == "failed"
-            live = qualification._beam_queries(sampler)
-            assert live["facts_predicates"]["rows"] == []
-            ordered.append(
-                {name: response["rows"] for name, response in before.items()}
-            )
-        assert ordered[0] == ordered[1]
+            snapshots.append({name: Counter(rows) for name, rows in before.items()})
+        assert snapshots[0] == snapshots[1]
 
 
-def test_beam_oracle_preserves_the_shipped_cutoff_with_tied_predicates() -> None:
+def test_beam_oracle_includes_both_predicates_tied_at_the_cutoff() -> None:
     with scratch_database(TARGET_HEAD) as engine:
         corpus = seed_corpus(engine)
         with engine.begin() as connection:
@@ -394,37 +378,17 @@ def test_beam_oracle_preserves_the_shipped_cutoff_with_tied_predicates() -> None
         with _connect(engine) as connection:
             _provision_query_role_password(connection=connection, engine=engine)
         sandbox = _executor(engine, corpus, qualification.MANIFEST_BY_HEAD[TARGET_HEAD])
-        broad = qualification._broad_view_rows(
+        cuts = qualification._sandbox_cut_rows(
             sandbox, evaluated_at=corpus.case.evaluated_at, timeout_ms=20_000
-        )["sandbox/facts_current"]
-        counts = Counter(json.loads(row)["predicate"] for row in broad)
+        )
+        counts = Counter(
+            json.loads(row)["predicate"] for row in cuts["sandbox/facts_current"]
+        )
         assert sorted(counts.values(), reverse=True)[24:] == [1, 1]
-
-        sampler = qualification._SandboxSampler(sandbox)
-        captured = qualification._beam_queries(
-            sampler, evaluated_at=corpus.case.evaluated_at
+        aggregate = [json.loads(row) for row in cuts["beam/facts_predicates"]]
+        assert Counter((row["predicate"], row["n"]) for row in aggregate) == Counter(
+            counts.items()
         )
-        # Compare against the literal shipped request with the pinned view
-        # installed in this disposable database.
-        with _connect(engine) as connection, connection.cursor() as cursor:
-            pinned = qualification._pinned_facts_current(
-                cursor, corpus.case.evaluated_at
-            )
-            cursor.execute(
-                sql.SQL("CREATE OR REPLACE VIEW memory_v1.facts_current AS {}").format(
-                    pinned
-                )
-            )
-        shipped, _ = sampler.run(
-            dict(qualification._OPEN_QUERY_SQL)["facts_predicates"],
-            max_rows=qualification._OPEN_QUERY_MAX_ROWS,
-        )
-        aggregate = captured["facts_predicates"]
-        assert len(shipped.rows) == 25
-        assert aggregate["rows"] == shipped.model_dump(mode="json")["rows"]
-        assert aggregate["ordered_result"] is True
-        assert aggregate["limits"]["row_cap"] == 40
-        assert aggregate["limits"]["statement_timeout_ms"] == 5000
 
 
 def test_d163_upgrade_and_downgrade_with_previous_readers(

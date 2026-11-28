@@ -1,4 +1,4 @@
-"""Fail closed when run identity, BEAM results or the latency workload drifts."""
+"""Fail closed when run identity, oracle cuts or the latency workload drifts."""
 
 from datetime import datetime
 from datetime import UTC
@@ -22,22 +22,16 @@ from rememberstack.surfaces.query_sandbox.result import ResultLimits
 
 
 def _capture(*, head: str) -> dict[str, Any]:
-    evaluated_at = "2025-01-01T00:00:00Z"
-    beam_rows = {
-        "facts_predicates": [["first", 2], ["second", 2]],
-        "facts_sample": [],
-        "claims_live_sample": [],
-        "facts_sample_corrected": [["relation", "fact", "first", "label"]],
-    }
     return {
         "schema_head": head,
         "surface_manifest_hash": qualification.MANIFEST_BY_HEAD[head],
         "sandbox_settings": {"jit": "on"},
-        "case": {"evaluated_at": evaluated_at},
+        "case": {"evaluated_at": "2025-01-01T00:00:00Z"},
         "cuts": {
             "contradiction/broad": [],
             "native_final/broad": [],
             **{f"sandbox/{view}": [] for view in qualification.BROAD_VIEWS},
+            **{f"beam/{name}": [] for name in qualification._BEAM_READS},
         },
         "sandbox": {
             view: {
@@ -53,21 +47,6 @@ def _capture(*, head: str) -> dict[str, Any]:
         "ordered": {
             "final/broad": [("observation", "fact", {"returned": 1, "total": 2})]
         },
-        "beam_evaluated_at": evaluated_at,
-        "beam": {
-            name: {
-                "rows": rows,
-                "columns": [],
-                "ordered_result": name != "facts_sample",
-                "truncation_reason": None,
-                "limits": {"row_cap": 40, "statement_timeout_ms": 5000},
-                "termination_reason": "failed"
-                if name == "facts_sample"
-                else "completed",
-                "error_code": "execution_error" if name == "facts_sample" else None,
-            }
-            for name, rows in beam_rows.items()
-        },
     }
 
 
@@ -80,52 +59,12 @@ def test_compare_rejects_baseline_runtime_on_both_schema_heads() -> None:
     connection.execute.assert_not_called()
 
 
-def test_compare_detects_beam_order_and_outcome_changes() -> None:
+def test_compare_requires_unlimited_beam_cuts() -> None:
     baseline = _capture(head=qualification.BASELINE_HEAD)
     target = _capture(head=qualification.TARGET_HEAD)
+    target["cuts"].pop("beam/facts_predicates")
     connection = MagicMock(spec=Connection)
-    connection.execute.return_value.one.return_value = (0, 0)
-    assert all(
-        qualification.compare(connection, baseline, target)["beam_matches"].values()
-    )
-
-    target["beam"]["facts_predicates"]["rows"].reverse()
-    target["beam"]["facts_sample"]["error_code"] = "statement_timeout"
-    assert qualification.compare(connection, baseline, target)["beam_matches"] == {
-        "facts_predicates": False,
-        "facts_sample": False,
-        "claims_live_sample": True,
-        "facts_sample_corrected": True,
-    }
-
-
-def test_compare_detects_a_different_tied_predicate_at_the_beam_cutoff() -> None:
-    baseline = _capture(head=qualification.BASELINE_HEAD)
-    target = _capture(head=qualification.TARGET_HEAD)
-    leaders = [[f"predicate-{rank}", 26 - rank] for rank in range(24)]
-    for record in (baseline, target):
-        record["beam"]["facts_predicates"]["rows"] = [*leaders, ["first", 2]]
-    connection = MagicMock(spec=Connection)
-    connection.execute.return_value.one.return_value = (0, 0)
-    assert all(
-        qualification.compare(connection, baseline, target)["beam_matches"].values()
-    )
-
-    target["beam"]["facts_predicates"]["rows"][24] = ["second", 2]
-    assert qualification.compare(connection, baseline, target)["beam_matches"] == {
-        "facts_predicates": False,
-        "facts_sample": True,
-        "claims_live_sample": True,
-        "facts_sample_corrected": True,
-    }
-
-
-def test_compare_requires_fixed_instant_beam_sandbox_responses() -> None:
-    baseline = _capture(head=qualification.BASELINE_HEAD)
-    target = _capture(head=qualification.TARGET_HEAD)
-    target.pop("beam_evaluated_at")
-    connection = MagicMock(spec=Connection)
-    with pytest.raises(AssertionError, match="fixed-instant BEAM sandbox responses"):
+    with pytest.raises(AssertionError, match="all unlimited BEAM cuts"):
         qualification.compare(connection, baseline, target)
     connection.execute.assert_not_called()
 
@@ -318,10 +257,9 @@ def test_sandbox_samples_share_pacing_across_queries(
     sandbox = MagicMock(spec=QuerySandboxExecutor)
     sandbox.query_sql.side_effect = run
     sampler = qualification._SandboxSampler(sandbox)
-    qualification._beam_queries(sampler)
     checks = qualification._sandbox_queries(sampler, samples=4)
-    assert sandbox.query_sql.call_count == 13
-    assert clock > 13 * 4  # Waiting happens outside the measured samples.
+    assert sandbox.query_sql.call_count == 10
+    assert clock > 10 * 4  # Waiting happens outside the measured samples.
     for state in checks.values():
         assert state["samples"] == 4
         assert state["p50_s"] == state["p95_s"] == 4

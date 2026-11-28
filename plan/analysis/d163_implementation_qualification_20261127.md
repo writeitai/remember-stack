@@ -84,25 +84,22 @@ with ordered co-members and both member counts.
 
 Compare requires the expected runtime manifest at each schema head and matching
 effective sandbox JIT settings. It checks ordered raw batches, ordered final
-facts with their contradiction blocks, and the ordered BEAM sandbox responses
-at the case instant. It runs `EXCEPT ALL` in both directions over the SQL cuts,
-including native final confirmation, contradiction membership and all five
-broad sandbox views. The comparison counts repeated rows and ignores
-incidental order in those broad reads.
+facts with their contradiction blocks, native final confirmation and
+contradiction membership. The sandbox cuts contain every output column from
+the five broad views and the BEAM predicate counts, corrected fact sample and
+live-claim sample. The BEAM queries keep their original ordering and drop
+their SQL limits. Compare uses `EXCEPT ALL` in both directions for the SQL
+cuts, counting duplicate rows and ignoring row order.
 
-The broad export runs as the query login and uses the recorded diagnostic
-`--timeout` to read every row before the response caps. It reads the installed
+The export uses the query login and a single repeatable-read transaction
+on each copy of the frozen store. The recorded diagnostic `--timeout`
+applies to each complete read. The harness reads the installed
 `facts_current` definition from the catalog and replaces its statement clock
-with the case instant in the diagnostic SQL. This fixes both membership and
-the returned `evaluated_at` value. Capture uses that same pinned definition
-as the fact source in the BEAM queries it submits to the usual sandbox
-validator and executor. The aggregate keeps `ORDER BY 2 DESC LIMIT 25` and
-the 40-row request cap. Compare checks the returned rows in order, including
-the predicate selected when a tie spans the cutoff, along with the columns,
-limits, truncation and typed outcomes. The shipped `label` query must report
-`execution_error`. Capture also records the corrected `fact_label AS label`
-response at the case instant. Regenerate both captures to record
-`beam_evaluated_at` and the sandbox responses.
+with `case.evaluated_at` in the diagnostic SQL. This fixes membership and the
+reported `evaluated_at` for the broad fact read and supplies the same fact
+source for the BEAM queries. The fact sample selects `fact_label AS label`
+using the column exposed by the view. Regenerate both captures to include the
+complete `beam/*` cuts.
 
 The broad-view checks record executed plans, including planning time and
 buffer use. A canceled plan reports its typed error. Compare checks
@@ -164,13 +161,12 @@ release on `PYTHONPATH` and its login to measure the same SQL on the reference.
 Use the deployment's query-login settings. The report's `sandbox_settings`
 records the JIT settings visible to that login, including the active `jit`
 flag and cost thresholds.
-Both releases capture the shipped BEAM queries with their SQL limits and
-40-row request cap. The original `label` query returns a typed
-`execution_error`. The sandbox report times `fact_label AS label` separately
-for diagnosis. Warm-ups and samples share the same interactive statement-second
-quotas as the shipped BEAM calls. The harness waits for quota before starting a
-sample timer. It records quota and concurrency refusals in `admission_failures`
-and computes percentiles from admitted requests.
+The sandbox report times the shipped BEAM predicate aggregate and the
+corrected `fact_label AS label` sample with their SQL limits and 40-row request
+cap. Warm-ups and samples share the interactive statement-second quotas.
+The harness waits for quota before starting a sample timer. It records quota
+and concurrency refusals in `admission_failures` and computes percentiles from
+admitted requests.
 
 On a disposable fixture seeded by `seed_corpus`, the following adds unrelated
 chunks and copies fixed fact and evidence cases. The 1,200-relation population
@@ -399,9 +395,9 @@ with the expected D122 reuse failure.
 
 ### PR #684 round-two verification
 
-The paired replay keeps the shipped aggregate's count order and 25-row limit
-at the fixed instant. A PostgreSQL fixture with 26 predicate groups exercises
-a tie across the cutoff. The comparison rejects a different tied predicate
+The paired replay kept the shipped aggregate's count order and 25-row limit
+at the fixed instant. A PostgreSQL fixture with 26 predicate groups exercised
+a tie across the cutoff. The comparison rejected a different tied predicate
 at row 25 even when the other rows and typed outcomes agree. Captures on
 physical PostgreSQL 18.6 copies matched all ordered BEAM rows, ordered raw
 HNSW batches and ordered native final facts across the four time modes.
@@ -442,6 +438,8 @@ statistics.
 
 ### PR #684 round-three verification
 
+This run used the superseded ordered sandbox oracle.
+
 The baseline and D163 runtimes returned matching ordered BEAM sandbox
 responses across current, at, overlap and history cases on physical
 PostgreSQL 18.6 copies with inherited `jit=on`. All 112 SQL cuts matched,
@@ -456,6 +454,33 @@ checks that the oracle rejects it.
 Ruff formatting and lint, Pyright, the import contracts, and the test
 inventory passed. All 475 benchmark tests and 17 D163 PostgreSQL eligibility
 and migration tests passed.
+
+### PR #684 complete sandbox and BEAM results
+
+The fixed clock evaluates fact validity at the same instant on both releases.
+The aggregate's `ORDER BY 2 DESC LIMIT 25` can pick either predicate when two
+counts tie at positions 25 and 26, even within a single release. Adding a
+predicate tie-breaker would pick one of the tied rows under a new ordering.
+The owner-directed oracle compares the complete results at the case instant
+on the paired frozen stores. For the aggregate this includes both tied
+predicates and their counts. Equal results establish equality of the
+candidates available to the shipped limited query.
+
+The PostgreSQL regression captures all 26 predicate groups and verifies each
+group's count against the complete fact view. A separate regression checks
+the fact cuts on both schema revisions one microsecond before a fact's
+exclusive validity end and at the end itself.
+
+The previous and D163 runtimes matched 1,114 rows per release across 124
+cuts on physical PostgreSQL 18.6 copies with inherited JIT. The CLI used
+current, at, overlap and history cases. The ordered native results and
+broad sandbox completion checks also matched. Reversing the target predicate
+rows passed comparison. Changing one predicate count caused the CLI to fail
+with one missing and one extra row in that cut.
+
+Ruff formatting and lint passed on the CI paths. Pyright, the import contracts
+and the test inventory passed. The selected suites passed 473 benchmark
+tests and 17 PostgreSQL tests.
 
 ### Synthetic latency
 
