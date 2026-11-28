@@ -6,6 +6,8 @@ from datetime import timezone
 import logging
 from pathlib import Path
 from threading import Event
+from time import monotonic
+from time import sleep
 from uuid import uuid4
 
 from alembic import command
@@ -165,6 +167,8 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_56_0077",
         "p9_57_0078",
         "p9_58_0079",
+        "p9_59_0080",
+        "p9_60_0081",
     )
     assert len(script.get_heads()) == 1
 
@@ -286,7 +290,7 @@ def test_upgrade_retries_contended_revision_after_autocommit() -> None:
                 reader.rollback()
                 resume.set()
             pending.result(timeout=15)
-        assert _head_revision(database_url=database_url) == "p9_58_0079"
+        assert _head_revision(database_url=database_url) == "p9_60_0081"
     finally:
         logger.removeHandler(notice)
         engine.dispose()
@@ -768,7 +772,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_58_0079"
+    assert head_before_noop == head_after_noop == "p9_60_0081"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1386,7 +1390,7 @@ def test_fresh_setup_runs_on_a_server_without_sql_pgq() -> None:
             assert graph_catalog_problems(connection=connection) == ()
     finally:
         engine.dispose()
-    assert _head_revision(database_url=database_url) == "p9_58_0079"
+    assert _head_revision(database_url=database_url) == "p9_60_0081"
 
 
 def test_citation_projection_migration_round_trips_graph_metadata() -> None:
@@ -1539,7 +1543,7 @@ def test_d122_refuses_a_populated_store() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_58_0079"
+    assert _head_revision(database_url=database_url) == "p9_60_0081"
 
 
 def test_d150_refuses_to_drop_staged_originals() -> None:
@@ -1583,7 +1587,7 @@ def test_d150_refuses_to_drop_staged_originals() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_58_0079"
+    assert _head_revision(database_url=database_url) == "p9_60_0081"
 
 
 _BACKFILL_MIMES = (
@@ -1792,7 +1796,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_58_0079"
+    assert _head_revision(database_url=database_url) == "p9_60_0081"
 
 
 def test_d134_own_document_name_span_downgrade_guard() -> None:
@@ -1851,7 +1855,7 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_58_0079"
+    assert _head_revision(database_url=database_url) == "p9_60_0081"
 
 
 def test_d138_downgrade_guard_protects_search_only_readings() -> None:
@@ -1986,7 +1990,7 @@ def test_d138_downgrade_guard_protects_search_only_readings() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_58_0079"
+    assert _head_revision(database_url=database_url) == "p9_60_0081"
 
 
 def test_d159_upgrade_turns_d74_manifests_into_forget_records() -> None:
@@ -2140,7 +2144,7 @@ def test_d159_upgrade_turns_d74_manifests_into_forget_records() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_58_0079"
+    assert _head_revision(database_url=database_url) == "p9_60_0081"
 
 
 def test_d159_upgrade_guards_a_preparing_named_upload() -> None:
@@ -2225,4 +2229,166 @@ def test_d159_upgrade_guards_a_preparing_named_upload() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_58_0079"
+    assert _head_revision(database_url=database_url) == "p9_60_0081"
+
+
+_INSERT_D162_SPLIT_CHUNK = text("""
+    INSERT INTO chunks (
+        chunk_id, deployment_id, doc_id, version_id, representation_id,
+        ordinal, block_start, block_end, chunk_content_hash, extraction_input_hash,
+        char_start, char_end, span_kind
+    ) VALUES (gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),
+              gen_random_uuid(),gen_random_uuid(),0,0,0,'fragment','extraction',0,1,'split')
+    RETURNING chunk_id
+""")
+
+
+def test_d162_additive_span_kind_and_interrupted_partition_index() -> None:
+    """Old writes keep the default and an interrupted concurrent build can resume."""
+    from sqlalchemy.exc import DBAPIError
+
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_58_0079")
+    engine = create_engine(database_url)
+    legacy_insert = text("""
+        INSERT INTO chunks (
+            chunk_id, deployment_id, doc_id, version_id, representation_id,
+            ordinal, block_start, block_end, chunk_content_hash, extraction_input_hash,
+            char_start, char_end
+        ) VALUES (gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),
+                  gen_random_uuid(),gen_random_uuid(),0,0,0,'content','extraction',0,0)
+        RETURNING chunk_id
+    """)
+    try:
+        with engine.begin() as connection:
+            legacy = connection.execute(legacy_insert).scalar_one()
+        command.upgrade(config=config, revision="p9_59_0080")
+        with engine.begin() as writer:
+            after_column = writer.execute(legacy_insert).scalar_one()
+            leaf, oid = writer.execute(
+                text("""
+                SELECT tableoid::regclass::text, tableoid::oid
+                FROM chunks WHERE chunk_id=:id
+            """),
+                {"id": after_column},
+            ).one()
+            index = f"ix_chunks_split_version_{oid}"
+            quote = engine.dialect.identifier_preparer.quote
+            with engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as builder:
+                builder.exec_driver_sql("SET lock_timeout = '100ms'")
+                with pytest.raises(DBAPIError) as blocked:
+                    builder.exec_driver_sql(
+                        f"CREATE INDEX CONCURRENTLY {quote(index)} ON public.{quote(leaf)}"
+                        " (version_id) WHERE span_kind='split'"
+                    )
+                assert getattr(blocked.value.orig, "sqlstate", None) == "55P03"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass(:name)"
+                    ),
+                    {"name": f"public.{index}"},
+                ).scalar_one()
+                is False
+            )
+        command.upgrade(config=config, revision="head")
+        with engine.begin() as connection:
+            after_index = connection.execute(legacy_insert).scalar_one()
+            assert (
+                connection.execute(
+                    text("""
+                SELECT count(*) FROM chunks WHERE chunk_id=ANY(:ids) AND span_kind='whole'
+               """),
+                    {"ids": [legacy, after_column, after_index]},
+                ).scalar_one()
+                == 3
+            )
+            assert (
+                connection.execute(
+                    text("""
+                SELECT i.indisvalid AND i.indisready
+                FROM pg_index i WHERE indexrelid='public.ix_chunks_split_version'::regclass
+            """)
+                ).scalar_one()
+                is True
+            )
+            split = connection.execute(_INSERT_D162_SPLIT_CHUNK).scalar_one()
+        with pytest.raises(
+            RuntimeError,
+            match="D162 downgrade requires a database without split chunks",
+        ):
+            command.downgrade(config=config, revision="p9_58_0079")
+        assert _head_revision(database_url=database_url) == "p9_59_0080"
+        command.upgrade(config=config, revision="head")
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT span_kind FROM chunks WHERE chunk_id=:id"),
+                    {"id": split},
+                ).scalar_one()
+                == "split"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_d162_downgrade_sees_split_committed_during_lock_wait() -> None:
+    """The downgrade guard takes a fresh snapshot once it holds the table lock."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_59_0080")
+    config.set_main_option("sqlalchemy.isolation_level", "REPEATABLE READ")
+    config.set_main_option("migration_lock_timeout_seconds", "15")
+    engine = create_engine(database_url)
+    blocked_by_writer = text("""
+        SELECT EXISTS (
+            SELECT 1 FROM pg_locks
+            WHERE relation = 'public.chunks'::regclass
+              AND mode = 'AccessExclusiveLock' AND NOT granted
+              AND :writer_pid = ANY(pg_blocking_pids(pid))
+        )
+    """)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with engine.connect() as writer, engine.connect() as observer:
+                writer_pid = writer.exec_driver_sql(
+                    "SELECT pg_backend_pid()"
+                ).scalar_one()
+                split = writer.execute(_INSERT_D162_SPLIT_CHUNK).scalar_one()
+                pending = executor.submit(
+                    command.downgrade, config=config, revision="p9_58_0079"
+                )
+                deadline = monotonic() + 5
+                while not observer.execute(
+                    blocked_by_writer, {"writer_pid": writer_pid}
+                ).scalar_one():
+                    assert monotonic() < deadline, (
+                        "downgrade did not wait for the writer"
+                    )
+                    sleep(0.01)
+                writer.commit()
+            with pytest.raises(
+                RuntimeError,
+                match="D162 downgrade requires a database without split chunks",
+            ):
+                pending.result(timeout=10)
+        assert _head_revision(database_url=database_url) == "p9_59_0080"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT span_kind FROM chunks WHERE chunk_id=:id"),
+                    {"id": split},
+                ).scalar_one()
+                == "split"
+            )
+    finally:
+        engine.dispose()
+        command.upgrade(
+            config=_alembic_config(database_url=database_url), revision="head"
+        )

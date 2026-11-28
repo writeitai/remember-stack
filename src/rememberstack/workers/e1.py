@@ -32,10 +32,14 @@ from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.extraction_eligibility import (
     EXTRACTION_ELIGIBILITY_POLICY_VERSION,
 )
+from rememberstack.core.hosted_embedding_ceiling import HOSTED_EMBEDDING_BINDING
+from rememberstack.core.hosted_embedding_ceiling import hosted_embedding_fits
+from rememberstack.core.oversized_chunks import split_oversized_chunks
 from rememberstack.core.source_origins import origin_input_hash
 from rememberstack.core.source_origins import SOURCE_ORIGINS_VERSION
 from rememberstack.core.text_origin import resolve_text_origin
 from rememberstack.core.text_origin import reuse_identity_hash
+from rememberstack.model import Block
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
@@ -52,16 +56,23 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model import TextOriginMatch
+from rememberstack.model.model_provider import EmbeddingRejectionCode
+from rememberstack.model.model_provider import ProviderEmbeddingInputRejected
 from rememberstack.model.occurrence_provenance import (
     parse_persisted_conversion_manifest,
 )
+from rememberstack.model.occurrence_provenance import PersistedConversionManifest
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.ports.p1_index import ChunkIndexPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.p1_index import require_p1_vector
 from rememberstack.spine.chunk_catalog import ChunkCatalog
+from rememberstack.spine.chunk_catalog import EmbeddingReuse
 from rememberstack.workers.base import HandlerOutcome
+from rememberstack.workers.provenance import read_source_map
 from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSION
 
 E1_CHUNK_VERSION: Final = CHUNKER_VERSION
@@ -122,12 +133,14 @@ class ChunkHandler:
         catalog: ChunkCatalog,
         artifact_store: ObjectStorePort,
         params: ChunkerParams,
+        hosted_embedding: bool = False,
     ) -> None:
         """Bind the handler to its catalog, the artifacts bucket, and the params."""
         self._catalog = catalog
         self._artifact_store = artifact_store
         self._params = params
         self._chunker_version = chunker_version(params=params)
+        self._hosted_embedding = hosted_embedding
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
         """Pack one representation into chunks and chain the embed stage.
@@ -151,7 +164,8 @@ class ChunkHandler:
             self._artifact_store.read_bytes(key=ObjectKey(source.blocks_uri))
         )
         blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=document_md)
-        derivation_ranges = self._derivation_ranges(source=source)
+        manifest = self._conversion_manifest(source=source)
+        derivation_ranges = manifest.derivation_ranges if manifest is not None else ()
         eligible = block_eligibility(blocks=blocks, ranges=derivation_ranges)
         packed = pack_blocks(
             blocks=blocks,
@@ -164,6 +178,15 @@ class ChunkHandler:
                 if not is_eligible
             ),
         )
+        if self._hosted_embedding:
+            packed = self._fit_packed(
+                source=source,
+                packed=packed,
+                blocks=blocks,
+                eligibility=eligible,
+                document_md=document_md,
+                manifest=manifest,
+            )
         identities = tuple(
             _reuse_identity_hash(
                 source=source,
@@ -173,59 +196,99 @@ class ChunkHandler:
             )
             for index in range(len(packed))
         )
-        origins = self._text_origins(source=source, identities=identities)
-        self._catalog.record_chunks(
-            records=tuple(
-                _chunk_record(
-                    source=source,
-                    packed=packed,
-                    index=index,
-                    chunker_version=self._chunker_version,
-                    reuse_identity_hash=identities[index],
-                    text_origin_at=origins[index],
-                    derivation_ranges=derivation_ranges,
+
+        def build_records(
+            matches: dict[str, TextOriginMatch],
+        ) -> tuple[ChunkRecord, ...]:
+            version_date = source.source_modified_at or source.published_at
+            records = []
+            for index, identity in enumerate(identities):
+                match = matches.get(identity)
+                records.append(
+                    _chunk_record(
+                        source=source,
+                        packed=packed,
+                        index=index,
+                        chunker_version=self._chunker_version,
+                        reuse_identity_hash=identity,
+                        text_origin_at=resolve_text_origin(
+                            matches=() if match is None else (match,),
+                            version_date=version_date,
+                        ),
+                        derivation_ranges=derivation_ranges,
+                    )
                 )
-                for index in range(len(packed))
-            )
+            return tuple(records)
+
+        self._catalog.save_grid(
+            source=source,
+            chunker_version=self._chunker_version,
+            identities=identities,
+            has_split=any(chunk.span_kind == "split" for chunk in packed),
+            build_records=build_records,
         )
         return _embed_follow_up(work=work, source=source)
 
-    def _text_origins(
-        self, *, source: ChunkSource, identities: tuple[str, ...]
-    ) -> tuple[datetime | None, ...]:
-        """Each new chunk's text origin time, looked up once at creation (D140 §5).
+    def _fit_packed(
+        self,
+        *,
+        source: ChunkSource,
+        packed: tuple[PackedChunk, ...],
+        blocks: tuple[Block, ...],
+        eligibility: tuple[bool, ...],
+        document_md: str,
+        manifest: PersistedConversionManifest | None,
+    ) -> tuple[PackedChunk, ...]:
+        sections = {section.section_id: section for section in source.sections}
 
-        Recorded on the row and never recomputed: a retried chunk stage
-        replays the rows above instead of reaching this lookup again.
-        """
-        version_date = source.source_modified_at or source.published_at
-        matches = (
-            {}
-            if version_date is None
-            else self._catalog.text_origin_matches(
-                deployment_id=source.deployment_id,
-                doc_id=source.doc_id,
-                reuse_identity_hashes=tuple(dict.fromkeys(identities)),
-                not_after=version_date,
+        def fits(chunk: PackedChunk, count: int) -> bool:
+            section = sections[chunk.section_id]
+            facts = _source_location_facts(
+                source=source,
+                # D80's embedding text has no occurrence UUID.
+                chunk_id=source.representation_id,
+                section_path=section.node_path,
+                section_role=section.role,
+                section_title=section.title,
+                chunk_count=count,
             )
+            return hosted_embedding_fits(
+                render_embedding_input(
+                    facts=facts, body=document_md[chunk.char_start : chunk.char_end]
+                )
+            )
+
+        oversized = frozenset(
+            chunk.ordinal for chunk in packed if not fits(chunk, len(packed))
         )
-        return tuple(
-            resolve_text_origin(
-                matches=() if match is None else (match,), version_date=version_date
-            )
-            for match in (matches.get(identity) for identity in identities)
+        if not oversized:
+            return packed
+        map_ref = manifest.source_map if manifest is not None else None
+        return split_oversized_chunks(
+            packed=packed,
+            oversized=oversized,
+            blocks=blocks,
+            eligibility=eligibility,
+            document_md=document_md,
+            ranges=manifest.derivation_ranges if manifest is not None else (),
+            source_map=read_source_map(artifact_store=self._artifact_store, ref=map_ref)
+            if map_ref is not None
+            else (),
+            fits=fits,
         )
 
-    def _derivation_ranges(self, *, source: ChunkSource) -> tuple[DerivationRange, ...]:
-        """The converter's labelled ranges; a legacy row without a manifest has none."""
+    def _conversion_manifest(
+        self, *, source: ChunkSource
+    ) -> PersistedConversionManifest | None:
+        """The converter's labelled ranges; legacy rows may have no manifest."""
         if source.conversion_uri is None:
-            return ()
+            return None
         return parse_persisted_conversion_manifest(
             payload=self._artifact_store.read_bytes(
                 key=ObjectKey(source.conversion_uri)
             ),
             uri=source.conversion_uri,
-        ).derivation_ranges
+        )
 
 
 class EmbedChunksHandler:
@@ -245,6 +308,7 @@ class EmbedChunksHandler:
         settings: E1Settings,
         embedding_model: str,
         params: ChunkerParams,
+        hosted_embedding: bool = False,
     ) -> None:
         """Bind the handler to its catalog, stores, provider, and P1 index.
 
@@ -258,6 +322,7 @@ class EmbedChunksHandler:
         self._settings = settings
         self._embedding_model = embedding_model
         self._chunker_version = chunker_version(params=params)
+        self._hosted_embedding = hosted_embedding
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
         """Prepare embedding text, embed missing chunks in batches, stamp spine."""
@@ -280,13 +345,6 @@ class EmbedChunksHandler:
         ).decode("utf-8")
         policy_generation = EMBEDDING_INPUT_POLICY_VERSION
         embedder_generation = self._embedding_model
-        carry = self._catalog.carry_forward_sources(
-            deployment_id=work.deployment_id,
-            doc_id=source.doc_id,
-            version_id=source.version_id,
-            policy_generation=policy_generation,
-            embedding_version=embedder_generation,
-        )
         prepared: list[tuple[ChunkForEmbedding, EmbeddingInputRender]] = []
         for chunk in chunks:
             body = document_md[chunk.char_start : chunk.char_end]
@@ -333,27 +391,12 @@ class EmbedChunksHandler:
                 continue
             vector, stored_hash = matched[key]
             if stored_hash == rendered.embedding_text_hash:
+                if self._hosted_embedding:
+                    try:
+                        require_p1_vector(vector)
+                    except ValueError:
+                        continue
                 vectors[chunk.chunk_id] = vector
-
-        # Reuse matching vectors across versions or processing generations.
-        for chunk, rendered in active:
-            if chunk.chunk_id in vectors:
-                continue
-            prior = carry.get((chunk.chunk_content_hash, rendered.embedding_text_hash))
-            if (
-                prior is None
-                or prior.embedding_text_hash != rendered.embedding_text_hash
-                or prior.policy_generation != policy_generation
-            ):
-                continue
-            stored = self._chunk_index.chunk_vectors(
-                deployment_id=str(work.deployment_id),
-                chunk_ids=(str(prior.chunk_id),),
-                policy_generation=policy_generation,
-                embedder_generation=embedder_generation,
-            )
-            if str(prior.chunk_id) in stored:
-                vectors[chunk.chunk_id] = stored[str(prior.chunk_id)]
 
         # PG stamp may already exist for this generation — only counts if P1 exists.
         for chunk, rendered in active:
@@ -367,7 +410,7 @@ class EmbedChunksHandler:
             ):
                 pg_complete.add(chunk.chunk_id)
 
-        # Stamp P1→PG for recovered/carried vectors that lack a matching PG stamp.
+        # Stamp already-written vectors that lack a matching PG stamp.
         recovered_pairs = tuple(
             (chunk, rendered)
             for chunk, rendered in active
@@ -390,18 +433,51 @@ class EmbedChunksHandler:
             for chunk, rendered in active
             if chunk.chunk_id not in vectors
         )
+        for batch_start in range(0, len(need_embed), self._settings.embed_batch_size):
+            batch = need_embed[
+                batch_start : batch_start + self._settings.embed_batch_size
+            ]
+            if self._hosted_embedding:
+                for chunk, rendered in batch:
+                    if not hosted_embedding_fits(rendered):
+                        raise TerminalEmbeddingInputError(
+                            code="embedding.input_too_large",
+                            chunk=chunk,
+                            rendered=rendered,
+                        )
+            completed = self._catalog.replay_or_copy_embeddings(
+                source=source,
+                require_nonzero=self._hosted_embedding,
+                candidates=tuple(
+                    EmbeddingReuse(
+                        chunk_content_hash=chunk.chunk_content_hash,
+                        body=rendered.body,
+                        update=self._embedding_update(
+                            source=source,
+                            chunk=chunk,
+                            chunk_count=len(chunks),
+                            rendered=rendered,
+                            policy_generation=policy_generation,
+                            embedder_generation=embedder_generation,
+                        ),
+                    )
+                    for chunk, rendered in batch
+                ),
+            )
+            pg_complete.update(completed)
+        need_embed = tuple(
+            pair for pair in need_embed if pair[0].chunk_id not in pg_complete
+        )
         poison_skips: list[tuple[ChunkForEmbedding, EmbeddingInputRender]] = []
         for batch_start in range(0, len(need_embed), self._settings.embed_batch_size):
             batch = need_embed[
                 batch_start : batch_start + self._settings.embed_batch_size
             ]
-            if not batch:
-                continue
             self._embed_batch_with_poison_split(
                 work=work,
                 source=source,
                 chunk_count=len(chunks),
-                batch=tuple(batch),
+                batch=batch,
                 vectors=vectors,
                 policy_generation=policy_generation,
                 embedder_generation=embedder_generation,
@@ -427,7 +503,9 @@ class EmbedChunksHandler:
         missing = [
             chunk.chunk_id
             for chunk, _rendered in active
-            if chunk.chunk_id not in vectors and chunk.chunk_id not in closed_skips
+            if chunk.chunk_id not in vectors
+            and chunk.chunk_id not in pg_complete
+            and chunk.chunk_id not in closed_skips
         ]
         if missing:
             raise RuntimeError(
@@ -465,41 +543,49 @@ class EmbedChunksHandler:
                     model=embedder_generation,
                     texts=tuple(rendered.embedding_text for _, rendered in batch),
                     dimensions=P1_VECTOR_DIMENSIONS,
+                    hosted_passage=self._hosted_embedding,
                 )
             )
         except Exception as exc:
-            # Rule 4: split only on non-outage failures; total outages re-raise
-            # so the stage retries instead of stamping every chunk as poison.
-            if _is_provider_outage(exc=exc):
-                raise
-            if len(batch) == 1:
-                poison_skips.append(batch[0])
-                return
+            classified = isinstance(exc, ProviderEmbeddingInputRejected)
+            if self._hosted_embedding:
+                if not classified:
+                    raise
+                if len(batch) == 1:
+                    chunk, rendered = batch[0]
+                    raise TerminalEmbeddingInputError(
+                        code=exc.code, chunk=chunk, rendered=rendered
+                    ) from None
+            else:
+                # Keep the historical response-isolation path for other bindings.
+                if _is_provider_outage(exc=exc):
+                    raise
+                if len(batch) == 1:
+                    poison_skips.append(batch[0])
+                    return
             mid = len(batch) // 2
-            self._embed_batch_with_poison_split(
-                work=work,
-                source=source,
-                chunk_count=chunk_count,
-                batch=batch[:mid],
-                vectors=vectors,
-                policy_generation=policy_generation,
-                embedder_generation=embedder_generation,
-                meter=meter,
-                poison_skips=poison_skips,
-            )
-            self._embed_batch_with_poison_split(
-                work=work,
-                source=source,
-                chunk_count=chunk_count,
-                batch=batch[mid:],
-                vectors=vectors,
-                policy_generation=policy_generation,
-                embedder_generation=embedder_generation,
-                meter=meter,
-                poison_skips=poison_skips,
-            )
+            for half in (batch[:mid], batch[mid:]):
+                self._embed_batch_with_poison_split(
+                    work=work,
+                    source=source,
+                    chunk_count=chunk_count,
+                    batch=half,
+                    vectors=vectors,
+                    policy_generation=policy_generation,
+                    embedder_generation=embedder_generation,
+                    meter=meter,
+                    poison_skips=poison_skips,
+                )
             return
         meter.record(call_key=call_key, tier="embedding", usage=response.usage)
+        if self._hosted_embedding:
+            try:
+                if len(batch) != len(response.vectors):
+                    raise ValueError("embedding batch length differs from request")
+                for vector in response.vectors:
+                    require_p1_vector(vector)
+            except ValueError as error:
+                raise ProviderInvalidResponseError(str(error)) from error
         for (chunk, _rendered), vector in zip(batch, response.vectors, strict=True):
             vectors[chunk.chunk_id] = vector
         self._commit_batch(
@@ -548,28 +634,46 @@ class EmbedChunksHandler:
                     source_shape=source.source_shape,
                 )
             )
-            facts = _location_facts(source=source, chunk=chunk, chunk_count=chunk_count)
-            facts_json = location_facts_json(
-                facts=facts, elements=rendered.location_elements
-            )
             updates.append(
-                EmbeddingUpdate(
-                    chunk_id=chunk.chunk_id,
-                    embedding_ref=str(chunk.chunk_id),
-                    embedding_version=embedder_generation,
-                    location_header=rendered.location_header,
-                    embedding_text_hash=rendered.embedding_text_hash,
-                    embedding_input_policy_version=policy_generation,
+                self._embedding_update(
+                    source=source,
+                    chunk=chunk,
+                    chunk_count=chunk_count,
+                    rendered=rendered,
                     policy_generation=policy_generation,
-                    location_facts_json=facts_json,
-                    context_prefix=rendered.location_header,
-                    prefixer_version=policy_generation,
+                    embedder_generation=embedder_generation,
                 )
             )
         if p1_rows:
             self._chunk_index.upsert_chunks(rows=tuple(p1_rows))
         if updates:
             self._catalog.record_embeddings(updates=tuple(updates))
+
+    def _embedding_update(
+        self,
+        *,
+        source: ChunkSource,
+        chunk: ChunkForEmbedding,
+        chunk_count: int,
+        rendered: EmbeddingInputRender,
+        policy_generation: str,
+        embedder_generation: str,
+    ) -> EmbeddingUpdate:
+        facts = _location_facts(source=source, chunk=chunk, chunk_count=chunk_count)
+        return EmbeddingUpdate(
+            chunk_id=chunk.chunk_id,
+            embedding_ref=str(chunk.chunk_id),
+            embedding_version=embedder_generation,
+            location_header=rendered.location_header,
+            embedding_text_hash=rendered.embedding_text_hash,
+            embedding_input_policy_version=policy_generation,
+            policy_generation=policy_generation,
+            location_facts_json=location_facts_json(
+                facts=facts, elements=rendered.location_elements
+            ),
+            context_prefix=rendered.location_header,
+            prefixer_version=policy_generation,
+        )
 
     def _stamp_skips(
         self,
@@ -607,6 +711,26 @@ class EmbedChunksHandler:
             self._catalog.record_embeddings(updates=tuple(updates))
 
 
+class TerminalEmbeddingInputError(NonRetryableHandlerError):
+    """D162 terminal input failure recorded by the existing work ledger."""
+
+    def __init__(
+        self,
+        *,
+        code: EmbeddingRejectionCode,
+        chunk: ChunkForEmbedding,
+        rendered: EmbeddingInputRender,
+    ) -> None:
+        self.code = code
+        self.chunk_id = chunk.chunk_id
+        self.embedding_text_hash = rendered.embedding_text_hash
+        self.binding = HOSTED_EMBEDDING_BINDING
+        super().__init__(
+            f"{code} chunk_id={self.chunk_id}"
+            f" embedding_text_hash={self.embedding_text_hash} binding={self.binding}"
+        )
+
+
 def _is_provider_outage(*, exc: BaseException) -> bool:
     """Whether a provider failure is a total outage (retry) vs content poison.
 
@@ -635,16 +759,35 @@ def _location_facts(
             if section.section_id == chunk.section_id:
                 section_title = section.title
                 break
-    return LocationFacts(
+    return _source_location_facts(
+        source=source,
         chunk_id=chunk.chunk_id,
-        doc_id=chunk.doc_id,
-        version_id=chunk.version_id,
+        section_title=section_title,
+        section_path=chunk.section_path,
+        section_role=chunk.section_role,
+        chunk_count=chunk_count,
+    )
+
+
+def _source_location_facts(
+    *,
+    source: ChunkSource,
+    chunk_id: UUID,
+    section_title: str | None,
+    section_path: str,
+    section_role: str,
+    chunk_count: int,
+) -> LocationFacts:
+    return LocationFacts(
+        chunk_id=chunk_id,
+        doc_id=source.doc_id,
+        version_id=source.version_id,
         title=source.title,
         source_kind=source.source_kind,
         source_shape=source.source_shape,
         section_title=section_title,
-        section_path=chunk.section_path,
-        section_role=chunk.section_role,
+        section_path=section_path,
+        section_role=section_role,
         chunk_count=chunk_count,
         channel_ref=source.channel_ref,
         thread_ref=source.thread_ref,
@@ -724,6 +867,7 @@ def _chunk_record(
         char_end=chunk.char_end,
         token_count=chunk.token_count,
         chunker_version=chunker_version,
+        span_kind=chunk.span_kind,
         extraction_eligible=chunk.extraction_eligible,
         extraction_eligibility_version=EXTRACTION_ELIGIBILITY_POLICY_VERSION,
         reuse_identity_hash=reuse_identity_hash,

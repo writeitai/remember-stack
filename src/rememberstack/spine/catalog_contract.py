@@ -40,6 +40,7 @@ EXPECTED_ENUMS: Final = (
     "adjudication_method",
     "adjudication_outcome",
     "alias_provenance",
+    "chunk_span_kind",
     "claim_temporal_class",
     "claim_valid_kind",
     "claim_valid_precision",
@@ -209,6 +210,7 @@ EXPECTED_INDEXES: Final = (
     "ix_chunks_reuse",
     "ix_chunks_reuse_identity",
     "ix_chunks_section",
+    "ix_chunks_split_version",
     "ix_chunks_version",
     "ix_claims_audit",
     "ix_claims_chunk",
@@ -386,7 +388,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 122,
     "f": 150,
-    "n": 656,
+    "n": 657,
     "p": 87,
     "t": 7,
     "u": 40,
@@ -413,6 +415,7 @@ DECISION_OBJECTS: Final = {
     "D68": ("deployments", "ix_entities_name_trgm"),
     "D69": ("relations", "v_memory_entity_survivor"),
     "D159": ("forgets", "ix_forgets_content"),
+    "D162": ("chunks", "ix_chunks_split_version"),
     "D163": ("v_memory_claim_history_by_id", "v_memory_entity_survivor"),
     "D79": ("document_structure_generations", "document_skeleton_checks"),
     "D91": (

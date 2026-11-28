@@ -9289,8 +9289,22 @@ When a stage fails on an item:
   was its last attempt. The `last_error` then starts with
   `lease expired`.
 
-HTTP 429 answers from OpenRouter are handled inside the provider call and do
-not use attempts ([Models and providers](https://remember.dev/docs/self-hosting/models#openrouter-routing-and-limits)).
+OpenRouter capacity errors can retry inside the provider call, including
+error-only HTTP 200 responses. If capacity stays unavailable, the worker
+uses the stage's remaining attempts.
+
+With Qwen3-Embedding-8B pinned to OpenRouter's `nebius/bf16` route with zero
+data retention and fallbacks off, new chunk grids split passages that exceed
+16,384 model tokens. Adding the same sole host to the provider order also
+activates these checks. Error-only HTTP 200 capacity responses can retry even
+when they carry a request ID. An input above the ceiling or an explicit size code from
+OpenRouter or its upstream provider dead-letters as `embedding.input_too_large`.
+The size code takes precedence over a wrapper's generic rejection or capacity status.
+Other explicit per-input rejections dead-letter as `embedding.input_rejected`,
+including an upstream `invalid_embedding_input` wrapped in HTTP 502.
+These checks also cover error-only HTTP 200 responses. Malformed vector batches
+use the stage's retry budget.
+`last_error` includes the chunk ID, the rendered input hash and the binding.
 
 A dead-lettered item stays where it is. Its version is not ready, and the
 work after it in the pipeline waits. Nothing retries it on its own.
@@ -10411,7 +10425,8 @@ documents again. Keep your source files for this reason. See
     slug and name as they are.
 
 4. **Stop the old processes**, so no old worker runs against a database
-   that is being migrated:
+   that is being migrated. When upgrading to hosted chunk splitting, follow
+   the [pipeline cutover](#hosted-chunk-splitting-cutover) before this step.
 
     ```bash
     docker compose down --remove-orphans
@@ -10441,6 +10456,26 @@ documents again. Keep your source files for this reason. See
 
     `build_revision` in `/deployment` names the source commit of the image
     now serving.
+
+### Hosted chunk splitting cutover
+
+This applies when passage embeddings use OpenRouter's `qwen/qwen3-embedding-8b`
+pinned to `nebius/bf16` with fallbacks off and zero data retention enabled.
+Pause new `STRUCTURE` claims and let in-flight work finish. Let the outgoing
+`CHUNK` and `EMBED_CHUNK` attempts finish and hand off their saved results.
+Compose runs these stages in one `worker-llm` service. For Compose, pause
+ingest submissions and let the existing ingestion queue drain before stopping
+the old services.
+
+Retire the old `CHUNK`, `EMBED_CHUNK`, Selection (`EXTRACT_CLAIMS`), and
+Claimify (`GROUND_CLAIMS`) workers, along with readers serving section history
+and resolved document references. Start the new workers and readers together
+after migration, then resume ingestion. The new workers enable split writes
+and embedding fit checks together and continue to use saved chunk grids.
+
+The downgrade waits for an exclusive lock, then checks for split chunks,
+including any committed during the wait. If it finds a split, rolling back
+past the marker migration requires restoring a pre-upgrade backup.
 
 ## Several deployments on one PostgreSQL server
 

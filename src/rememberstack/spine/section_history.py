@@ -92,6 +92,7 @@ class KeyedSection:
     node_path: str
     title: str | None
     block_start: int
+    char_start: int
     own_content_hash: str | None
     subtree_content_hash: str | None
 
@@ -501,6 +502,7 @@ def _keyed_sections(
             node_path=row["node_path"],
             title=row["title"],
             block_start=row["block_start"],
+            char_start=row["char_start"],
             own_content_hash=row["own_content_hash"],
             subtree_content_hash=row["subtree_content_hash"],
         )
@@ -518,7 +520,7 @@ def _with_first_chunks(
     sections: dict[UUID, KeyedSection],
 ) -> list[SectionHistoryRow]:
     """Attach the chunks holding each present section's first block."""
-    probes: list[tuple[UUID, UUID, int]] = []
+    probes: list[tuple[UUID, UUID, int, int]] = []
     for row in rows:
         version = versions[row.version_id]
         if (
@@ -532,6 +534,7 @@ def _with_first_chunks(
                 version.version_id,
                 version.representation_id,
                 sections[version.structure_generation_id].block_start,
+                sections[version.structure_generation_id].char_start,
             )
         )
     if not probes:
@@ -544,6 +547,7 @@ def _with_first_chunks(
             "version_ids": [probe[0] for probe in probes],
             "representation_ids": [probe[1] for probe in probes],
             "blocks": [probe[2] for probe in probes],
+            "starts": [probe[3] for probe in probes],
         },
     ).mappings():
         found.setdefault(row["version_id"], []).append(row["chunk_id"])
@@ -725,7 +729,7 @@ _SELECT_UNINDEXED_GENERATIONS = text(
 
 _SELECT_KEYED_SECTIONS = text(
     """
-    SELECT structure_generation_id, section_id, node_path, title, block_start,
+    SELECT structure_generation_id, section_id, node_path, title, block_start, char_start,
            own_content_hash, subtree_content_hash
     FROM document_sections
     WHERE deployment_id = :deployment_id
@@ -740,13 +744,15 @@ _SELECT_FIRST_CHUNKS = text(
     FROM unnest(
         CAST(:version_ids AS uuid[]),
         CAST(:representation_ids AS uuid[]),
-        CAST(:blocks AS integer[])
-    ) AS probe(version_id, representation_id, block)
+        CAST(:blocks AS integer[]), CAST(:starts AS integer[])
+    ) AS probe(version_id, representation_id, block, char_start)
     JOIN chunks c
       ON c.version_id = probe.version_id
      AND c.representation_id = probe.representation_id
-     AND c.block_start <= probe.block
-     AND c.block_end >= probe.block
+     AND (
+        (c.span_kind = 'whole' AND c.block_start <= probe.block AND probe.block <= c.block_end)
+        OR (c.span_kind = 'split' AND c.char_start <= probe.char_start AND probe.char_start < c.char_end)
+     )
     WHERE c.deployment_id = :deployment_id
     ORDER BY c.version_id, c.ordinal, c.chunk_id
     """

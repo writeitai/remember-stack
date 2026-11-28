@@ -139,6 +139,7 @@ def test_cross_turn_anaphora_claim_passes_grounding_gate() -> None:
 
     catalog = build_passage_catalog(
         blocks=blockize(document_md=_DIALOGUE_MD),
+        document_md=_DIALOGUE_MD,
         target=chunk,
         previous=None,
         following=None,
@@ -196,6 +197,7 @@ def test_cross_turn_anaphora_multi_hop_resolution_in_target_chunk() -> None:
 
     catalog = build_passage_catalog(
         blocks=blockize(document_md=_DIALOGUE_MD),
+        document_md=_DIALOGUE_MD,
         target=chunk,
         previous=None,
         following=None,
@@ -261,6 +263,7 @@ def test_cross_turn_correction_grounding() -> None:
 
     catalog = build_passage_catalog(
         blocks=blockize(document_md=correction_md),
+        document_md=correction_md,
         target=chunk,
         previous=None,
         following=None,
@@ -351,6 +354,7 @@ def test_cross_turn_anaphora_with_neighbour_screenplay_grounding() -> None:
 
     catalog = build_passage_catalog(
         blocks=blockize(document_md=full_doc),
+        document_md=full_doc,
         target=target_chunk,
         previous=neighbour_chunk,
         following=None,
@@ -411,6 +415,7 @@ def test_cross_turn_anaphora_with_neighbour_screenplay_grounding() -> None:
     isolated_keep_start = target_dialogue_md.find(_KEEP_SPAN)
     isolated_catalog = build_passage_catalog(
         blocks=blockize(document_md=target_dialogue_md),
+        document_md=target_dialogue_md,
         target=isolated_target_chunk,
         previous=None,
         following=None,
@@ -458,6 +463,7 @@ def test_cross_turn_direct_denial_grounding() -> None:
 
     catalog = build_passage_catalog(
         blocks=blockize(document_md=denial_md),
+        document_md=denial_md,
         target=chunk,
         previous=None,
         following=None,
@@ -514,6 +520,7 @@ def test_cross_turn_hedging_or_deflection_grounding() -> None:
 
     catalog = build_passage_catalog(
         blocks=blockize(document_md=hedge_md),
+        document_md=hedge_md,
         target=chunk,
         previous=None,
         following=None,

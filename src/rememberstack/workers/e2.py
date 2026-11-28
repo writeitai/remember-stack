@@ -18,7 +18,6 @@ from datetime import date
 from datetime import datetime
 from datetime import UTC
 from enum import StrEnum
-import hashlib
 import json
 import logging
 from pathlib import PurePosixPath
@@ -75,9 +74,7 @@ from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import (
     parse_persisted_conversion_manifest,
 )
-from rememberstack.model.occurrence_provenance import parse_persisted_source_map
 from rememberstack.model.occurrence_provenance import ProvenanceMetadataCorruptError
-from rememberstack.model.occurrence_provenance import ProvenanceMetadataMissingError
 from rememberstack.model.occurrence_provenance import RepresentationOccurrenceContext
 from rememberstack.model.occurrence_provenance import (
     resolve_spans_occurrence_provenance,
@@ -86,6 +83,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
+from rememberstack.spine.chunk_reuse import ChunkReuseBlocked
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.selection_catalog import FrozenSelection
 from rememberstack.workers.base import ExtractChunkBarrier
@@ -101,6 +99,8 @@ from rememberstack.workers.extraction_references import reference_windows
 from rememberstack.workers.extraction_references import remap_frozen_cards
 from rememberstack.workers.extraction_references import render_selection_passages
 from rememberstack.workers.extraction_references import require_frozen_producers
+from rememberstack.workers.provenance import read_provenance_bytes
+from rememberstack.workers.provenance import read_source_map
 from rememberstack.workers.section_orientation import render_section_orientation
 
 _logger = logging.getLogger(__name__)
@@ -534,10 +534,8 @@ class ExtractClaimsHandler:
         index, chunk = _require_chunk(
             chunks=chunks, chunk_id=chunk_id, representation_id=source.representation_id
         )
-        frozen = self._catalog.selections.load(
-            chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
-        )
-        if frozen is None and not chunk.extraction_eligible:
+        committed = self._selection_is_committed(chunk=chunk)
+        if not committed and not chunk.extraction_eligible:
             # D133 §4.5: an ineligible chunk completes like an empty Selection
             # result, with no model call and no reference cards.
             self._catalog.selections.freeze(
@@ -551,7 +549,7 @@ class ExtractClaimsHandler:
                 diagnostics=(),
                 truncated=False,
             )
-        elif frozen is None:
+        elif not committed:
             document_md = self._read_markdown(source=source)
             if not self._reuse_prior_selection(
                 source=source,
@@ -652,6 +650,16 @@ class ExtractClaimsHandler:
             loaded=loaded, required_ids=producer_ids
         )
 
+    def _selection_is_committed(self, *, chunk: ChunkForEmbedding) -> bool:
+        frozen = self._catalog.selections.load(
+            chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
+        )
+        if frozen is None:
+            return False
+        if frozen.input_hash != chunk.extraction_input_hash:
+            raise ValueError("committed Selection input identity differs")
+        return True
+
     def _reuse_prior_selection(
         self,
         *,
@@ -662,37 +670,43 @@ class ExtractClaimsHandler:
         document_md: str,
     ) -> bool:
         """Replay a same-input earlier Selection, remapping every published card."""
-        prior = self._catalog.selections.prior(
-            deployment_id=source.deployment_id,
-            doc_id=source.doc_id,
-            version_id=chunk.version_id,
-            input_hash=chunk.extraction_input_hash,
-            extractor_version=E2_EXTRACTOR_VERSION,
-        )
-        if prior is None:
-            return False
-        remapped = self._remap_prior_selection_cards(
-            chunk=chunk,
-            chunks=chunks,
-            index=index,
-            document_md=document_md,
-            prior=prior,
-        )
-        if remapped is None:
-            return False
-        self._catalog.selections.freeze(
-            deployment_id=source.deployment_id,
-            representation_id=source.representation_id,
-            chunk_id=chunk.chunk_id,
-            extractor_version=E2_EXTRACTOR_VERSION,
-            input_hash=chunk.extraction_input_hash,
-            selection=prior.selection,
-            cards=remapped,
-            diagnostics=prior.diagnostics,
-            truncated=prior.truncated,
-            reused_from=prior.chunk_id,
-        )
-        return True
+        while True:
+            prior = self._catalog.selections.prior(
+                deployment_id=source.deployment_id,
+                doc_id=source.doc_id,
+                version_id=chunk.version_id,
+                input_hash=chunk.extraction_input_hash,
+                extractor_version=E2_EXTRACTOR_VERSION,
+            )
+            if prior is None:
+                return False
+            remapped = self._remap_prior_selection_cards(
+                chunk=chunk,
+                chunks=chunks,
+                index=index,
+                document_md=document_md,
+                prior=prior,
+            )
+            if remapped is None:
+                return False
+            try:
+                self._catalog.selections.freeze(
+                    deployment_id=source.deployment_id,
+                    representation_id=source.representation_id,
+                    chunk_id=chunk.chunk_id,
+                    extractor_version=E2_EXTRACTOR_VERSION,
+                    input_hash=chunk.extraction_input_hash,
+                    selection=prior.selection,
+                    cards=remapped,
+                    diagnostics=prior.diagnostics,
+                    truncated=prior.truncated,
+                    reused_from=prior.chunk_id,
+                )
+            except ChunkReuseBlocked:
+                if self._selection_is_committed(chunk=chunk):
+                    return True
+                continue
+            return True
 
     def _remap_prior_selection_cards(
         self,
@@ -756,6 +770,7 @@ class ExtractClaimsHandler:
         )
         catalog = build_passage_catalog(
             blocks=blocks,
+            document_md=document_md,
             target=chunk,
             previous=previous,
             following=following,
@@ -768,6 +783,9 @@ class ExtractClaimsHandler:
         derivation_ranges = (
             origin_context.derivation_ranges if origin_context is not None else ()
         )
+        # A retry may have committed while this attempt was looking for a donor.
+        if self._selection_is_committed(chunk=chunk):
+            return
         selection_call = self._model_provider.generate(
             request=ModelRequest(
                 model=self._settings.extract_model,
@@ -829,35 +847,45 @@ class ExtractClaimsHandler:
         Every stored span remaps through the target-9..+1 windows. Incomplete
         mapping refuses reuse. Zero-claim completion is persisted by attach.
         """
-        prior = self._catalog.prior_extracted_chunk(
-            deployment_id=source.deployment_id,
-            doc_id=source.doc_id,
-            version_id=chunk.version_id,
-            extraction_input_hash=chunk.extraction_input_hash,
-            claimify_input_hash=claimify_hash,
-        )
-        if prior is None:
-            return False
-        remapped = self._remap_reused_spans(
-            chunk=chunk,
-            reference_chunks=reference_chunks,
-            document_md=document_md,
-            prior_chunk_id=prior,
-        )
-        if remapped is None:
-            return False
-        occurrences = self._reused_occurrences(
-            remapped_spans=remapped, occurrence_context=occurrence_context
-        )
-        self._catalog.attach_reused_claims(
-            deployment_id=source.deployment_id,
-            chunk_id=chunk.chunk_id,
-            prior_chunk_id=prior,
-            occurrences=occurrences,
-            evidence_spans=remapped,
-            claimify_input_hash=claimify_hash,
-        )
-        return True
+        while True:
+            prior = self._catalog.prior_extracted_chunk(
+                deployment_id=source.deployment_id,
+                doc_id=source.doc_id,
+                version_id=chunk.version_id,
+                extraction_input_hash=chunk.extraction_input_hash,
+                claimify_input_hash=claimify_hash,
+            )
+            if prior is None:
+                return False
+            remapped = self._remap_reused_spans(
+                chunk=chunk,
+                reference_chunks=reference_chunks,
+                document_md=document_md,
+                prior_chunk_id=prior,
+            )
+            if remapped is None:
+                return False
+            occurrences = self._reused_occurrences(
+                remapped_spans=remapped, occurrence_context=occurrence_context
+            )
+            try:
+                self._catalog.attach_reused_claims(
+                    deployment_id=source.deployment_id,
+                    chunk_id=chunk.chunk_id,
+                    prior_chunk_id=prior,
+                    occurrences=occurrences,
+                    evidence_spans=remapped,
+                    claimify_input_hash=claimify_hash,
+                )
+            except ChunkReuseBlocked:
+                if self._catalog.chunk_already_extracted(
+                    chunk_id=chunk.chunk_id,
+                    extractor_version=E2_EXTRACTOR_VERSION,
+                    claimify_input_hash=claimify_hash,
+                ):
+                    return True
+                continue
+            return True
 
     def _claimify_chunk(
         self,
@@ -903,6 +931,7 @@ class ExtractClaimsHandler:
                     source=source,
                     document_md=document_md,
                 ),
+                document_md=document_md,
                 target=chunk,
                 previous=previous,
                 following=following,
@@ -933,6 +962,12 @@ class ExtractClaimsHandler:
                 for candidate in keeps
                 if candidate.verdict is SelectionVerdict.KEEP_FLAGGED
             }
+            if self._catalog.chunk_already_extracted(
+                chunk_id=chunk.chunk_id,
+                extractor_version=E2_EXTRACTOR_VERSION,
+                claimify_input_hash=claimify_hash,
+            ):
+                return
             response_call = self._model_provider.generate(
                 request=ModelRequest(
                     model=self._settings.extract_model,
@@ -1077,10 +1112,27 @@ class ExtractClaimsHandler:
         context = occurrence_context
         if context is None and source.conversion_uri is not None:
             context = self._load_occurrence_context(source=source)
+        split_windows = ()
+        if (
+            context is not None
+            and context.source_map
+            and any(entry.linear_source_offsets for entry in context.source_map)
+        ):
+            split_windows = self._chunk_catalog.split_windows_for_spans(
+                source=source,
+                chunker_version=self._chunker_version,
+                spans=tuple(
+                    dict.fromkeys(
+                        span for claim in accepted for span in claim.evidence_spans
+                    )
+                ),
+            )
         self._catalog.record_extraction(
             claims=accepted,
             decisions=tuple(decisions),
-            occurrences=_occurrences_for_claims(claims=accepted, context=context),
+            occurrences=_occurrences_for_claims(
+                claims=accepted, context=context, split_windows=split_windows
+            ),
             claimify_input_hash=claimify_hash,
         )
 
@@ -1102,7 +1154,7 @@ class ExtractClaimsHandler:
         conversion_uri = source.conversion_uri
         if conversion_uri is None:
             return None
-        manifest_bytes = _read_provenance_bytes(
+        manifest_bytes = read_provenance_bytes(
             artifact_store=self._artifact_store,
             uri=conversion_uri,
             kind="conversion manifest",
@@ -1113,28 +1165,13 @@ class ExtractClaimsHandler:
             )
         except ProvenanceMetadataCorruptError as error:
             raise NonRetryableHandlerError(str(error)) from error
-        source_map_entries = None
-        if persisted.source_map is not None:
-            map_ref = persisted.source_map
-            map_bytes = _read_provenance_bytes(
-                artifact_store=self._artifact_store, uri=map_ref.uri, kind="source map"
-            )
-            if map_ref.sha256 is not None:
-                digest = hashlib.sha256(map_bytes).hexdigest()
-                if digest != map_ref.sha256:
-                    raise NonRetryableHandlerError(
-                        f"source map {map_ref.uri} sha256 mismatch:"
-                        f" expected {map_ref.sha256}, got {digest}"
-                    )
-            try:
-                parsed_map = parse_persisted_source_map(
-                    payload=map_bytes, uri=map_ref.uri
-                )
-            except ProvenanceMetadataCorruptError as error:
-                raise NonRetryableHandlerError(str(error)) from error
-            source_map_entries = parsed_map.entries
         return RepresentationOccurrenceContext(
-            derivation_ranges=persisted.derivation_ranges, source_map=source_map_entries
+            derivation_ranges=persisted.derivation_ranges,
+            source_map=read_source_map(
+                artifact_store=self._artifact_store, ref=persisted.source_map
+            )
+            if persisted.source_map is not None
+            else None,
         )
 
     def _remap_reused_spans(
@@ -2208,20 +2245,11 @@ def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
     return UUID(value)
 
 
-def _read_provenance_bytes(
-    *, artifact_store: ObjectStorePort, uri: str, kind: str
-) -> bytes:
-    """Read a referenced provenance object; absence is a retryable failure."""
-    try:
-        return artifact_store.read_bytes(key=ObjectKey(uri))
-    except FileNotFoundError as error:
-        raise ProvenanceMetadataMissingError(
-            f"{kind} {uri} is missing; cannot publish occurrence provenance"
-        ) from error
-
-
 def _occurrences_for_claims(
-    *, claims: tuple[ClaimRecord, ...], context: RepresentationOccurrenceContext | None
+    *,
+    claims: tuple[ClaimRecord, ...],
+    context: RepresentationOccurrenceContext | None,
+    split_windows: tuple[tuple[int, int], ...],
 ) -> dict[UUID, OccurrenceProvenance] | None:
     """Resolve every supporting span against the target representation."""
     if context is None:
@@ -2234,6 +2262,7 @@ def _occurrences_for_claims(
             ),
             ranges=context.derivation_ranges,
             source_map=context.source_map,
+            split_windows=split_windows,
         )
         for claim in claims
     }

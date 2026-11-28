@@ -493,9 +493,16 @@ jobs:
           release_gate
           wait "$compose_pid"
           trap - EXIT
+          expected_head="$(docker compose --env-file .env exec -T api python - <<'PY'
+          from alembic.config import Config
+          from alembic.script import ScriptDirectory
+
+          print(ScriptDirectory.from_config(Config("alembic.ini")).get_current_head())
+          PY
+          )"
           test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_58_0079'
+            'SELECT version_num FROM alembic_version')" = "$expected_head"
           test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'

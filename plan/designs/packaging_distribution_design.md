@@ -361,9 +361,9 @@ the reason and expected outage in the migration comment and release notes.
 Even compatible DDL can block readers while it holds or waits for an
 exclusive lock.
 
-The native Alembic runner uses a dedicated connection and a three-second
-PostgreSQL lock timeout by default (`migration_lock_timeout_seconds`). Use
-that default in the release configuration. The timeout applies to each lock
+The native Alembic runner uses a dedicated `READ COMMITTED` connection. The
+PostgreSQL lock timeout defaults to three seconds (`migration_lock_timeout_seconds`).
+Use that default in the release configuration. The timeout applies to each lock
 wait, including the migration guard, view replacements and concurrent index
 creation. A statement may take longer while doing work or acquiring multiple
 locks. On PostgreSQL `55P03`, the runner ends the failed transaction, closes

@@ -154,6 +154,7 @@ def test_returning_text_matches_the_earliest_version(rig: _ReuseRig) -> None:
     matches = rig.chunk_catalog.text_origin_matches(
         deployment_id=_DEPLOYMENT_ID,
         doc_id=first.doc_id,
+        version_id=first.version_id,
         reuse_identity_hashes=tuple(str(row["reuse_identity_hash"]) for row in v1),
         not_after=_MAR_2026,
     )
@@ -252,6 +253,7 @@ def test_pre_d140_chunk_rows_are_never_matched(rig: _ReuseRig) -> None:
         rig.chunk_catalog.text_origin_matches(
             deployment_id=_DEPLOYMENT_ID,
             doc_id=first.doc_id,
+            version_id=first.version_id,
             reuse_identity_hashes=identities,
             not_after=_NOV_2025,
         )

@@ -268,7 +268,9 @@ Field conventions (fixed here so two implementers cannot diverge):
 - **One span may map to several locators.** A source-map entry maps a character interval to
   a locator **list** (a sentence assembled across a page break or an edit cut is two
   locators); consumers render all of them. When a claim's `source_span` intersects several
-  source-map entries, its locator set is the union of the intersected entries' locators.
+  source-map entries, union their locators after resolving each entry. A converter can
+  supply an exact character mapping for narrower raw offsets on a split evidence span.
+  [D162 provenance](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 
 Rules, each load-bearing:
 

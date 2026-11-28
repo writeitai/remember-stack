@@ -3063,3 +3063,225 @@ def test_valid_embedding_success_body_still_parses() -> None:
 
     assert response.vectors == ((0.25, 0.5),)
     assert response.usage.tokens_in == 4
+
+
+@pytest.mark.parametrize(
+    ("slug", "zdr", "base_url", "passage", "qualifies"),
+    [
+        ("nebius/bf16", True, "https://openrouter.ai/api/v1", True, True),
+        ("nebius", True, "https://openrouter.ai/api/v1", True, False),
+        ("nebius/bf16", False, "https://openrouter.ai/api/v1", True, False),
+        ("nebius/bf16", True, "https://custom.example/v1", True, False),
+        ("nebius/bf16", True, "https://openrouter.ai/api/v1", False, False),
+    ],
+)
+def test_d162_pin_controls_wire_rejection(
+    slug: str,
+    zdr: bool,
+    base_url: str,
+    passage: bool,
+    qualifies: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rememberstack.adapters import openrouter
+    from rememberstack.model.model_provider import ProviderEmbeddingInputRejected
+
+    monkeypatch.setattr(openrouter.time, "sleep", lambda _: None)
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", embedding_provider=slug, zdr=zdr, base_url=base_url
+        )
+    )
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        expected: dict[str, object] = {"only": [slug], "allow_fallbacks": False}
+        if zdr:
+            expected.update(zdr=True, data_collection="deny")
+        assert json.loads(request.content) == {
+            "provider": expected,
+            "model": "qwen/qwen3-embedding-8b",
+            "input": ["D80 rendered text"],
+            "dimensions": 1536,
+        }
+        return httpx.Response(
+            429,
+            json={
+                "error": {
+                    "code": 429,
+                    "metadata": {
+                        "raw": json.dumps(
+                            {"error": {"code": "context_length_exceeded"}}
+                        )
+                    },
+                }
+            },
+        )
+
+    provider._client.close()
+    with httpx.Client(
+        base_url=base_url, transport=httpx.MockTransport(respond)
+    ) as client:
+        provider._client = client
+        error_type = (
+            ProviderEmbeddingInputRejected if qualifies else OpenRouterProviderError
+        )
+        with pytest.raises(error_type) as rejected:
+            provider.embed(
+                request=EmbeddingRequest(
+                    model="qwen/qwen3-embedding-8b",
+                    dimensions=1536,
+                    texts=("D80 rendered text",),
+                    hosted_passage=passage,
+                )
+            )
+    if qualifies:
+        assert str(rejected.value) == "embedding.input_too_large"
+
+
+@pytest.mark.parametrize(
+    ("status", "outer_error"),
+    [(400, {"code": "invalid_input", "param": "input"}), (502, {"code": 502})],
+    ids=["generic-input-wrapper", "capacity-wrapper"],
+)
+def test_d162_upstream_size_rejection_takes_precedence(
+    status: int, outer_error: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rememberstack.adapters import openrouter
+    from rememberstack.model.model_provider import ProviderEmbeddingInputRejected
+
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", embedding_provider="nebius/bf16", zdr=True
+        )
+    )
+    waits: list[float] = []
+    monkeypatch.setattr(openrouter.time, "sleep", waits.append)
+
+    def respond(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status,
+            json={
+                "error": {
+                    **outer_error,
+                    "metadata": {"raw": {"error": {"type": "context_length_exceeded"}}},
+                }
+            },
+        )
+
+    provider._client.close()
+    with httpx.Client(
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(respond)
+    ) as client:
+        provider._client = client
+        with pytest.raises(ProviderEmbeddingInputRejected) as rejected:
+            provider.embed(
+                request=EmbeddingRequest(
+                    model="qwen/qwen3-embedding-8b",
+                    texts=("D80 text",),
+                    hosted_passage=True,
+                )
+            )
+
+    assert rejected.value.code == "embedding.input_too_large"
+    assert rejected.value.status_code == status
+    assert waits == []
+
+
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [
+        (429, {"code": 429, "message": "rate limit"}),
+        (502, {"code": 502, "metadata": {"raw": {"error": {"type": "invalid_input"}}}}),
+    ],
+    ids=["throttle", "gateway-with-unqualified-code"],
+)
+def test_d162_capacity_retries_stay_bounded(
+    status: int, error: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rememberstack.adapters import openrouter
+
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", embedding_provider_only=["nebius/bf16"], zdr=True
+        )
+    )
+    waits: list[float] = []
+    monkeypatch.setattr(openrouter.time, "sleep", waits.append)
+
+    def reject(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            status, headers={"Retry-After": "3600"}, json={"error": error}
+        )
+
+    provider._client.close()
+    with httpx.Client(
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(reject)
+    ) as client:
+        provider._client = client
+        with pytest.raises(OpenRouterProviderError) as rejected:
+            provider.embed(
+                request=EmbeddingRequest(
+                    model="qwen/qwen3-embedding-8b",
+                    texts=("D80 text",),
+                    hosted_passage=True,
+                )
+            )
+    assert rejected.value.status_code == status
+    assert waits == [30.0, 30.0, 30.0]
+
+
+@pytest.mark.parametrize(
+    ("indices", "hosted", "expected_order"),
+    [
+        ((1, 0), True, (2.0, 1.0)),
+        ((0, 0), False, (1.0, 2.0)),
+        ((0, 0), True, None),
+        ((0,), True, None),
+        ((1, 2), True, None),
+        ((-1, 0), True, None),
+        ((False, 1), True, None),
+        ((0.0, 1), True, None),
+        (("0", "1"), True, None),
+    ],
+)
+def test_d162_hosted_embedding_requires_one_integer_index_per_input(
+    indices: tuple[object, ...], hosted: bool, expected_order: tuple[float, ...] | None
+) -> None:
+    from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
+
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", embedding_provider_only=["nebius/bf16"], zdr=True
+        )
+    )
+
+    def respond(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "qwen/qwen3-embedding-8b",
+                "data": [
+                    {"index": index, "embedding": [float(position)] * 1536}
+                    for position, index in enumerate(indices, start=1)
+                ],
+                "usage": {"prompt_tokens": 3, "total_tokens": 3, "cost": 0},
+            },
+        )
+
+    request = EmbeddingRequest(
+        model="qwen/qwen3-embedding-8b",
+        texts=("first passage", "second passage"),
+        dimensions=1536,
+        hosted_passage=hosted,
+    )
+    provider._client.close()
+    with httpx.Client(
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(respond)
+    ) as client:
+        provider._client = client
+        if expected_order is None:
+            with pytest.raises(OpenRouterInvalidResponseError, match="index|count"):
+                provider.embed(request=request)
+        else:
+            response = provider.embed(request=request)
+            assert tuple(vector[0] for vector in response.vectors) == expected_order

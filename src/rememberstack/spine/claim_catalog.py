@@ -26,6 +26,9 @@ from rememberstack.model import EvidenceSpan
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
+from rememberstack.spine.chunk_reuse import read_committed
+from rememberstack.spine.chunk_reuse import require_reusable_chunks_on
+from rememberstack.spine.chunk_reuse import version_is_reusable
 from rememberstack.spine.lifecycle import archive_reconciliation_id
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.selection_catalog import require_extraction_sources_on
@@ -41,16 +44,29 @@ class ClaimCatalog:
         self.selections = SelectionCatalog(engine=engine)
 
     def chunk_already_extracted(
-        self, *, chunk_id: UUID, extractor_version: str
+        self,
+        *,
+        chunk_id: UUID,
+        extractor_version: str,
+        claimify_input_hash: str | None = None,
     ) -> bool:
         """Whether this extractor generation already processed the chunk (D12/D7).
 
-        True if any claim, any ledgered decision, or any occurrence link
-        exists — a chunk whose extraction yielded only drops is still done,
-        and a chunk that REUSED prior claims (D56, occurrence links only) is
-        equally done.
+        With a Claimify input hash, check the completion stamp written atomically
+        with results. Otherwise check for a claim, decision or occurrence from
+        this extractor generation, including results from before the stamp.
         """
         with self._engine.connect() as connection:
+            if claimify_input_hash is not None:
+                committed = connection.execute(
+                    text(
+                        "SELECT claimify_input_hash FROM chunks WHERE chunk_id=:chunk_id"
+                    ),
+                    {"chunk_id": chunk_id},
+                ).scalar_one_or_none()
+                if committed is not None and committed != claimify_input_hash:
+                    raise ValueError("Claimify completion has different inputs")
+                return committed is not None
             return (
                 connection.execute(
                     _SELECT_EXTRACTED,
@@ -122,9 +138,9 @@ class ClaimCatalog:
         deployment_id: UUID,
         chunk_id: UUID,
         prior_chunk_id: UUID,
+        claimify_input_hash: str,
         occurrences: Mapping[UUID, OccurrenceProvenance] | None = None,
         evidence_spans: Mapping[UUID, tuple[EvidenceSpan, ...]] | None = None,
-        claimify_input_hash: str | None = None,
     ) -> int:
         """Re-attach a prior chunk's claims to a new version's chunk (D56/F4).
 
@@ -134,33 +150,40 @@ class ClaimCatalog:
         representation, never the source's (D65). Callers that resolved
         target provenance pass ``occurrences`` keyed by claim id; omitted
         entries stay unknown (null), never a fabricated passthrough.
+        The completion stamp and any copied links or decisions commit together
+        under the version-wide reuse gate.
         Idempotent: an already-attached claim is skipped. Returns how many
         claims the PRIOR chunk carries — zero means the prior extraction was
         a terminal no-info, regardless of whether this call inserted
         anything (a retried attempt inserts nothing but the prior was not
         empty).
         """
-        with self._engine.begin() as connection:
-            if claimify_input_hash is not None:
-                require_extraction_sources_on(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    chunk_ids=(chunk_id, prior_chunk_id),
-                )
+        if not claimify_input_hash:
+            raise ValueError("Claimify reuse requires an input hash")
+        with read_committed(self._engine) as connection:
+            require_extraction_sources_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                chunk_ids=(chunk_id, prior_chunk_id),
+            )
             prior_links = connection.execute(
                 _COUNT_CHUNK_CLAIMS, {"chunk_id": prior_chunk_id}
             ).scalar_one()
-            if claimify_input_hash is not None:
-                existing = connection.execute(
-                    text(
-                        "SELECT claimify_input_hash FROM chunks WHERE chunk_id=:chunk_id FOR UPDATE"
-                    ),
-                    {"chunk_id": chunk_id},
-                ).scalar_one()
-                if existing is not None:
-                    if existing != claimify_input_hash:
-                        raise ValueError("Claimify completion has different inputs")
-                    return prior_links
+            existing = connection.execute(
+                text(
+                    "SELECT claimify_input_hash FROM chunks WHERE chunk_id=:chunk_id FOR UPDATE"
+                ),
+                {"chunk_id": chunk_id},
+            ).scalar_one()
+            if existing is not None:
+                if existing != claimify_input_hash:
+                    raise ValueError("Claimify completion has different inputs")
+                return prior_links
+            require_reusable_chunks_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                chunk_ids=(chunk_id, prior_chunk_id),
+            )
             if prior_links:
                 claim_ids = connection.execute(
                     _SELECT_DISTINCT_CHUNK_CLAIM_IDS, {"chunk_id": prior_chunk_id}
@@ -189,36 +212,19 @@ class ClaimCatalog:
                             evidence_spans=spans,
                         ),
                     )
-            if claimify_input_hash is not None:
-                if not prior_links:
-                    copied = connection.execute(
-                        _COPY_CHUNK_DECISIONS,
-                        {"chunk_id": chunk_id, "prior_chunk_id": prior_chunk_id},
-                    ).rowcount
-                    if not copied:
-                        raise ValueError("reused extraction has no terminal evidence")
-                connection.execute(
-                    _STAMP_CLAIMIFY,
-                    {"chunk_id": chunk_id, "input_hash": claimify_input_hash},
-                )
-        return prior_links
-
-    def copy_reused_decisions(self, *, chunk_id: UUID, prior_chunk_id: UUID) -> int:
-        """Replicate a prior chunk's decision transcript under a reused chunk.
-
-        The D56 zero-claim reuse rung: a prior extraction with no accepted
-        claims may still carry claimify_omitted / grounding_rejected rows
-        (#161) — the reused occurrence adopts that transcript verbatim
-        instead of fabricating a no_info marker. Returns how many rows were
-        copied; zero means the prior transcript is empty and the caller owns
-        the terminal marker.
-        """
-        with self._engine.begin() as connection:
-            result = connection.execute(
-                _COPY_CHUNK_DECISIONS,
-                {"chunk_id": chunk_id, "prior_chunk_id": prior_chunk_id},
+            else:
+                # Preserve the donor's actual no-claim transcript.
+                copied = connection.execute(
+                    _COPY_CHUNK_DECISIONS,
+                    {"chunk_id": chunk_id, "prior_chunk_id": prior_chunk_id},
+                ).rowcount
+                if not copied:
+                    raise ValueError("reused extraction has no terminal evidence")
+            connection.execute(
+                _STAMP_CLAIMIFY,
+                {"chunk_id": chunk_id, "input_hash": claimify_input_hash},
             )
-        return result.rowcount or 0
+        return prior_links
 
     def claims_for_chunks(
         self, *, chunk_ids: tuple[UUID, ...]
@@ -423,7 +429,7 @@ _SELECT_EXTRACTED = text(
 )
 
 _SELECT_PRIOR_EXTRACTED = text(
-    """
+    f"""
     SELECT c.chunk_id
     FROM chunks c
     JOIN document_versions cv ON cv.version_id = c.version_id
@@ -439,6 +445,8 @@ _SELECT_PRIOR_EXTRACTED = text(
       -- version silently testifying nothing. An archived version is not
       -- removed: its claims are reused and become current again (D159).
       AND cv.deleted_at IS NULL
+      AND {version_is_reusable(":version_id")}
+      AND {version_is_reusable("c.version_id")}
       AND (EXISTS (SELECT 1 FROM chunk_claims x WHERE x.chunk_id = c.chunk_id)
            OR EXISTS (SELECT 1 FROM claim_extraction_decisions d
                       WHERE d.chunk_id = c.chunk_id))

@@ -179,6 +179,7 @@ def resolve_spans_occurrence_provenance(
     spans: tuple[EvidenceSpan, ...],
     ranges: tuple[DerivationRange, ...],
     source_map: tuple[SourceMapEntry, ...] | None,
+    split_windows: tuple[tuple[int, int], ...] = (),
 ) -> OccurrenceProvenance:
     """Stamp every supporting span, then union locators and most-mediated labels.
 
@@ -190,6 +191,7 @@ def resolve_spans_occurrence_provenance(
     and locators remain the union of hits. That is stricter than the
     single-span overlap contract, where one interval intersecting a labeled
     range still takes that range's labels.
+    A span from a split window can narrow a converter-attested linear range.
     """
     if not spans:
         return OccurrenceProvenance()
@@ -199,6 +201,10 @@ def resolve_spans_occurrence_provenance(
             char_end=span.char_end,
             ranges=ranges,
             source_map=source_map,
+            clip_exact_ranges=any(
+                start <= span.char_start and span.char_end <= end
+                for start, end in split_windows
+            ),
         )
         for span in spans
     )
@@ -211,6 +217,7 @@ def resolve_occurrence_provenance(
     char_end: int,
     ranges: tuple[DerivationRange, ...],
     source_map: tuple[SourceMapEntry, ...] | None,
+    clip_exact_ranges: bool = False,
 ) -> OccurrenceProvenance:
     """Stamp one grounded absolute interval against the target representation.
 
@@ -236,7 +243,10 @@ def resolve_occurrence_provenance(
     )
     kind, mode = _labels_from_ranges(ranges=intersecting)
     locators = _locators_from_map(
-        char_start=char_start, char_end=char_end, source_map=source_map
+        char_start=char_start,
+        char_end=char_end,
+        source_map=source_map,
+        clip_exact_ranges=clip_exact_ranges,
     )
     return OccurrenceProvenance(
         derivation_kind=kind, evidence_mode=mode, source_locators=locators
@@ -322,7 +332,11 @@ def _labels_from_ranges(
 
 
 def _locators_from_map(
-    *, char_start: int, char_end: int, source_map: tuple[SourceMapEntry, ...] | None
+    *,
+    char_start: int,
+    char_end: int,
+    source_map: tuple[SourceMapEntry, ...] | None,
+    clip_exact_ranges: bool,
 ) -> tuple[SourceLocator, ...] | None:
     """Union/dedup converter locators for the interval; None when none apply."""
     if source_map is None:
@@ -335,6 +349,22 @@ def _locators_from_map(
         ):
             continue
         for locator in entry.locators:
+            # Equal lengths alone do not establish a character mapping.
+            if (
+                clip_exact_ranges
+                and entry.linear_source_offsets
+                and locator.kind == "source_range"
+            ):
+                locator = locator.model_copy(
+                    update={
+                        "start_offset": locator.start_offset
+                        + max(char_start, entry.start)
+                        - entry.start,
+                        "end_offset": locator.start_offset
+                        + min(char_end, entry.end)
+                        - entry.start,
+                    }
+                )
             key = _locator_key(locator=locator)
             if key in seen:
                 continue

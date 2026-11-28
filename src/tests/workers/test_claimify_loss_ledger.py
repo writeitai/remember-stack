@@ -142,6 +142,7 @@ def _catalog_for(
     chunk = _chunk(document_md=document_md)
     return build_passage_catalog(
         blocks=blockize(document_md=document_md),
+        document_md=document_md,
         target=chunk,
         previous=None,
         following=None,
@@ -636,7 +637,11 @@ class _RecordingCatalog:
         self.occurrences: object = None
 
     def chunk_already_extracted(
-        self, *, chunk_id: UUID, extractor_version: str
+        self,
+        *,
+        chunk_id: UUID,
+        extractor_version: str,
+        claimify_input_hash: str | None = None,
     ) -> bool:
         return False
 

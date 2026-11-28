@@ -188,6 +188,8 @@ source map. Preserve the union of actual locators at converter precision and
 honest evidence mediation labels. Do not invent word-level audio positions or
 label mixed model-description/direct-text evidence as wholly direct testimony.
 Unrelated intervals between the spans must not affect provenance classification.
+A cited span in a split chunk uses narrower raw offsets when the converter
+supplies an exact character mapping. [D162 provenance](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 
 Reused occurrences recompute these labels/locators for their target representation.
 Missing/corrupt declared provenance follows existing retry/dead-letter behavior;

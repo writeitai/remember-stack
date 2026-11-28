@@ -9,11 +9,14 @@ from sqlalchemy.pool import NullPool
 
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import MinIOSettings
+from rememberstack.model import PipelineStage
 from rememberstack.profiles import EngineSettings
 from rememberstack.profiles import SelfHostProfile
 from rememberstack.profiles import SelfHostSettings
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import DatabaseSettings
+from rememberstack.workers import ChunkHandler
+from rememberstack.workers import EmbedChunksHandler
 
 
 def _store(key: str) -> MinIOSettings:
@@ -61,6 +64,44 @@ def test_from_settings_keeps_no_state_on_local_disk_and_takes_engine_options() -
         assert isinstance(profile._engine.pool, NullPool)  # noqa: SLF001
         assert _access_key(profile._raw_store) == "raw"  # noqa: SLF001
         assert _access_key(profile._artifact_store) == "shared"  # noqa: SLF001
+    finally:
+        profile.close()
+
+
+@pytest.mark.parametrize(
+    ("base_url", "only", "hosted"),
+    [
+        ("https://openrouter.ai/api/v1", ["nebius/bf16"], True),
+        ("https://openrouter.ai:443/api/v1", ["nebius/bf16"], True),
+        ("https://OPENROUTER.AI/api/v1/", ["nebius/bf16"], True),
+        ("https://openrouter.ai:8443/api/v1", ["nebius/bf16"], False),
+        ("https://router.example.invalid/api/v1", ["nebius/bf16"], False),
+        ("https://openrouter.ai/api/v1", None, False),
+    ],
+)
+def test_d162_ceiling_requires_the_normalized_endpoint_and_a_hard_pin(
+    base_url: str, only: list[str] | None, hosted: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("REMEMBERSTACK_P1_EMBEDDING_MODEL", "qwen/qwen3-embedding-8b")
+    profile = SelfHostProfile.from_settings(
+        replace(
+            _settings(),
+            model_provider=OpenRouterSettings(
+                api_key="offline",
+                base_url=base_url,
+                embedding_provider_only=only,
+                embedding_provider_order=["nebius/bf16"],
+                zdr=True,
+            ),
+        )
+    )
+    try:
+        chunk = profile._handler(stage=PipelineStage.CHUNK)  # noqa: SLF001
+        embed = profile._handler(stage=PipelineStage.EMBED_CHUNK)  # noqa: SLF001
+        assert isinstance(chunk, ChunkHandler)
+        assert isinstance(embed, EmbedChunksHandler)
+        assert chunk._hosted_embedding is hosted  # noqa: SLF001
+        assert embed._hosted_embedding is hosted  # noqa: SLF001
     finally:
         profile.close()
 

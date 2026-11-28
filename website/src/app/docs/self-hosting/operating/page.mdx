@@ -83,8 +83,22 @@ When a stage fails on an item:
   was its last attempt. The `last_error` then starts with
   `lease expired`.
 
-HTTP 429 answers from OpenRouter are handled inside the provider call and do
-not use attempts ([Models and providers](/docs/self-hosting/models#openrouter-routing-and-limits)).
+OpenRouter capacity errors can retry inside the provider call, including
+error-only HTTP 200 responses. If capacity stays unavailable, the worker
+uses the stage's remaining attempts.
+
+With Qwen3-Embedding-8B pinned to OpenRouter's `nebius/bf16` route with zero
+data retention and fallbacks off, new chunk grids split passages that exceed
+16,384 model tokens. Adding the same sole host to the provider order also
+activates these checks. Error-only HTTP 200 capacity responses can retry even
+when they carry a request ID. An input above the ceiling or an explicit size code from
+OpenRouter or its upstream provider dead-letters as `embedding.input_too_large`.
+The size code takes precedence over a wrapper's generic rejection or capacity status.
+Other explicit per-input rejections dead-letter as `embedding.input_rejected`,
+including an upstream `invalid_embedding_input` wrapped in HTTP 502.
+These checks also cover error-only HTTP 200 responses. Malformed vector batches
+use the stage's retry budget.
+`last_error` includes the chunk ID, the rendered input hash and the binding.
 
 A dead-lettered item stays where it is. Its version is not ready, and the
 work after it in the pipeline waits. Nothing retries it on its own.

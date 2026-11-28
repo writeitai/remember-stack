@@ -6,17 +6,22 @@ seam — no network).
 """
 
 from collections.abc import Iterator
+import json
 from pathlib import Path
 from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
+import httpx
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters import openrouter
+from rememberstack.adapters import OpenRouterModelProvider
+from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
@@ -25,6 +30,8 @@ from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
+from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.core.hosted_embedding_ceiling import HOSTED_EMBEDDING_BINDING
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import PipelineStage
@@ -106,6 +113,7 @@ class _E1Rig:
         self.engine = engine
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
+        self.artifact_store = artifact_store
         self.chunk_index = PostgresP1Index(
             engine=engine, embedding_model=P1Settings().embedding_model
         )
@@ -379,3 +387,425 @@ def test_embed_retry_replays_stored_prefixes(rig: _E1Rig, tmp_path: Path) -> Non
         meter=NoopCostMeter(),
     )
     assert len(rig.provider.generated_prompts) == calls_after_first
+
+
+def _saved_grid(rig: _E1Rig, body: str):
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="fixture.md", mime="text/markdown", content=body.encode()
+        ),
+    )
+    for stage in (PipelineStage.CONVERT, PipelineStage.STRUCTURE, PipelineStage.CHUNK):
+        assert rig.run(stage=stage) is RunResultOutcome.SUCCEEDED
+    return ingested
+
+
+def _hosted_worker(rig: _E1Rig) -> Worker:
+    artifacts = rig.artifact_store
+    registry = HandlerRegistry()
+    registry.register(
+        stage=PipelineStage.EMBED_CHUNK,
+        handler=EmbedChunksHandler(
+            catalog=rig.chunk_catalog,
+            artifact_store=artifacts,
+            model_provider=rig.provider,
+            chunk_index=rig.chunk_index,
+            params=_PARAMS,
+            settings=E1Settings(),
+            embedding_model=P1Settings().embedding_model,
+            hosted_embedding=True,
+        ),
+    )
+    return Worker(ledger=rig.worker._ledger, registry=registry)
+
+
+def _run_hosted(worker: Worker) -> RunResultOutcome:
+    return worker.run_one(
+        deployment_id=_DEPLOYMENT_ID,
+        stage=PipelineStage.EMBED_CHUNK,
+        lane=ProcessingLane.STEADY,
+    ).outcome
+
+
+def test_d162_above_ceiling_saved_grid_hits_typed_dead_letter(rig: _E1Rig) -> None:
+    item = _saved_grid(rig, "🙂界💡🚀" * 6_000)
+    with rig.engine.connect() as connection:
+        version, representation = connection.execute(
+            text(
+                "SELECT version_id, current_representation_id FROM document_versions WHERE version_id=:id"
+            ),
+            {"id": item.version_id},
+        ).one()
+    before = rig.chunk_catalog.existing_chunk_ids(
+        representation_id=representation,
+        chunker_version=chunker_version(params=_PARAMS),
+    )
+    from rememberstack.model import ClaimedWork
+    from rememberstack.model import ProcessingTarget
+    from rememberstack.workers import E1_CHUNK_VERSION
+
+    ChunkHandler(
+        catalog=rig.chunk_catalog,
+        artifact_store=rig.artifact_store,
+        params=_PARAMS,
+        hosted_embedding=True,
+    ).handle(
+        work=ClaimedWork(
+            processing_id=version,
+            deployment_id=_DEPLOYMENT_ID,
+            target_id=version,
+            target_kind=ProcessingTarget.DOCUMENT_VERSION,
+            stage=PipelineStage.CHUNK,
+            component_version=E1_CHUNK_VERSION,
+            content_hash=item.content_hash,
+            lane=ProcessingLane.STEADY,
+            attempt=1,
+            payload={
+                "version_id": str(version),
+                "representation_id": str(representation),
+            },
+        ),
+        meter=NoopCostMeter(),
+    )
+    assert (
+        rig.chunk_catalog.existing_chunk_ids(
+            representation_id=representation,
+            chunker_version=chunker_version(params=_PARAMS),
+        )
+        == before
+    )
+    assert _run_hosted(_hosted_worker(rig)) is RunResultOutcome.DEAD_LETTERED
+    assert rig.provider.embedded_texts == []
+    with rig.engine.connect() as connection:
+        attempts, error = connection.execute(
+            text(
+                "SELECT attempts,last_error FROM processing_state WHERE stage='embed_chunk'"
+            )
+        ).one()
+        assert attempts == 1
+        assert "embedding.input_too_large" in error
+        assert f"chunk_id={before[0]}" in error
+        assert "embedding_text_hash=" in error
+        assert "nebius/bf16" in error
+        assert (
+            connection.execute(text("SELECT count(*) FROM chunk_search")).scalar_one()
+            == 0
+        )
+
+
+def test_d162_isolates_input_rejection_and_keeps_committed_batch(
+    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rememberstack.model import EmbeddingRequest
+    from rememberstack.model.model_provider import ProviderEmbeddingInputRejected
+
+    _saved_grid(rig, _SOURCE)
+    original = rig.provider.embed
+
+    def reject(*, request: EmbeddingRequest):
+        if any("Paragraph 12 " in passage for passage in request.texts):
+            raise ProviderEmbeddingInputRejected(
+                code="embedding.input_rejected", status_code=422
+            )
+        return original(request=request)
+
+    monkeypatch.setattr(rig.provider, "embed", reject)
+    assert _run_hosted(_hosted_worker(rig)) is RunResultOutcome.DEAD_LETTERED
+    with rig.engine.connect() as connection:
+        attempts, error = connection.execute(
+            text(
+                "SELECT attempts,last_error FROM processing_state WHERE stage='embed_chunk'"
+            )
+        ).one()
+        assert attempts == 1
+        assert "embedding.input_rejected" in error
+        indexed, waiting, skips = connection.execute(
+            text("""
+            SELECT count(*) FILTER (WHERE p.chunk_id IS NOT NULL),
+                   count(*) FILTER (WHERE c.embedding_ref IS NULL),
+                   count(*) FILTER (WHERE c.embedding_ref LIKE 'skip:%')
+            FROM chunks c LEFT JOIN chunk_search p USING (chunk_id)
+        """)
+        ).one()
+        assert indexed > 0 and waiting > 0 and skips == 0
+
+
+@pytest.mark.parametrize(
+    ("http_status", "provider_error", "terminal_code"),
+    [
+        pytest.param(
+            200,
+            {"code": "context_length_exceeded"},
+            "embedding.input_too_large",
+            id="size-error-in-success",
+        ),
+        pytest.param(
+            200,
+            {"code": "invalid_embedding_input"},
+            "embedding.input_rejected",
+            id="input-error-in-success",
+        ),
+        pytest.param(
+            502,
+            {
+                "code": 502,
+                "metadata": {"raw": {"error": {"type": "invalid_embedding_input"}}},
+            },
+            "embedding.input_rejected",
+            id="input-error-in-gateway-failure",
+        ),
+    ],
+)
+def test_d162_provider_input_rejection_records_typed_dead_letter(
+    rig: _E1Rig,
+    monkeypatch: pytest.MonkeyPatch,
+    http_status: int,
+    provider_error: dict[str, object],
+    terminal_code: str,
+) -> None:
+    item = _saved_grid(rig, "Every traveler needs a receipt.")
+    adapter = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline",
+            embedding_provider_only=["nebius/bf16"],
+            embedding_provider_order=["nebius/bf16"],
+            zdr=True,
+        )
+    )
+    monkeypatch.setattr(openrouter.time, "sleep", lambda _: None)
+    submitted: list[bytes] = []
+
+    def reject(request: httpx.Request) -> httpx.Response:
+        submitted.append(request.content)
+        return httpx.Response(http_status, json={"error": provider_error})
+
+    adapter._client.close()
+    with httpx.Client(
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(reject)
+    ) as client:
+        adapter._client = client
+        monkeypatch.setattr(rig.provider, "embed", adapter.embed)
+        outcome = _run_hosted(_hosted_worker(rig))
+
+    assert len(submitted) == 1
+    assert outcome is RunResultOutcome.DEAD_LETTERED
+    (rendered,) = json.loads(submitted[0])["input"]
+    with rig.engine.connect() as connection:
+        attempts, error = connection.execute(
+            text(
+                "SELECT attempts, last_error FROM processing_state WHERE stage='embed_chunk'"
+            )
+        ).one()
+        chunk_id = connection.execute(
+            text("SELECT chunk_id FROM chunks WHERE version_id=:version"),
+            {"version": item.version_id},
+        ).scalar_one()
+    assert attempts == 1
+    assert terminal_code in error
+    assert f"chunk_id={chunk_id}" in error
+    assert f"embedding_text_hash={embedding_text_hash(rendered)}" in error
+    assert f"binding={HOSTED_EMBEDDING_BINDING}" in error
+
+
+@pytest.mark.parametrize("exhausts_adapter", (False, True))
+@pytest.mark.parametrize("with_id", (False, True))
+def test_d162_http_200_capacity_envelope_retries_and_completes(
+    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, exhausts_adapter: bool, with_id: bool
+) -> None:
+    _saved_grid(rig, "Every traveler needs a receipt.")
+    adapter = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", embedding_provider="nebius/bf16", zdr=True
+        )
+    )
+    monkeypatch.setattr(openrouter.time, "sleep", lambda _: None)
+    capacity_replies = (
+        openrouter._IN_FLIGHT_BUDGET_RETRIES + 1 if exhausts_adapter else 1
+    )
+    submitted: list[bytes] = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        submitted.append(request.content)
+        if len(submitted) <= capacity_replies:
+            return httpx.Response(
+                200,
+                json={
+                    **({"id": "embed-capacity-rejected"} if with_id else {}),
+                    "error": {"code": 429},
+                },
+            )
+        payload = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": payload["model"],
+                "data": [{"index": 0, "embedding": [1.0] * payload["dimensions"]}],
+                "usage": {"prompt_tokens": 10, "total_tokens": 10, "cost": 0},
+            },
+        )
+
+    adapter._client.close()
+    with httpx.Client(
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(reply)
+    ) as client:
+        adapter._client = client
+        monkeypatch.setattr(rig.provider, "embed", adapter.embed)
+        worker = _hosted_worker(rig)
+        if exhausts_adapter:
+            assert _run_hosted(worker) is RunResultOutcome.RETRY_SCHEDULED
+            assert len(submitted) == capacity_replies
+            with rig.engine.begin() as connection:
+                assert connection.execute(
+                    text("""
+                    SELECT attempts, defer_reason::text
+                    FROM processing_state WHERE stage='embed_chunk'
+                """)
+                ).one() == (1, "retry_backoff")
+                assert (
+                    connection.execute(
+                        text(
+                            "SELECT count(*) FROM cost_ledger WHERE stage='embed_chunk'"
+                        )
+                    ).scalar_one()
+                    == 0
+                )
+                connection.execute(
+                    text("""
+                    UPDATE processing_state SET not_before=now() WHERE stage='embed_chunk'
+                """)
+                )
+        assert _run_hosted(worker) is RunResultOutcome.SUCCEEDED
+
+    assert len(submitted) == capacity_replies + 1
+    assert len(set(submitted)) == 1
+    with rig.engine.connect() as connection:
+        assert connection.execute(
+            text("""
+            SELECT status::text, attempts FROM processing_state WHERE stage='embed_chunk'
+        """)
+        ).one() == ("succeeded", 2 if exhausts_adapter else 1)
+        assert (
+            connection.execute(
+                text("""
+            SELECT count(*) FROM chunks JOIN chunk_search USING (chunk_id)
+            WHERE chunks.embedding_ref IS NOT NULL
+        """)
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                text("""
+            SELECT count(*) FROM cost_ledger WHERE stage='embed_chunk'
+        """)
+            ).scalar_one()
+            == 1
+        )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "throttle",
+        "zero_vector",
+        "duplicate_index",
+        "embedding_string",
+        "boolean_coordinate",
+        "string_coordinate",
+    ),
+)
+def test_d162_unusable_provider_batches_exhaust_attempts(
+    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from rememberstack.model import EmbeddingRequest
+    from rememberstack.model import EmbeddingResponse
+    from rememberstack.model import ProviderCallError
+
+    _saved_grid(rig, _SOURCE)
+    original = rig.provider.embed
+
+    def broken(*, request: EmbeddingRequest) -> EmbeddingResponse:
+        if failure == "throttle":
+            raise ProviderCallError("throttled", status_code=429)
+        if failure != "zero_vector":
+            assert len(request.texts) > 1 and request.dimensions is not None
+            adapter = OpenRouterModelProvider(
+                settings=OpenRouterSettings(
+                    api_key="offline", embedding_provider="nebius/bf16", zdr=True
+                )
+            )
+            valid = [1.0] * request.dimensions
+            malformed = {
+                "embedding_string": "1" * request.dimensions,
+                "boolean_coordinate": [True, *valid[1:]],
+                "string_coordinate": ["1", *valid[1:]],
+            }.get(failure, valid)
+            reply = {
+                "model": request.model,
+                "data": [
+                    {
+                        "index": 0 if failure == "duplicate_index" else index,
+                        "embedding": malformed if index == 0 else valid,
+                    }
+                    for index, _ in enumerate(request.texts)
+                ],
+                "usage": {"prompt_tokens": 10, "total_tokens": 10, "cost": 0},
+            }
+            adapter._client.close()
+            with httpx.Client(
+                base_url="https://openrouter.ai/api/v1",
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(200, json=reply)
+                ),
+            ) as client:
+                adapter._client = client
+                return adapter.embed(request=request)
+        result = original(request=request)
+        return EmbeddingResponse(
+            vectors=tuple((0.0,) * len(vector) for vector in result.vectors),
+            usage=result.usage,
+        )
+
+    monkeypatch.setattr(rig.provider, "embed", broken)
+    worker = _hosted_worker(rig)
+    for _ in range(2):
+        assert _run_hosted(worker) is RunResultOutcome.RETRY_SCHEDULED
+        with rig.engine.begin() as connection:
+            assert (
+                connection.execute(
+                    text("""
+                SELECT defer_reason::text FROM processing_state WHERE stage='embed_chunk'
+            """)
+                ).scalar_one()
+                == "retry_backoff"
+            )
+            connection.execute(
+                text(
+                    "UPDATE processing_state SET not_before=now() WHERE stage='embed_chunk'"
+                )
+            )
+    assert _run_hosted(worker) is RunResultOutcome.DEAD_LETTERED
+    with rig.engine.connect() as connection:
+        assert (
+            connection.execute(text("SELECT count(*) FROM chunk_search")).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM chunks WHERE embedding_ref IS NOT NULL")
+            ).scalar_one()
+            == 0
+        )
+        attempts, error = connection.execute(
+            text(
+                "SELECT attempts,last_error FROM processing_state WHERE stage='embed_chunk'"
+            )
+        ).one()
+        assert attempts == 3
+        if failure == "duplicate_index":
+            assert "index every input exactly once" in error
+        elif failure in {"embedding_string", "boolean_coordinate", "string_coordinate"}:
+            assert "embedding vectors must be JSON arrays of numbers" in error
+        assert "embedding.input_rejected" not in error
+        assert "embedding.input_too_large" not in error

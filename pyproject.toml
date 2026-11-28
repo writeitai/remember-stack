@@ -92,6 +92,7 @@ server = [
     "sqlalchemy>=2.0",
     "uvicorn>=0.37",
     "xlrd>=2.0.1",
+    "tokenizers==0.22.2",
 ]
 dev = [
     {include-group = "server"},

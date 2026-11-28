@@ -515,13 +515,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "39e40c28370423e6693b6491f141a72c55b82d0a3ec9f807f3fba3820a0be69c",
-      "source_digest": "fffcb2d1105165277cd7a110355653c66f674fd604eb0e38fb4a2746b8bd952b"
+      "schema_profile_digest": "c2b87b054566afe8626a3e6151d0cd4806a08ee794312b05e3005cb564951253",
+      "source_digest": "63c180e946e3cae97d5443e42c870e1deaaac82b76bb7954748a491ef2be439c"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "ec263e60f4fac3454df65cf8b15f460469153579f4832d1e77fb9189f1e183d9",
+      "classification_digest": "1b8cba510dbbb4a883fa34f9d08e31a7ee3434178c2d50ed8bc99a466e83d9cc",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1150,24 +1150,24 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "df498aa3a9aec0647ca72bf5fd430cc970a6b41a7d77966a61a0925a097e941a",
+      "profile_digest": "3d9706116871cc14d0c8a70caec8e57b718a4379ff463797c888d87831bea393",
       "release_margin_us": 500000,
-      "schema_digest": "66b8c4babd6fcce065883847d6f6a7f46144f47a83a4594d79839984388335a0",
-      "schema_profile_digest": "39e40c28370423e6693b6491f141a72c55b82d0a3ec9f807f3fba3820a0be69c",
-      "source_digest": "fffcb2d1105165277cd7a110355653c66f674fd604eb0e38fb4a2746b8bd952b",
+      "schema_digest": "fde28969cdb80fef5ade060d50a2390d2eaf0430911eaa603abf287757653ce0",
+      "schema_profile_digest": "c2b87b054566afe8626a3e6151d0cd4806a08ee794312b05e3005cb564951253",
+      "source_digest": "63c180e946e3cae97d5443e42c870e1deaaac82b76bb7954748a491ef2be439c",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "ec263e60f4fac3454df65cf8b15f460469153579f4832d1e77fb9189f1e183d9",
+    "classification_digest": "1b8cba510dbbb4a883fa34f9d08e31a7ee3434178c2d50ed8bc99a466e83d9cc",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "df498aa3a9aec0647ca72bf5fd430cc970a6b41a7d77966a61a0925a097e941a",
-    "operator_mapping_digest": "318369c2d92af834777611300a498c4a50d6919382dd88355c2f0424b4e150d2",
-    "schema_profile_digest": "39e40c28370423e6693b6491f141a72c55b82d0a3ec9f807f3fba3820a0be69c",
+    "native_capture_profile_digest": "3d9706116871cc14d0c8a70caec8e57b718a4379ff463797c888d87831bea393",
+    "operator_mapping_digest": "3a55abccf7aeb8a99a0f4bd05782ad9a31442b702b5cea6476f44f0488d67a3c",
+    "schema_profile_digest": "c2b87b054566afe8626a3e6151d0cd4806a08ee794312b05e3005cb564951253",
     "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },
   "schema": {
@@ -1175,7 +1175,7 @@
       "EXPECTED_CONSTRAINT_COUNTS": {
         "c": 122,
         "f": 150,
-        "n": 656,
+        "n": 657,
         "p": 87,
         "t": 7,
         "u": 40
@@ -1184,6 +1184,7 @@
         "adjudication_method",
         "adjudication_outcome",
         "alias_provenance",
+        "chunk_span_kind",
         "claim_temporal_class",
         "claim_valid_kind",
         "claim_valid_precision",
@@ -1279,6 +1280,7 @@
         "ix_chunks_reuse",
         "ix_chunks_reuse_identity",
         "ix_chunks_section",
+        "ix_chunks_split_version",
         "ix_chunks_version",
         "ix_claims_audit",
         "ix_claims_chunk",
@@ -1610,7 +1612,7 @@
       "template_public_testimony_currency_events",
       "testimony_currency_events"
     ],
-    "head": "p9_58_0079",
+    "head": "p9_60_0081",
     "migrations": {
       "__init__.py": "6c0a82ef11830b8d5cb49eac5ac1f0d2e967699377fab1cb34d751585c97366c",
       "p0_02_0001_extensions_enums.py": "d52a438d07c205fe7645249f286f1d7a8edde1215b0298cadc69d34eb999747d",
@@ -1691,7 +1693,9 @@
       "p9_55_0076_archive.py": "5c609234e8cf4dd20c5a332b7aa807cee238d9d7edd4b0aee9b2550c121bec8a",
       "p9_56_0077_keyed_memory_survivor.py": "ce7a52d48df364360a284e24e1521578d8d5554a66334e2c065183cfe175f1ee",
       "p9_57_0078_graph_survivor_projection.py": "78b5ebf4c3499b857fb893576ad4921e7d1ec77132fa5e40ba065472d38c8545",
-      "p9_58_0079_claim_history_by_id.py": "db0783a9dfd9167cd0e54936127f7940507c1bfb13d852336f86dc96b6b77534"
+      "p9_58_0079_claim_history_by_id.py": "db0783a9dfd9167cd0e54936127f7940507c1bfb13d852336f86dc96b6b77534",
+      "p9_59_0080_chunk_span_kind.py": "f5005b8dbec535622981f2ea42b28a334de35b6db9a8b38fb1723f08da4fbdbd",
+      "p9_60_0081_split_version_index.py": "88fbaafce0cdf50bdad5ef356afc7c051ccdce34be96b7aa2d1ecaed3f2c0bfa"
     },
     "records": {
       "NativeCatalogAcquisition": {
@@ -2427,7 +2431,7 @@
             "type": "string"
           },
           "schema_head": {
-            "const": "p9_58_0079",
+            "const": "p9_60_0081",
             "title": "Schema Head",
             "type": "string"
           },

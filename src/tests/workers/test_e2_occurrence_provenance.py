@@ -95,7 +95,11 @@ class _RecordingCatalog:
         self.record_calls = 0
 
     def chunk_already_extracted(
-        self, *, chunk_id: UUID, extractor_version: str
+        self,
+        *,
+        chunk_id: UUID,
+        extractor_version: str,
+        claimify_input_hash: str | None = None,
     ) -> bool:
         return False
 
@@ -123,17 +127,14 @@ class _RecordingCatalog:
         deployment_id: UUID,
         chunk_id: UUID,
         prior_chunk_id: UUID,
+        claimify_input_hash: str,
         occurrences: dict[UUID, OccurrenceProvenance] | None = None,
         evidence_spans: object = None,
-        claimify_input_hash: str | None = None,
     ) -> int:
         del deployment_id, evidence_spans, claimify_input_hash
         self.attached = (chunk_id, prior_chunk_id)
         self.reuse_occurrences = occurrences
         return 0 if not self.anchors else len(self.anchors)
-
-    def copy_reused_decisions(self, *, chunk_id: UUID, prior_chunk_id: UUID) -> int:
-        return 0
 
     def record_extraction(
         self,

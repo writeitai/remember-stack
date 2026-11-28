@@ -1086,3 +1086,111 @@ def test_a_chunk_handle_must_lie_in_a_ready_versions_current_reading(rig: _Rig) 
     )
     with pytest.raises(ChunkNotFoundError):
         rig.read(chunk_id=chunk_id, direction="outgoing")
+
+
+@pytest.mark.parametrize("zero_width", (True, False))
+def test_d162_section_entry_ids_preserve_whole_and_match_split_characters(
+    rig: _Rig, zero_width: bool
+) -> None:
+    travel = rig.ingest(ref="policy/travel", body=_TRAVEL)
+    body = (
+        "Lead\u2028\n# Terms {#terms}\n"
+        if zero_width
+        else "# Expense Policy\n\nCompany rules.\n\n## Terms {#terms}\n\nA receipt is required.\n"
+    )
+    target = rig.ingest(ref="policy/expense", body=body)
+    rig.put(
+        version=travel,
+        body=_ndjson(
+            _ref(
+                target={
+                    "source_kind": "intranet",
+                    "source_ref": "policy/expense",
+                    "section_key": "terms",
+                }
+            )
+        ),
+    )
+    rig.drain()
+    with rig.engine.begin() as connection:
+        section_start, block_start, representation = connection.execute(
+            text("""
+            SELECT s.char_start,s.block_start,r.representation_id
+            FROM document_sections s JOIN document_representations r
+              ON r.representation_id=s.representation_id
+             AND r.current_structure_generation_id=s.structure_generation_id
+            WHERE r.version_id=:version AND s.section_key='terms'
+        """),
+            {"version": target.version_id},
+        ).one()
+        rows = connection.execute(
+            text("""
+            SELECT chunk_id,ordinal,char_start,char_end FROM chunks
+            WHERE version_id=:v AND representation_id=:r
+              AND block_start<=:block AND :block<=block_end
+            ORDER BY ordinal,chunk_id
+        """),
+            {"v": target.version_id, "r": representation, "block": block_start},
+        ).all()
+        assert rows
+        expected = [(row.ordinal, row.chunk_id) for row in rows]
+        if zero_width:
+            assert any((row.char_start, row.char_end) == (5, 5) for row in rows)
+        else:
+            seed = rows[0].chunk_id
+            entry = uuid4()
+            for chunk_id, version_id, repr_id, start, end in (
+                (
+                    entry,
+                    target.version_id,
+                    representation,
+                    section_start,
+                    section_start + 1,
+                ),
+                (
+                    uuid4(),
+                    target.version_id,
+                    representation,
+                    section_start + 1,
+                    section_start + 2,
+                ),
+                (uuid4(), target.version_id, uuid4(), section_start, section_start + 1),
+                (uuid4(), uuid4(), representation, section_start, section_start + 1),
+            ):
+                connection.execute(
+                    text("""
+                    INSERT INTO chunks (
+                        chunk_id,deployment_id,doc_id,version_id,representation_id,section_id,
+                        ordinal,block_start,block_end,chunk_content_hash,extraction_input_hash,
+                        char_start,char_end,chunker_version,span_kind
+                    )
+                    SELECT :id,deployment_id,doc_id,:v,:r,section_id,
+                           900,block_start,block_end,chunk_content_hash,extraction_input_hash,
+                           :start,:end,'test-split','split'
+                    FROM chunks WHERE chunk_id=:seed
+                """),
+                    {
+                        "id": chunk_id,
+                        "v": version_id,
+                        "r": repr_id,
+                        "start": start,
+                        "end": end,
+                        "seed": seed,
+                    },
+                )
+            expected.append((900, entry))
+    expected_ids = tuple(chunk_id for _, chunk_id in sorted(expected))
+
+    [linked] = rig.read(doc_id=travel.doc_id, section_key="approvals").rows
+    assert linked.target is not None
+    assert linked.target.first_chunk_ids == expected_ids
+    [historical] = (
+        SectionHistory(engine=rig.engine)
+        .section_history(
+            deployment_id=_DEPLOYMENT_ID,
+            request=SectionHistoryRequest(doc_id=target.doc_id, section_key="terms"),
+        )
+        .rows
+    )
+    assert historical.section is not None
+    assert historical.section.first_chunk_ids == expected_ids

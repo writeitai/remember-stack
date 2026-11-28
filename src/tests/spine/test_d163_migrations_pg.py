@@ -478,7 +478,7 @@ def test_d163_upgrade_and_downgrade_with_previous_readers(
                         future = executor.submit(
                             command.upgrade if up else command.downgrade,
                             config=migration_config(engine),
-                            revision="head" if up else BASELINE_HEAD,
+                            revision=TARGET_HEAD if up else BASELINE_HEAD,
                         )
                         try:
                             assert retry.wait(timeout=12), (
@@ -515,7 +515,7 @@ def test_d163_upgrade_and_downgrade_with_previous_readers(
         assert commits == {BASELINE_HEAD, _MEMORY_WALK, _GRAPH_PROJECTION, TARGET_HEAD}
         assert _catalog(engine) == baseline
 
-        command.upgrade(config=migration_config(engine), revision="head")
+        command.upgrade(config=migration_config(engine), revision=TARGET_HEAD)
         _assert_cutover(
             engine, corpus, new_api, new_hash, _PREVIOUS_HASH, query_id, version
         )

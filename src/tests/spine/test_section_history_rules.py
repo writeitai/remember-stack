@@ -140,6 +140,7 @@ def _section(generation: int, *, own: str, subtree: str) -> tuple[UUID, KeyedSec
         node_path="0.3",
         title="Per-diem allowance",
         block_start=7,
+        char_start=40,
         own_content_hash=own,
         subtree_content_hash=subtree,
     )

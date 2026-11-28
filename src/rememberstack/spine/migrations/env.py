@@ -84,6 +84,9 @@ def run_migrations_online() -> None:
 def _run_online_attempt(*, engine: Engine, lock_timeout_ms: int) -> None:
     """Hold the native migration lock through one pass, including autocommit DDL."""
     with engine.connect() as connection:
+        # Downgrade guards must see writes that commit while they wait for a
+        # table lock, even if Alembic has already read the revision.
+        connection.execution_options(isolation_level="READ COMMITTED")
         database = connection.exec_driver_sql("SELECT current_database()").scalar_one()
         if (
             len(str(database)) > _MAX_DATABASE_NAME_BYTES

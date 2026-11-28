@@ -343,8 +343,27 @@ class _ChunkCatalog:
             if identity in reuse_identity_hashes
         }
 
-    def record_chunks(self, *, records: tuple[ChunkRecord, ...]) -> None:
-        self.records = records
+    def save_grid(
+        self,
+        *,
+        source: ChunkSource,
+        identities: tuple[str, ...],
+        has_split: bool,
+        build_records,
+        chunker_version: str,
+    ) -> None:
+        version_date = source.source_modified_at or source.published_at
+        matches = (
+            self.text_origin_matches(
+                deployment_id=source.deployment_id,
+                doc_id=source.doc_id,
+                reuse_identity_hashes=tuple(dict.fromkeys(identities)),
+                not_after=version_date,
+            )
+            if version_date is not None and not has_split
+            else {}
+        )
+        self.records = build_records(matches)
 
 
 def _write_representation(*, store: LocalFSObjectStore) -> int:
@@ -536,6 +555,7 @@ def _grounded(*, source: ChunkSource, chunk: ChunkForEmbedding) -> object:
     kept_ranges = ((chunk.char_start, chunk.char_end),)
     catalog = build_passage_catalog(
         blocks=blockize(document_md=_DOC_MD),
+        document_md=_DOC_MD,
         target=chunk,
         previous=None,
         following=None,
