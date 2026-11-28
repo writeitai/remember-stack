@@ -307,11 +307,12 @@ change.
 Carry-forward of E1/E2 results and D140 dates requires both versions to pass the
 [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
 
-- **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
-  new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain).
-  Each stage checks its own reuse identity. Offsets stay out of those keys.
-- **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
-  documents.
+- **A1 — repack and match by identity.** CHUNK packs the new representation and computes
+  chunk hashes, Selection keys and text-origin identities from its final grid. Each stage
+  looks up eligible prior results by its own key. Offsets locate spans for remapping and
+  stay out of reuse keys.
+- **A2 — anchor-stabilized packing** (§4) limits how far changed boundaries spread in long
+  sections.
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
   inputs are unchanged.** For **Selection**, reused chunks keep prior Selection outcomes
   when `extraction_input_hash` matches; unchanged regions keep the prior version's structure

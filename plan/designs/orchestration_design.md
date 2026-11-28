@@ -183,6 +183,10 @@ Tasks header cannot choose the attribution.
 
 ### embed_chunk durability (D80 — minimum contract)
 
+Validate the [D162 passage binding](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
+before the worker loop or named-task dispatch claims CHUNK or EMBED_CHUNK. A configuration
+refusal leaves the ledger row intact for delivery with a corrected binding.
+
 E1 passage embed is **not** one document-level “all strings then one provider call.” Normative
 input policy: `e1_embedding_input_policy.md` §6. Operational rules for implementers:
 

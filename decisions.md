@@ -8761,7 +8761,9 @@ generations, retrieval and rendering use their existing code and identities.
 **Status:** Proposed. **Date:** 2026-11-27.
 
 Check the full D80 input against the release-qualified binding's limits. Stock
-self-host pins a qualified route. CHUNK and EMBED_CHUNK reject unqualified bindings.
+self-host pins a qualified route for E1 passage jobs. Qualification requires
+evidence of full input consumption. Validate the binding before claiming CHUNK
+or EMBED_CHUNK work.
 Split failing candidates losslessly under the existing chunker version.
 A saved split piece excludes its entire version from both sides of E1/E2 reuse
 and D140 text-origin inheritance. Commit vector copies and authority stamps

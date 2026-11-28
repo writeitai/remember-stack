@@ -6,15 +6,29 @@ Cutting in E0 changes blocks and keys. E1 checks the full D80 render because a c
 [Base packing](../../src/rememberstack/core/chunker.py#L173-L240) · [D80 render](../../src/rememberstack/core/embedding_input_policy.py#L188-L234).
 
 Hosted probes reportedly accepted 19,960 input tokens and a 45,919-token batch via OpenRouter
-`nebius/bf16`. Larger probes returned generic 429s. Qualification must verify full delivery.
+`nebius/bf16`. Larger probes returned generic 429s, which can also signal throttling.
 
-Stock Compose leaves embedding routing open. An OpenRouter order by itself still permits
-marketplace fallback. A prefix-only embedder can return a finite, nonzero vector of the
-expected dimension, so even a small cap needs evidence that the endpoint consumes the tail.
-One pinned default keeps qualification to one route. A closed allowlist gives failover
-when every reachable endpoint passes the same limits.
-[Compose](../../compose.yaml#L28-L36) · [Routing payload](../../src/rememberstack/adapters/openrouter.py#L1001-L1032) ·
+A prefix-only or suffix-only embedder can return a valid vector and distinguish changes at
+the retained end. Even both end probes can miss dropped tokens in the middle. Qualification
+requires a verified mode that rejects overflow with truncation disabled, or model-side
+evidence of full token consumption for each input.
 [Vector validation](../../src/rememberstack/ports/p1_index.py#L22-L49).
+
+Stock Compose leaves embedding routing open, and an OpenRouter order alone permits
+marketplace fallback. One pinned passage route limits the qualification work. A closed
+allowlist gives failover when every reachable endpoint passes the same limits. Self-host
+shares a provider across passage, query, claim and fact embedding. Pinning it globally can
+change the query vector and ranking against identical stored rows. Bind the pin at E1
+composition so each other caller gets its configured shared routing.
+[Compose](../../compose.yaml#L28-L36) · [Routing payload](../../src/rememberstack/adapters/openrouter.py#L1001-L1046) ·
+[Query wiring](../../src/rememberstack/profiles/selfhost.py#L1424-L1440) ·
+[Passage wiring](../../src/rememberstack/profiles/selfhost.py#L1874-L1887).
+
+A handler error can dead-letter valid work because the ledger starts the attempt before
+dispatch. The worker loop and named-task dispatch both compose handlers before claiming,
+so binding validation there leaves the same rows available after a configuration fix.
+[Dispatch](../../src/rememberstack/profiles/selfhost.py#L1584-L1644) ·
+[Claim and error handling](../../src/rememberstack/workers/base.py#L388-L460).
 
 A live ceiling change can alter fit between packing and dispatch. A release constant makes
 that check stable. Repacking saved spans would change handles and extraction inputs, so a retry

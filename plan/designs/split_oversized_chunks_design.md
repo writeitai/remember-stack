@@ -4,12 +4,14 @@
 
 ## 1. Check the complete embedding input
 
-CHUNK and EMBED_CHUNK share a release-qualified passage binding. It pins P1's model and
-dimensions, one route or a closed allowlist, tokenizer, vocabulary and route framing.
-Stock self-host, including Compose, defaults to one hard-pinned route qualified for that
-release. Overrides must match a release-qualified binding. OpenRouter provider order alone
-leaves marketplace fallback open. Qualify every reachable endpoint, including variants and
-fallbacks, at the binding's common limits.
+CHUNK and EMBED_CHUNK share a release-qualified passage binding in the configured P1 vector
+space. It pins the model, dimensions, tokenizer, vocabulary, route framing and one route or a
+closed allowlist.
+Stock self-host, including Compose, sets one qualified hard pin on the E1 passage binding.
+Use the shared provider settings for other embedding, including queries, claims and facts.
+Passage routes must match a release-qualified binding and honor deployment-wide host and retention
+restrictions. OpenRouter provider order alone leaves marketplace fallback open. Qualify every
+reachable endpoint, including variants and fallbacks, at the binding's common limits.
 
 Ship the per-input and aggregate token, byte and item limits as code constants. A different
 ceiling requires a release. Check the full D80 render (normalized body, any header and their
@@ -18,8 +20,9 @@ largest header and framing. Hosted Qwen3-Embedding-8B on OpenRouter
 `nebius/bf16` starts qualification at **16,384 tokens**. The benchmark binding requires at
 least **22,528 tokens**.
 
-An unqualified effective binding is a configuration error. CHUNK rejects it before grid
-writes and EMBED_CHUNK before vector carry-forward or dispatch.
+Validate the effective binding when composing workers for CHUNK or EMBED_CHUNK, before the
+worker loop or named-task dispatch can claim either stage. Surface an unqualified binding as
+a configuration error and leave queued work intact for delivery after correction.
 
 CHUNK checks the [base candidates](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58-d162)
 for input and singleton-request fit. It keeps fitting spans and rechecks fit against final order and
@@ -87,7 +90,7 @@ and eligible donors.
 Add `span_kind` and build its partial index online under [D160](packaging_distribution_design.md#61-migration-compatibility).
 Pause STRUCTURE claims and let legacy E1 attempts and handoffs settle. Retire outgoing CHUNK,
 EMBED_CHUNK, Selection, Claimify and both section-entry readers before enabling split writes and fit
-checks together. Use a qualified binding before resuming claims. Keep the chunker version and
+checks together. Resume claims under the validated passage binding. Keep the chunker version and
 work keys. Retries hand off saved grids as-is.
 
 ## 5. Terminal failure
@@ -108,12 +111,23 @@ key create a successor. D159 forget and re-add with `allow_forgotten=true` start
 
 ## 6. Acceptance
 
-Verify full delivery on each allowed endpoint at the singleton and batch limits. Use
-equal-length inputs that differ at the last token and require the vectors to distinguish
-the tails. Record the probe results for the release. A prefix-only mock must fail
-qualification. Verify the stock self-host default selects its qualified route.
-Open routing, order-only routing and a list containing an unqualified endpoint must fail
-before CHUNK writes a grid or EMBED_CHUNK copies a vector or dispatches input.
+For each reachable endpoint, require valid vectors at the binding's singleton and batch limits.
+Verify end-to-end reject-on-overflow with truncation disabled and an explicit size rejection just
+beyond the endpoint's limits, including an overlong item in a batch. Alternatively, verify at
+the model boundary that every framed token of each input in the limit probes was consumed.
+Use billing counts and end-token probes as cross-checks. Require the vectors to distinguish
+equal-length pairs differing only at the first or last text token. Both prefix-only and
+suffix-only mocks must fail qualification. Record the evidence and probe results for the release.
+
+Verify stock self-host and Compose send the qualified pin on passage requests. Under identical
+shared settings and inputs, match the pre-D162 request sequences for queries (through both
+`QueryEngine` and SQL embedding), claims and facts. Compare ordered texts, model, dimensions,
+routing and framing.
+
+Through both the worker loop and named-task dispatch, reject open routing, order-only routing
+and allowlists containing an unqualified endpoint before claiming CHUNK or EMBED_CHUNK. Verify
+that status, attempts, backoff and last error match the queued row before dispatch. Correct the
+binding and complete the same queued work through each entry point.
 
 Replay frozen LoCoMo Full-v45 and BEAM E0 artifacts, settings, donor state, UUIDs and
 clocks offline. Apply the additive schema to the frozen checkpoint and clone it. Clear
