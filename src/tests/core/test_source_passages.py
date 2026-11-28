@@ -53,6 +53,7 @@ def test_catalog_labels_blocks_and_keeps_in_document_order() -> None:
     start = document_md.find(launch)
     catalog = build_passage_catalog(
         blocks=blockize(document_md=document_md),
+        document_md=document_md,
         target=target,
         previous=None,
         following=None,
@@ -80,6 +81,7 @@ def test_unknown_label_and_ineligible_origin_are_rejected() -> None:
     start = document_md.find(keep)
     catalog = build_passage_catalog(
         blocks=blockize(document_md=document_md),
+        document_md=document_md,
         target=target,
         previous=None,
         following=None,
@@ -108,6 +110,7 @@ def test_multi_span_keeps_disjoint_ranges_and_origin_first() -> None:
     bravo = document_md.find("Bravo follows.")
     catalog = build_passage_catalog(
         blocks=blockize(document_md=document_md),
+        document_md=document_md,
         target=target,
         previous=None,
         following=None,
@@ -231,6 +234,7 @@ def test_cap_rejects_too_many_refs() -> None:
     start = document_md.find(keep)
     catalog = build_passage_catalog(
         blocks=blockize(document_md=document_md),
+        document_md=document_md,
         target=target,
         previous=None,
         following=None,

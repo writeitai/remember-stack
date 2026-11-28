@@ -142,6 +142,7 @@ def _catalog_for(
     chunk = _chunk(document_md=document_md)
     return build_passage_catalog(
         blocks=blockize(document_md=document_md),
+        document_md=document_md,
         target=chunk,
         previous=None,
         following=None,

@@ -109,6 +109,7 @@ def same_section_neighbours(
 def build_passage_catalog(
     *,
     blocks: tuple[Block, ...],
+    document_md: str,
     target: ChunkForEmbedding,
     previous: ChunkForEmbedding | None,
     following: ChunkForEmbedding | None,
@@ -120,6 +121,9 @@ def build_passage_catalog(
     an origin can name a Selection-accepted proposition even when it sits
     inside a larger block. Identical ranges are stored once. Neighbour slices
     are never origin-eligible.
+
+    A split window whose block intersections contain only whitespace gets
+    one label for its exact span, so the label includes the gap text.
     """
     windows: list[tuple[PassageRegion, ChunkForEmbedding]] = [("target", target)]
     if previous is not None:
@@ -136,6 +140,9 @@ def build_passage_catalog(
                 window_end=chunk.char_end,
             )
             if clipped is None:
+                continue
+            start, end = clipped
+            if chunk.span_kind == "split" and not document_md[start:end].strip():
                 continue
             _record_slice(slices=slices, span=clipped, region=region)
     backed_regions = frozenset(slices.values())

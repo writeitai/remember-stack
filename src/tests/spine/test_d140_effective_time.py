@@ -307,19 +307,36 @@ def test_an_existing_key_is_only_an_idempotent_retry_of_the_latest(
     )
 
 
-def test_a_deleted_latest_version_never_takes_its_key_back(engine: Engine) -> None:
-    """Re-sending a deleted version's bytes under its key is not a retry."""
-    a = _ingest(engine, content=b"A", version_key="edition-1")
+def test_reingesting_deleted_latest_bytes_requires_a_successor(engine: Engine) -> None:
+    """The deleted key stays reserved and keyless ingest queues new work."""
+    _ingest(engine, content=b"A", version_key="edition-1")
+    latest = _ingest(engine, content=b"A", version_key="edition-2")
     with engine.begin() as connection:
         connection.execute(
             text(
                 "UPDATE document_versions SET deleted_at = now(), status = 'deleted'"
                 " WHERE version_id = :v"
             ),
-            {"v": a.version_id},
+            {"v": latest.version_id},
         )
-    with pytest.raises(VersionKeyConflictError):
-        _ingest(engine, content=b"A", version_key="edition-1")
+    with pytest.raises(VersionKeyConflictError) as conflict:
+        _ingest(engine, content=b"A", version_key="edition-2")
+    assert conflict.value.version_id == latest.version_id
+
+    successor = _ingest(engine, content=b"A")
+    assert successor.created and successor.version_key is None
+    assert successor.doc_id == latest.doc_id
+    assert successor.version_id != latest.version_id
+    assert successor.content_hash == latest.content_hash
+    with engine.connect() as connection:
+        assert connection.execute(
+            text("""
+                SELECT v.version_no, p.status, p.attempts
+                FROM document_versions v JOIN processing_state p ON p.target_id = v.version_id
+                WHERE v.version_id = :v AND p.stage = 'convert'
+            """),
+            {"v": successor.version_id},
+        ).one() == (3, "pending", 0)
 
 
 # --- declaring at ingest ----------------------------------------------------

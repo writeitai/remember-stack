@@ -112,6 +112,7 @@ def _origin_label(*, document_md: str, keep: str) -> str:
     start = document_md.index(keep)
     catalog = build_passage_catalog(
         blocks=blockize(document_md=document_md),
+        document_md=document_md,
         target=_chunk(document_md=document_md),
         previous=None,
         following=None,
@@ -168,6 +169,7 @@ def _gate(
         kept_ranges=kept_ranges,
         catalog=build_passage_catalog(
             blocks=blockize(document_md=document_md),
+            document_md=document_md,
             target=chunk,
             previous=None,
             following=None,
@@ -324,6 +326,7 @@ def test_added_name_absent_from_the_header_fails_grounding() -> None:
         kept_ranges=kept_ranges,
         catalog=build_passage_catalog(
             blocks=blockize(document_md=_DOC_MD),
+            document_md=_DOC_MD,
             target=chunk,
             previous=None,
             following=None,

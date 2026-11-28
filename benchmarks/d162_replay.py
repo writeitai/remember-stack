@@ -10,7 +10,9 @@ and reply (JSON). Records are consumed in wire order within each work item.
 archive lacks its wire tape. It verifies E1 rows, Selection and the D122
 producer order/stamps. It records Claimify request digests using empty
 replies so they can be compared across revisions. Claimify output equality
-requires the original replies and is only checked in strict mode.
+requires the original replies and is only checked in strict mode. Strict
+mode replays downstream claim vectors from the checkpoint through the P1
+writer before comparing every claim column.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.selection_references import claimify_input_hash
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimRecord
+from rememberstack.model import P1ClaimRow
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
@@ -102,6 +105,32 @@ def _subset(engine: Engine, table: str, chunk_ids: list[UUID]) -> tuple[int, str
         digest.update(row["payload"].encode())
         digest.update(b"\n")
     return len(rows), digest.hexdigest()
+
+
+def _replay_claim_embeddings(
+    *, engine: Engine, frozen_claims: list[dict[str, Any]]
+) -> None:
+    """Write frozen vectors onto replayed claims and recompute their P1 stamps."""
+    by_model: dict[str, list[P1ClaimRow]] = defaultdict(list)
+    for row in frozen_claims:
+        if row["vector"] is None:
+            continue
+        by_model[row["embedding_model"]].append(
+            P1ClaimRow(
+                claim_id=row["claim_id"],
+                deployment_id=row["deployment_id"],
+                doc_id=row["doc_id"],
+                chunk_id=row["chunk_id"],
+                text=row["claim_text"],
+                is_current_testimony=row["is_current_testimony"],
+                is_attributed=row["is_attributed"],
+                vector=tuple(json.loads(row["vector"], parse_int=float)),
+            )
+        )
+    for model, rows in by_model.items():
+        PostgresP1Index(engine=engine, embedding_model=model).upsert_claims(
+            rows=tuple(rows)
+        )
 
 
 @contextmanager
@@ -315,7 +344,12 @@ def replay(
     }
     claim_rows = _rows(
         baseline,
-        "SELECT * FROM claims WHERE chunk_id=ANY(:chunk_ids) ORDER BY claim_id",
+        """
+        SELECT claim_id, deployment_id, doc_id, chunk_id, char_start, char_end,
+               claim_text, is_current_testimony, is_attributed, embedding_model,
+               embedding::text AS vector
+        FROM claims WHERE chunk_id=ANY(:chunk_ids) ORDER BY claim_id
+        """,
         chunk_ids=chunk_ids,
     )
     occurrences = _rows(
@@ -554,6 +588,8 @@ def replay(
     )[0]["n"]
     if splits:
         raise ValueError(f"expected zero splits, observed {splits}")
+    if replies.strict:
+        _replay_claim_embeddings(engine=candidate, frozen_claims=claim_rows)
 
     table_results = {}
     for table in _TABLES:

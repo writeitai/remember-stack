@@ -6,8 +6,10 @@
 
 CHUNK and EMBED_CHUNK apply the ceiling only for the hosted E1 passage binding
 `qwen/qwen3-embedding-8b` through OpenRouter with `only: ["nebius/bf16"]`,
-`allow_fallbacks: false`, `zdr: true` and `data_collection: deny`. Self-host and custom
-bindings use their existing packing, embedding and failure paths. [Adapter routing](../../src/rememberstack/adapters/openrouter.py#L1001-L1046).
+`allow_fallbacks: false`, `zdr: true` and `data_collection: deny`. The binding also
+allows `order: ["nebius/bf16"]` alongside this allowlist because it selects the
+same sole endpoint. Self-host and custom bindings use their existing packing,
+embedding and failure paths. [Adapter routing](../../src/rememberstack/adapters/openrouter.py#L1005-L1053).
 
 Use the pinned tokenizer to count the normalized body, optional D80 header and separator, and model special tokens.
 The largest header plus one nonblank Unicode scalar must fit. The **16,384-token code constant**
@@ -42,10 +44,11 @@ whole chunks. For `span_kind = 'split'`, match the first block's character start
 `chunk.char_start <= section.char_start < chunk.char_end`. Order by `(version_id, ordinal, chunk_id)`.
 
 Use existing key builders on the final grid. Hash exact ordered block fragments and gap bytes
-with a split discriminator. Selection and Claimify label nonblank gap-only windows by exact
-span, even beside block-backed neighbours. Ground kept propositions with exact spans and D80
+with a split discriminator. Selection and Claimify label a nonblank split window by its
+exact span when it overlaps blocks only in whitespace or lies entirely in a gap. This
+also applies beside block-backed neighbours. Ground kept propositions with exact spans and D80
 typed locations. D122 reads the preceding eight Selection producers in final order, counting
-empty results for ineligible pieces. [Passage labels](../../src/rememberstack/core/source_passages.py#L124-L168) · [Producer order](../../src/rememberstack/workers/extraction_references.py#L56-L76).
+empty results for ineligible pieces. [Passage labels](../../src/rememberstack/core/source_passages.py#L109-L180) · [Producer order](../../src/rememberstack/workers/extraction_references.py#L56-L76).
 
 ## 3. Version-wide reuse gate
 
@@ -87,11 +90,13 @@ rolling back requires restoring a backup from before the cutover.
 
 ## 5. Terminal failure
 
-For the hosted binding, require finite, nonzero vectors of the configured dimension and
-exactly one integer response index per requested input.
+For the hosted binding, require exactly one integer response index per requested input.
+Every vector arrives as a JSON array of numbers and must be finite, nonzero and of
+the configured dimension.
 `empty_body` is the successful skip. Isolate failures as needed. Local fit failures and
 confirmed per-input size rejections dead-letter as `embedding.input_too_large`, other deterministic
-rejections as `embedding.input_rejected`. Record chunk ID, rendered hash and binding.
+rejections as `embedding.input_rejected`. Apply the same codes to explicit input
+rejections inside error-only success responses. Record chunk ID, rendered hash and binding.
 Ambiguous 429s, outages and unusable responses take bounded retries. Keep committed batches and
 the saved grid. Use existing ledger operations and D159 unarchive.
 
@@ -111,8 +116,9 @@ decisions and completion stamps). Match exact ordered requests, including routin
 to saved replies. Require zero splits and zero live calls. Compare all `chunks` and `chunk_search`
 columns and recomputed D122 order and stamps against the frozen baseline. Also compare
 `selection_results` payloads (`output`, `cards`, `truncated`), accepted `claims` rows, and the
-target `chunk_claims` links and their occurrence `evidence_spans`. Record fixture digests and
-the replay command.
+target `chunk_claims` links and their occurrence `evidence_spans`. Reapply the saved
+downstream claim vectors through the P1 writer before the full claim-row comparison.
+Record fixture digests and the replay command.
 
 Test exact bytes, deterministic cuts, provenance, gap-only grounding, header growth and
 empty Selection without a call. For both section-entry readers, test version and representation

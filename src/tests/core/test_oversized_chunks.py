@@ -20,6 +20,8 @@ from rememberstack.core.hosted_embedding_ceiling import hosted_embedding_tokens
 from rememberstack.core.oversized_chunks import _size_cut
 from rememberstack.core.oversized_chunks import split_oversized_chunks
 from rememberstack.core.source_passages import build_passage_catalog
+from rememberstack.core.source_passages import render_passage_catalog
+from rememberstack.core.source_passages import resolve_source_refs
 from rememberstack.model import Block
 from rememberstack.model import BlockType
 from rememberstack.model import ChunkForEmbedding
@@ -28,6 +30,7 @@ from rememberstack.model import PackedChunk
 from rememberstack.model import SectionSpan
 from rememberstack.model.conversion import PageLocator
 from rememberstack.model.conversion import SourceMapEntry
+from rememberstack.workers.extraction_references import render_selection_passages
 
 _SECTION = UUID(int=1)
 _FACTS = LocationFacts(
@@ -170,6 +173,22 @@ def _block(ordinal: int, start: int, end: int) -> Block:
     )
 
 
+def _chunk_row(piece: PackedChunk) -> ChunkForEmbedding:
+    return ChunkForEmbedding(
+        chunk_id=UUID(int=100 + piece.ordinal),
+        doc_id=_FACTS.doc_id,
+        version_id=_FACTS.version_id,
+        ordinal=piece.ordinal,
+        char_start=piece.char_start,
+        char_end=piece.char_end,
+        chunk_content_hash=piece.chunk_content_hash,
+        extraction_input_hash="unused",
+        section_role="body",
+        section_path="0",
+        span_kind=piece.span_kind,
+    )
+
+
 def test_eligibility_gap_and_recorded_seam_cover_exact_bytes() -> None:
     body = "AB  hidden  \r\n   standalone clause  CD"
     gap_start = body.index("hidden")
@@ -232,26 +251,12 @@ def test_eligibility_gap_and_recorded_seam_cover_exact_bytes() -> None:
         ("CD", True, 1, 1),
     ]
 
-    def row(piece: PackedChunk) -> ChunkForEmbedding:
-        return ChunkForEmbedding(
-            chunk_id=UUID(int=100 + piece.ordinal),
-            doc_id=_FACTS.doc_id,
-            version_id=_FACTS.version_id,
-            ordinal=piece.ordinal,
-            char_start=piece.char_start,
-            char_end=piece.char_end,
-            chunk_content_hash=piece.chunk_content_hash,
-            extraction_input_hash="unused",
-            section_role="body",
-            section_path="0",
-            span_kind=piece.span_kind,
-        )
-
     catalog = build_passage_catalog(
         blocks=blocks,
-        target=row(pieces[1]),
-        previous=row(pieces[0]),
-        following=row(pieces[2]),
+        document_md=body,
+        target=_chunk_row(pieces[1]),
+        previous=_chunk_row(pieces[0]),
+        following=_chunk_row(pieces[2]),
         kept_ranges=((gap_start, gap_start + len("hidden")),),
     )
     assert any(
@@ -347,6 +352,73 @@ def test_header_recheck_assigns_gap_only_pieces_to_original_preceding_block() ->
     ]
     assert all(fits(piece, len(pieces)) for piece in pieces)
     assert "".join(body[piece.char_start : piece.char_end] for piece in pieces) == body
+
+
+def test_split_link_definition_with_indentation_is_citable_in_both_stages() -> None:
+    body = f"Lead.\n\n[link]: https://example.test/{'🙂' * 16373}\n\n   Tail."
+    blocks = blockize(document_md=body)
+    section = SectionSpan(
+        section_id=_SECTION, node_path="0", role="body", block_start=0, block_end=1
+    )
+    packed = pack_blocks(
+        blocks=blocks, sections=(section,), document_md=body, params=ChunkerParams()
+    )
+
+    def fits(chunk: PackedChunk, count: int) -> bool:
+        return (
+            hosted_embedding_tokens(
+                _render(body[chunk.char_start : chunk.char_end], count)
+            )
+            <= HOSTED_EMBEDDING_TOKEN_CEILING
+        )
+
+    assert not fits(packed[0], 1)
+    pieces = split_oversized_chunks(
+        packed=packed,
+        oversized=frozenset({0}),
+        blocks=blocks,
+        eligibility=(True, True),
+        document_md=body,
+        ranges=(),
+        source_map=(),
+        fits=fits,
+    )
+    previous, target, following = map(_chunk_row, pieces[-3:])
+    assert target.char_start < blocks[1].char_start
+    assert body[blocks[1].char_start : target.char_end] == "   "
+    window = (target.char_start, target.char_end)
+    target_text = body[target.char_start : target.char_end]
+
+    selection = build_passage_catalog(
+        blocks=blocks,
+        document_md=body,
+        target=target,
+        previous=previous,
+        following=following,
+        kept_ranges=(),
+    )
+    (source,) = (
+        passage for passage in selection.passages if passage.region == "target"
+    )
+    assert (source.char_start, source.char_end) == window
+    assert target_text in render_selection_passages(catalog=selection, document_md=body)
+
+    claimify = build_passage_catalog(
+        blocks=blocks,
+        document_md=body,
+        target=target,
+        previous=previous,
+        following=following,
+        kept_ranges=((target.char_start, target.char_start + 1),),
+    )
+    assert target_text in render_passage_catalog(catalog=claimify, document_md=body)
+    exact = next(
+        passage
+        for passage in claimify.passages
+        if (passage.char_start, passage.char_end) == window
+    )
+    evidence = resolve_source_refs(refs=(exact.label,), catalog=claimify)
+    assert (evidence.origin.char_start, evidence.origin.char_end) == window
 
 
 def test_split_evidence_clips_only_exact_linear_locators() -> None:

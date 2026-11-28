@@ -768,6 +768,7 @@ class ExtractClaimsHandler:
         )
         catalog = build_passage_catalog(
             blocks=blocks,
+            document_md=document_md,
             target=chunk,
             previous=previous,
             following=following,
@@ -924,6 +925,7 @@ class ExtractClaimsHandler:
                     source=source,
                     document_md=document_md,
                 ),
+                document_md=document_md,
                 target=chunk,
                 previous=previous,
                 following=following,

@@ -555,6 +555,7 @@ def _grounded(*, source: ChunkSource, chunk: ChunkForEmbedding) -> object:
     kept_ranges = ((chunk.char_start, chunk.char_end),)
     catalog = build_passage_catalog(
         blocks=blockize(document_md=_DOC_MD),
+        document_md=_DOC_MD,
         target=chunk,
         previous=None,
         following=None,

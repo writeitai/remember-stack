@@ -515,13 +515,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "7443f07e6843b5e2b666d7765a95f831115bf6c89a56ad189c7fa66556a31d99",
-      "source_digest": "235f940e0067f2fa7815a5569c09277ee06e4b086a22ed6e4b026b8e2e7930d4"
+      "schema_profile_digest": "c2b87b054566afe8626a3e6151d0cd4806a08ee794312b05e3005cb564951253",
+      "source_digest": "f730e1b9d47fe41247c3671e848164d908feda88662f2b414ef5d2916ff9f1fb"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "54e794d043af59cc77353ec5b468c101945ce646f57b92f48673bace0b14f7d3",
+      "classification_digest": "60cc758700e6a809dcde0451135dff0843ed91dce13687bd319dbbed4cf56bda",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1150,24 +1150,24 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "fd1f0d8cbd4912acfb0a3a721371c2b9bf13fac8afc5f4641951b63323d29c69",
+      "profile_digest": "31fb80773130afb429d3a0227ce07e0e0ea52093664f342a6d8908aad30854e2",
       "release_margin_us": 500000,
-      "schema_digest": "9fd2b453900f19d46576783ec919ed0eaac27e876c754756d67857d79ef1bf24",
-      "schema_profile_digest": "7443f07e6843b5e2b666d7765a95f831115bf6c89a56ad189c7fa66556a31d99",
-      "source_digest": "235f940e0067f2fa7815a5569c09277ee06e4b086a22ed6e4b026b8e2e7930d4",
+      "schema_digest": "fde28969cdb80fef5ade060d50a2390d2eaf0430911eaa603abf287757653ce0",
+      "schema_profile_digest": "c2b87b054566afe8626a3e6151d0cd4806a08ee794312b05e3005cb564951253",
+      "source_digest": "f730e1b9d47fe41247c3671e848164d908feda88662f2b414ef5d2916ff9f1fb",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "54e794d043af59cc77353ec5b468c101945ce646f57b92f48673bace0b14f7d3",
+    "classification_digest": "60cc758700e6a809dcde0451135dff0843ed91dce13687bd319dbbed4cf56bda",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "fd1f0d8cbd4912acfb0a3a721371c2b9bf13fac8afc5f4641951b63323d29c69",
-    "operator_mapping_digest": "d5be5eb17c34b82736074303d5a0d1d0587771e84d2c1a3b607c27b3a9e19587",
-    "schema_profile_digest": "7443f07e6843b5e2b666d7765a95f831115bf6c89a56ad189c7fa66556a31d99",
+    "native_capture_profile_digest": "31fb80773130afb429d3a0227ce07e0e0ea52093664f342a6d8908aad30854e2",
+    "operator_mapping_digest": "d9e07d5e594a16536625cf3548fc8a2c0f3985696063d9488c7366db9286cb28",
+    "schema_profile_digest": "c2b87b054566afe8626a3e6151d0cd4806a08ee794312b05e3005cb564951253",
     "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },
   "schema": {
@@ -1694,7 +1694,7 @@
       "p9_56_0077_keyed_memory_survivor.py": "ce7a52d48df364360a284e24e1521578d8d5554a66334e2c065183cfe175f1ee",
       "p9_57_0078_graph_survivor_projection.py": "78b5ebf4c3499b857fb893576ad4921e7d1ec77132fa5e40ba065472d38c8545",
       "p9_58_0079_claim_history_by_id.py": "db0783a9dfd9167cd0e54936127f7940507c1bfb13d852336f86dc96b6b77534",
-      "p9_59_0080_chunk_span_kind.py": "cef41c83c1ddd9993e93ae3c284adf0d652cb3a06759c1e05ecded6769dfcaf4",
+      "p9_59_0080_chunk_span_kind.py": "f5005b8dbec535622981f2ea42b28a334de35b6db9a8b38fb1723f08da4fbdbd",
       "p9_60_0081_split_version_index.py": "88fbaafce0cdf50bdad5ef356afc7c051ccdce34be96b7aa2d1ecaed3f2c0bfa"
     },
     "records": {

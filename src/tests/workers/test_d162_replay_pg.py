@@ -25,7 +25,10 @@ from rememberstack.workers import E1Settings
 from rememberstack.workers import E2_EXTRACTOR_VERSION
 from rememberstack.workers import E2Settings
 from rememberstack.workers import EmbedChunksHandler
+from rememberstack.workers import EmbedClaimsHandler
 from rememberstack.workers import ExtractClaimsHandler
+from rememberstack.workers import P1_EMBED_CLAIMS_VERSION
+from rememberstack.workers import P1Settings
 from tests.workers.test_reuse_lifecycle import _canned
 from tests.workers.test_reuse_lifecycle import _DEPLOYMENT_ID
 from tests.workers.test_reuse_lifecycle import _PARAMS
@@ -161,6 +164,30 @@ def test_strict_replay_compares_persisted_claims_and_occurrence_spans(
                     ),
                     meter=meter,
                 )
+
+    EmbedClaimsHandler(
+        claim_catalog=rig.claim_catalog,
+        chunk_catalog=rig.chunk_catalog,
+        model_provider=rig.provider,
+        claim_index=PostgresP1Index(engine=rig.engine, embedding_model=model),
+        settings=P1Settings(embedding_model=model),
+        chunker_version=generation,
+    ).handle(
+        work=_work(
+            source=source,
+            stage=PipelineStage.EMBED_CLAIM,
+            target=item.version_id,
+            generation=P1_EMBED_CLAIMS_VERSION,
+        ),
+        meter=meter,
+    )
+    with rig.engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM claims WHERE embedding IS NOT NULL")
+            ).scalar_one()
+            == 1
+        )
 
     tape = tmp_path / "wire.json"
     tape.write_text(json.dumps(records))

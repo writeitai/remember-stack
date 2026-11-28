@@ -6,6 +6,7 @@ seam — no network).
 """
 
 from collections.abc import Iterator
+import json
 from pathlib import Path
 from uuid import UUID
 
@@ -28,6 +29,8 @@ from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
+from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.core.hosted_embedding_ceiling import HOSTED_EMBEDDING_BINDING
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import PipelineStage
@@ -527,7 +530,69 @@ def test_d162_isolates_input_rejection_and_keeps_committed_batch(
         assert indexed > 0 and waiting > 0 and skips == 0
 
 
-@pytest.mark.parametrize("failure", ("throttle", "zero_vector", "duplicate_index"))
+@pytest.mark.parametrize(
+    ("provider_code", "terminal_code"),
+    [
+        ("context_length_exceeded", "embedding.input_too_large"),
+        ("invalid_embedding_input", "embedding.input_rejected"),
+    ],
+)
+def test_d162_error_only_success_response_records_typed_dead_letter(
+    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, provider_code: str, terminal_code: str
+) -> None:
+    item = _saved_grid(rig, "Every traveler needs a receipt.")
+    adapter = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline",
+            embedding_provider_only=["nebius/bf16"],
+            embedding_provider_order=["nebius/bf16"],
+            zdr=True,
+        )
+    )
+    submitted: list[str] = []
+
+    def reject(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        submitted.extend(payload["input"])
+        return httpx.Response(200, json={"error": {"code": provider_code}})
+
+    adapter._client.close()
+    with httpx.Client(
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(reject)
+    ) as client:
+        adapter._client = client
+        monkeypatch.setattr(rig.provider, "embed", adapter.embed)
+        assert _run_hosted(_hosted_worker(rig)) is RunResultOutcome.DEAD_LETTERED
+
+    (rendered,) = submitted
+    with rig.engine.connect() as connection:
+        attempts, error = connection.execute(
+            text(
+                "SELECT attempts, last_error FROM processing_state WHERE stage='embed_chunk'"
+            )
+        ).one()
+        chunk_id = connection.execute(
+            text("SELECT chunk_id FROM chunks WHERE version_id=:version"),
+            {"version": item.version_id},
+        ).scalar_one()
+    assert attempts == 1
+    assert terminal_code in error
+    assert f"chunk_id={chunk_id}" in error
+    assert f"embedding_text_hash={embedding_text_hash(rendered)}" in error
+    assert f"binding={HOSTED_EMBEDDING_BINDING}" in error
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (
+        "throttle",
+        "zero_vector",
+        "duplicate_index",
+        "embedding_string",
+        "boolean_coordinate",
+        "string_coordinate",
+    ),
+)
 def test_d162_unusable_provider_batches_exhaust_attempts(
     rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
@@ -541,18 +606,27 @@ def test_d162_unusable_provider_batches_exhaust_attempts(
     def broken(*, request: EmbeddingRequest) -> EmbeddingResponse:
         if failure == "throttle":
             raise ProviderCallError("throttled", status_code=429)
-        if failure == "duplicate_index":
+        if failure != "zero_vector":
             assert len(request.texts) > 1 and request.dimensions is not None
             adapter = OpenRouterModelProvider(
                 settings=OpenRouterSettings(
                     api_key="offline", embedding_provider="nebius/bf16", zdr=True
                 )
             )
+            valid = [1.0] * request.dimensions
+            malformed = {
+                "embedding_string": "1" * request.dimensions,
+                "boolean_coordinate": [True, *valid[1:]],
+                "string_coordinate": ["1", *valid[1:]],
+            }.get(failure, valid)
             reply = {
                 "model": request.model,
                 "data": [
-                    {"index": 0, "embedding": [1.0] * request.dimensions}
-                    for _ in request.texts
+                    {
+                        "index": 0 if failure == "duplicate_index" else index,
+                        "embedding": malformed if index == 0 else valid,
+                    }
+                    for index, _ in enumerate(request.texts)
                 ],
                 "usage": {"prompt_tokens": 10, "total_tokens": 10, "cost": 0},
             }
@@ -595,6 +669,12 @@ def test_d162_unusable_provider_batches_exhaust_attempts(
             connection.execute(text("SELECT count(*) FROM chunk_search")).scalar_one()
             == 0
         )
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM chunks WHERE embedding_ref IS NOT NULL")
+            ).scalar_one()
+            == 0
+        )
         attempts, error = connection.execute(
             text(
                 "SELECT attempts,last_error FROM processing_state WHERE stage='embed_chunk'"
@@ -603,5 +683,7 @@ def test_d162_unusable_provider_batches_exhaust_attempts(
         assert attempts == 3
         if failure == "duplicate_index":
             assert "index every input exactly once" in error
+        elif failure in {"embedding_string", "boolean_coordinate", "string_coordinate"}:
+            assert "embedding vectors must be JSON arrays of numbers" in error
         assert "embedding.input_rejected" not in error
         assert "embedding.input_too_large" not in error

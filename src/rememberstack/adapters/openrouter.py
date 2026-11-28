@@ -1036,18 +1036,21 @@ class OpenRouterModelProvider:
         return payload or None
 
     def uses_hosted_embedding_ceiling(self, *, model: str) -> bool:
-        """Match the exact endpoint and routing the D162 ceiling qualifies."""
-        return (
-            model == HOSTED_EMBEDDING_MODEL
-            and self._settings.base_url.rstrip("/") == "https://openrouter.ai/api/v1"
-            and self._embedding_provider_payload()
-            == {
-                "only": [HOSTED_EMBEDDING_PROVIDER],
-                "allow_fallbacks": False,
-                "data_collection": "deny",
-                "zdr": True,
-            }
-        )
+        """Match the endpoint and sole host the D162 ceiling qualifies."""
+        if (
+            model != HOSTED_EMBEDDING_MODEL
+            or self._settings.base_url.rstrip("/") != "https://openrouter.ai/api/v1"
+        ):
+            return False
+        routing = self._embedding_provider_payload() or {}
+        if routing.get("order") == [HOSTED_EMBEDDING_PROVIDER]:
+            del routing["order"]
+        return routing == {
+            "only": [HOSTED_EMBEDDING_PROVIDER],
+            "allow_fallbacks": False,
+            "data_collection": "deny",
+            "zdr": True,
+        }
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """One embeddings call for the caller's batch."""
@@ -1077,7 +1080,16 @@ class OpenRouterModelProvider:
         record_embedding_usage(usage=usage)
         try:
             ordered = sorted(body["data"], key=lambda item: item["index"])
-            vectors = tuple(tuple(item["embedding"]) for item in ordered)
+            raw_vectors = [item["embedding"] for item in ordered]
+            if hosted_passage and any(
+                not isinstance(vector, list)
+                or any(type(value) not in (int, float) for value in vector)
+                for vector in raw_vectors
+            ):
+                raise OpenRouterInvalidResponseError(
+                    "embedding vectors must be JSON arrays of numbers", usage=usage
+                )
+            vectors = tuple(tuple(vector) for vector in raw_vectors)
         except (KeyError, TypeError, ValueError) as err:
             # Malformed response body: content/shape failure so embed poison-split
             # can isolate a bad batch (not a total-outage retry of every chunk).
@@ -1129,11 +1141,18 @@ class OpenRouterModelProvider:
         for attempt in range(_IN_FLIGHT_BUDGET_RETRIES + 1):
             response = self._post_once(path=path, payload=payload)
             if classify_embedding_input:
-                rejection = _embedding_input_rejection(response)
+                body = (
+                    _success_body(response=response, path=path, provider_host=None)
+                    if response.is_success
+                    else None
+                )
+                rejection = _embedding_input_rejection(response, success_body=body)
                 if rejection is not None:
                     raise ProviderEmbeddingInputRejected(
                         code=rejection, status_code=response.status_code
                     )
+                if body is not None:
+                    return body
             retry_after = _in_flight_budget_retry_after(response=response)
             if retry_after is not None and attempt < _IN_FLIGHT_BUDGET_RETRIES:
                 _logger.warning(
@@ -1192,19 +1211,24 @@ _JSON_TYPE_NAMES: dict[type, str] = {
 
 
 def _embedding_input_rejection(
-    response: httpx.Response,
+    response: httpx.Response, *, success_body: dict[str, Any] | None
 ) -> EmbeddingRejectionCode | None:
     """Read explicit input error codes, including structured upstream errors.
 
     An HTTP status or an overload message alone does not identify an input.
     In particular a bare 429 remains under the usual bounded retry policy.
     """
-    if response.status_code not in {400, 403, 413, 422, 429}:
-        return None
-    try:
-        error = response.json()["error"]
-    except (KeyError, TypeError, ValueError):
-        return None
+    if success_body is not None:
+        if success_body.get("data"):
+            return None
+        error = success_body.get("error")
+    else:
+        if response.status_code not in {400, 403, 413, 422, 429}:
+            return None
+        try:
+            error = response.json()["error"]
+        except (KeyError, TypeError, ValueError):
+            return None
     if not isinstance(error, dict):
         return None
     details = [error]
