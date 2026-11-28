@@ -335,7 +335,7 @@ def seed_corpus(engine: Engine) -> Corpus:
 def d163_corpus() -> Iterator[tuple[Engine, Corpus]]:
     with scratch_database(BASELINE_HEAD) as engine:
         corpus = seed_corpus(engine)
-        command.upgrade(config=migration_config(engine), revision="head")
+        command.upgrade(config=migration_config(engine), revision=TARGET_HEAD)
         yield engine, corpus
 
 
