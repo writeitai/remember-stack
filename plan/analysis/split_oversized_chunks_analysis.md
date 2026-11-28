@@ -14,8 +14,13 @@ uses the saved grid and can fail again on an oversized input. [CHUNK replay](../
 
 Per-chunk reuse across a split would require hashes for each exact window E2 consumes. Block
 hashes can miss gap edits and the legacy keys can omit a neighbour read across a child section.
-Grid-wide exclusion preserves the legacy keys on unsplit grids. Distant intact chunks on a split
-grid repeat paid work and take the version's date for relative expressions.
+D65 allows several representations per version. A grid-local check leaves intact siblings free
+to donate and receive reuse. A version-wide check preserves legacy keys for eligible versions.
+After a split commits, missing results across that version require fresh work under existing
+skip rules. New chunks use the version's date for relative expressions. A partial index makes
+split-row checks independent of the number of whole chunks. The existing lineage lock orders
+those checks with grid commits. Committed results and dates remain available for replay.
+[D65 schema](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L399-L415) ·
 [E1 slots](../../src/rememberstack/workers/e1.py#L734-L765) · [E2 windows](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
 
 ## Benchmark sizing

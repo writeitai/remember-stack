@@ -109,8 +109,8 @@ and negative dependencies while bounding the spread of invalidation.
 
 Do not include absolute offsets, document-version IDs, temporary labels or freshly
 generated summaries in content identity. Reuse matching Selection and Claimify
-results when both grids pass the [D162 gate](split_oversized_chunks_design.md#3-grid-wide-reuse-gate). For each
-new occurrence remap all selected evidence into its allowed source units, including
+results when both versions pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
+For each new occurrence remap all selected evidence into its allowed source units, including
 reference-card passages. Reject ambiguous repeated-text remapping; never take the
 first global substring match. Existing D56 same-claim-ID reuse and D119 occurrence
 evidence stay mandatory. Header timestamp changes retain their documented broader

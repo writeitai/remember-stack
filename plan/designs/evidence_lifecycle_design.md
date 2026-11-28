@@ -203,8 +203,9 @@ design's worked example arriving through one lineage instead of two documents.)
 
 **Ingest debouncing.** A file being actively edited (five saves in an hour) coalesces to one
 ingested version per stability window (ingest only after N quiet minutes — the D12 debounce
-discipline at the connector). A connector poll that finds an unchanged revision/etag is a
-no-op before any bytes move; unchanged bytes are a `content_hash` no-op as today.
+discipline at the connector). A connector poll skips upload for an unchanged revision/etag.
+A keyless ingest is a no-op when its bytes match the highest-numbered version and that
+version is non-deleted.
 
 ## 3. Testimony currency (D54)
 
@@ -359,7 +360,7 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
 1. **Connector metadata no-op** — unchanged revision/etag: no fetch.
 2. **Content-object reuse** — an existing byte hash shares the stored source object.
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
-4. **Chunk-grain reuse.** Both grids must pass the [D162 gate](split_oversized_chunks_design.md#3-grid-wide-reuse-gate).
+4. **Chunk-grain reuse.** Both versions must pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
    Selection matches its stable input hash. Claimify also matches the preceding eight Selection
    hashes and the reference-policy generation. D140 inherits a date through its date-free key.
    Passage vectors match content hash, rendered input hash, policy and embedder generation.

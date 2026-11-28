@@ -273,8 +273,8 @@ produced from different text.
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
 Content-hash-only vector carry-forward is **insufficient** when embedding text
-includes location. Vector and extraction carry-forward require both grids to pass
-the [D162 reuse gate](split_oversized_chunks_design.md#3-grid-wide-reuse-gate).
+includes location. Vector and extraction carry-forward require both versions to pass
+the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
 
 **Maintenance cutover:** an incompatible model, dimension, or policy change
 makes semantic search unavailable while disposable vector state is rebuilt and
@@ -400,7 +400,7 @@ A deployment may swap conventional embedders when:
 | Decision / design | Effect |
 |---|---|
 | D63 | Default remains conventional hosted/self-host embedders; **product path drops contextual alternate**; input policy replaces “per-chunk LLM prefix stage” |
-| D56 / A3, D162 | Carry-forward requires unsplit grids. **Vector** reuse requires embedding_text_hash + policy + embedder generation |
+| D56 / A3, D162 | Carry-forward requires eligible versions on both sides. **Vector** reuse requires embedding_text_hash + policy + embedder generation |
 | D58 | Claims = needles; chunks = passages; normalized joins apply role filters |
 | D79 | Summaries orientation-only; **not** default embedding text; **not** grounding |
 | D32 / E2 | Typed groundable location elements; free-form header out of union |

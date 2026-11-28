@@ -304,7 +304,8 @@ change.
 
 ## 7. Reuse mechanics (D56 bound here; amendments A1–A3)
 
-These rules apply when both grids pass the [D162 reuse gate](split_oversized_chunks_design.md#3-grid-wide-reuse-gate).
+Carry-forward of E1/E2 results and D140 dates requires both versions to pass the
+[D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
 
 - **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
   new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain).
@@ -324,7 +325,7 @@ These rules apply when both grids pass the [D162 reuse gate](split_oversized_chu
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
   LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
   `published_at` header facts. It is recorded once when the chunk is created: the
-  smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
+  smallest `text_origin_at` (ties by version number, ordinal) among chunks of eligible, non-deleted
   versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
   and **not later than this version's own date** (so a back-filled older edition never inherits
   a later date) — own and neighbour

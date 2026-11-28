@@ -1223,10 +1223,10 @@ COMMENT ON TABLE document_entity_bindings IS
 -- source_version_ref is the sole mutable cursor: it may advance on identical-byte revision
 -- churn so polling converges; it never changes snapshot time or derived meaning. One row per
 -- observation the connector chose to ingest (debounced — rapid edits coalesce). An unchanged
--- revision/etag, or bytes identical to the lineage's LATEST version, create no row — except that
--- an ingest carrying a version_key new to the lineage always creates one (two editions with
--- identical text, D140). Bytes identical to an OLDER version (A→B→A) are a new row sharing the
--- content object. Carries everything that is true OF A SNAPSHOT: artifact URIs,
+-- revision/etag can skip ingest. Keyless ingest creates no row when the bytes match the
+-- highest-numbered version and that version is non-deleted. A version_key new to the lineage
+-- always creates a version (D140). A revert (A→B→A) creates a new row sharing the content
+-- object. Carries everything that is true OF A SNAPSHOT: artifact URIs,
 -- conversion/structure provenance, processing status.
 -- The version's source date is source_modified_at, else published_at. It feeds the E2 header and
 -- claims' asserted_at through each chunk's text_origin_at (D140) — equal to it for text new in
@@ -1661,7 +1661,7 @@ CREATE TABLE chunks (
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
-  text_origin_at  timestamptz,                 -- immutable D140 origin from an eligible match, including the D162 grid gate, or this version's own source date
+  text_origin_at  timestamptz,                 -- immutable D140 origin from an eligible match, including the D162 version gate, or this version's own source date
   reuse_identity_hash text,                    -- D140: date-free identity (own + neighbour block hashes, non-date header facts, blockizer/structurer/extractor versions) for the text-origin lookup
   extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5. Eligibility is uniform for nonblank text in split pieces.
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
@@ -1683,6 +1683,7 @@ COMMENT ON TABLE chunks IS
   'Section-bounded E1 units. Normalized search text and current vectors live in private chunk_search (D94). Chunks hold offsets, section and D80 stamps, D56 reuse keys and the immutable D162 span kind. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
+CREATE INDEX ix_chunks_split_version ON chunks (version_id) WHERE span_kind = 'split'; -- D162 version gate
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup
 CREATE INDEX ix_chunks_reuse_identity ON chunks (deployment_id, doc_id, reuse_identity_hash) WHERE reuse_identity_hash IS NOT NULL; -- D140 text-origin lookup
 CREATE INDEX ix_chunks_section ON chunks (section_id);

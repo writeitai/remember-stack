@@ -40,13 +40,16 @@ span even beside block-backed neighbours. Ground Claimify's kept propositions wi
 typed locations. D122 reads the preceding eight Selection producers in final order, including empty results.
 [Passage labels](../../src/rememberstack/core/source_passages.py#L124-L168) · [Producer order](../../src/rememberstack/workers/extraction_references.py#L56-L76).
 
-## 3. Grid-wide reuse gate
+## 3. Version-wide reuse gate
 
-A grid is the chunks for one representation and chunker version. A grid contains a split when
-any row has immutable `span_kind = 'split'`. Intact candidates and legacy rows use `whole`.
-For D140, CHUNK checks the final in-memory grid before inserting all its rows together. Later
-stages use the saved grid. Skip reuse for a split receiver. Filter split donors by their own
-grid before ranking in the existing lookups.
+A grid is the set of chunks for one representation and chunker version. D65 lets one `version_id`
+own several representations. A saved row with immutable `span_kind = 'split'` excludes
+the version from both sides of E1/E2 reuse and D140 text-origin inheritance, across all
+representations and chunker versions. Intact candidates and legacy rows use `whole`.
+Use a partial index on `version_id` over split rows for the existence check.
+
+Check the receiver and filter donors by `version_id` before ranking matches. For D140,
+also check the receiver's final grid awaiting insertion.
 
 | Stage | Existing lookup |
 |---|---|
@@ -55,16 +58,24 @@ grid before ranking in the existing lookups.
 | E2 Claimify | [`ClaimCatalog.prior_extracted_chunk`](../../src/rememberstack/spine/claim_catalog.py#L62-L100) |
 | D140 text origin | [`ChunkCatalog.text_origin_matches`](../../src/rememberstack/spine/chunk_catalog.py#L82-L116) |
 
-Grid membership and span kind are immutable, and grids are never repaired. A split in another
-representation of the same version leaves the donor's grid status fixed through commit, so the lookup filter
-suffices. All missing results on a split grid run fresh under existing skip rules. Chunks take
-their version's `source_modified_at` or `published_at` (`NULL` if undated). Committed results
-replay by chunk ID. Unsplit grids keep legacy keys, ranking and remapping, with identical rows
-for equal inputs, allocations and eligible donors.
+CHUNK packs outside the lock. In one transaction it locks the lineage row in `documents`
+exclusively, then checks for a saved grid. Replay the saved grid or resolve D140 dates and
+insert the complete grid before commit. E1/E2 reuse writers take a shared lock on the same
+row, recheck both versions in a new `READ COMMITTED` statement and hold the lock through
+commit. Commit carried vectors with their authority stamps. A blocked receiver runs fresh.
+A blocked donor triggers another eligible lookup. Keep artifact reads and provider calls
+outside these locks.
+
+The split takes effect when its grid commits, including before the representation becomes
+current. Replay committed results and dates by chunk ID under the existing identity checks.
+Missing results for a split version run fresh under existing skip rules. New chunks take
+their version's `source_modified_at` or `published_at` (`NULL` if undated). Eligible versions
+keep legacy keys, ranking and remapping, with identical rows for equal inputs, allocations
+and eligible donors.
 
 ## 4. Rollout
 
-Apply the additive column under [D160](packaging_distribution_design.md#61-migration-compatibility).
+Add `span_kind` and build its partial index online under [D160](packaging_distribution_design.md#61-migration-compatibility).
 Pause STRUCTURE claims and let legacy E1 attempts and handoffs settle. Retire outgoing CHUNK,
 EMBED_CHUNK, Selection, Claimify and both section-entry readers before enabling split writes and fit
 checks together. Keep the chunker version and work keys. Retries hand off saved grids as-is.
@@ -77,26 +88,38 @@ rejection dead-letters with `embedding.input_too_large`. Other confirmed determi
 use `embedding.input_rejected`. Record chunk ID, rendered hash and binding in the existing terminal
 path. Throttling, ambiguous 429s, outages and unusable responses take bounded retries. Keep committed batches.
 
-A failed oversized grid stays saved. A keyless D55 ingest matching the latest non-deleted
-version's bytes is a no-op. Changed bytes (including a revert) or a new D140 version key create
-a successor. D159 forget and re-add with `allow_forgotten=true` starts a fresh lineage.
-[Version registration](../../src/rememberstack/spine/document_catalog.py#L221-L250) · [D159 re-ingest](archive_and_forget_design.md#36-re-ingest-guard-and-adding-a-document-back).
+A failed oversized grid stays saved. A keyless D55 ingest is a no-op only if its bytes
+match the highest-numbered version and that version is non-deleted. Changed bytes
+(including a revert), re-ingest after deletion of the latest version, or a new D140 version
+key create a successor. D159 forget and re-add with `allow_forgotten=true` starts a fresh lineage.
+[Version registration](../../src/rememberstack/spine/document_catalog.py#L221-L250) ·
+[Latest-version lookup](../../src/rememberstack/spine/document_catalog.py#L1039-L1045) ·
+[D159 re-ingest](archive_and_forget_design.md#36-re-ingest-guard-and-adding-a-document-back).
 
 ## 6. Acceptance
 
-Replay frozen LoCoMo Full-v45 and BEAM E0 artifacts, settings, prior reuse state, UUIDs and clocks
-offline. Apply the additive schema to the checkpoint and remove target rows and completed work
-from the candidate so CHUNK repacks. Match saved replies to exact ordered requests, including
-routing and framing. Require zero splits and zero live calls. Compare every `chunks` and
-`chunk_search` column, D122 producer order and stamps. Record fixture digests and the replay command.
+Replay frozen LoCoMo Full-v45 and BEAM E0 artifacts, settings, donor state, UUIDs and
+clocks offline. Apply the additive schema to the frozen checkpoint and clone it. Clear
+target E1/E2 work, `chunks`, `chunk_search`, `selection_results` and Claimify state
+(target-owned claims, occurrence links, decisions and completion stamps) from the candidate.
+Repack and run E1/E2 to recompute D122 producer order. Require the same ordered requests,
+including routing and framing, and replay their saved replies. Require zero splits and zero
+live calls. Compare every `chunks` and `chunk_search` column, D122 producer order and stamps.
+Record fixture digests and the replay command.
 
 Test deterministic cuts, exact bytes and provenance, gap-only grounding, header growth and D122
 order, including empty Selection for ineligible pieces without a call. Both section-entry readers
 retain fitting-grid IDs and order and return the piece containing the first block's start when split.
 
 In a dated lineage, test unsplit → split → unsplit with matching intact chunks and same-date E2
-matches, including empty results. Count E1 and both E2 calls and check dates and claim IDs. Verify
-same-chunk replay, fallback to an older eligible donor or fresh work, and stable donor eligibility
-when a second representation splits. Keep ordinary-edit D56 and D122 coverage. Rehearse rollout
-with an above-cap saved grid, a CHUNK retry after grid write and EMBED_CHUNK in backoff. Test
-replay, typed rejection versus retries, and D55/D140 no-op and successor cases.
+matches, including empty results. Give the middle version an intact representation and a split
+sibling in a different chunker generation. The pending split must use the version's own D140
+date. After that grid commits, with the intact sibling still current, exercise all four reuse
+paths with intact grids of that version as donors and receivers. Race each reuse write
+against a split on either side. Require same-chunk replay for results committed first.
+When a split commits first, require an eligible donor or fresh work without partial copies.
+Count E1 and both E2 calls and check dates and claim IDs. Keep ordinary-edit D56 and D122 coverage.
+
+Race two first CHUNK writes for one grid and verify a single set of rows and IDs. Rehearse rollout
+with an above-cap saved grid, a CHUNK retry after grid write and EMBED_CHUNK in backoff. Test typed
+rejection versus retries and D55/D140 no-ops and successors, including a deleted latest version.

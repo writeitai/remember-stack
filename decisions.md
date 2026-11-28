@@ -1945,7 +1945,8 @@ identity rules per source kind are a named spike.
 > toolchain versions), else the new version's source time. It replaces both date header
 > facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
-> this decision's cost promise did not hold. [D162](#d162-split-oversized-chunks-before-embedding) limits reuse to unsplit grids on both sides.
+> this decision's cost promise did not hold.
+> [D162](#d162-split-oversized-chunks-before-embedding) requires eligible versions on both sides of reuse.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -3547,7 +3548,8 @@ second-order channel; it is not the D80 default.
 
 ## D80. Conventional embedding input is a versioned deterministic policy — conditional location headers, typed location facts, no default location LLM (amends D63 path; refines D56 vector reuse)
 
-> [D162](#d162-split-oversized-chunks-before-embedding) ships passage size ceilings with the release and limits carry-forward to unsplit grids.
+> [D162](#d162-split-oversized-chunks-before-embedding) ships passage size ceilings with the release
+> and requires eligible versions on both sides of carry-forward.
 
 **Decision (2026-08-03).** The product path for chunk (passage) embeddings is **conventional
 embedders only** (`texts → vectors`), chosen for **interchangeability** under version-scoped
@@ -6383,7 +6385,7 @@ promising billed tokens or a fixed saving.
 
 ## D122. Share frozen source reference context between extraction chunks
 
-> [D162](#d162-split-oversized-chunks-before-embedding) limits cross-version reuse to unsplit grids on both sides.
+> [D162](#d162-split-oversized-chunks-before-embedding) requires eligible versions on both sides of reuse.
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -7240,7 +7242,7 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 ## D140. Declared effective periods, section keys, and version-aware references
 
-> [D162](#d162-split-oversized-chunks-before-embedding) limits text-origin inheritance to unsplit grids on both sides.
+> [D162](#d162-split-oversized-chunks-before-embedding) requires eligible versions on both sides of text-origin inheritance.
 
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
@@ -8760,10 +8762,10 @@ generations, retrieval and rendering use their existing code and identities.
 
 Check the full D80 input against a release constant for the pinned binding.
 Split failing candidates losslessly under the existing chunker version.
-Exclude any grid containing a split piece from donating or receiving E1/E2
-results and D140 dates. Keep saved grids and work keys. Confirmed input
-rejections use typed terminal failures. Require offline request and full-row
-equality on frozen LoCoMo Full-v45 and BEAM.
+A saved split piece excludes its entire version from both sides of E1/E2 reuse
+and D140 text-origin inheritance. Keep saved grids and work keys.
+Confirmed input rejections use typed terminal failures. Require offline request
+and full-row equality on frozen LoCoMo Full-v45 and BEAM.
 
 [Design](plan/designs/split_oversized_chunks_design.md) · [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
 
