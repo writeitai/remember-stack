@@ -8760,7 +8760,8 @@ Use a 16,384-token per-input constant for hosted OpenRouter Qwen3-Embedding-8B o
 `nebius/bf16` with fallbacks off and ZDR. Split oversized D80 inputs losslessly and keep
 saved grids and work keys. Typed terminal failures apply to that binding. An immutable
 split row excludes its entire version from both sides of E1/E2 reuse and D140 date
-inheritance. Require offline request and full-row equality on frozen LoCoMo Full-v45 and BEAM.
+inheritance. Require offline equality for requests, full E1 rows and persisted extraction
+outputs on frozen LoCoMo Full-v45 and BEAM.
 
 [Design](plan/designs/split_oversized_chunks_design.md) · [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
 

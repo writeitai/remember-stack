@@ -12,9 +12,9 @@ bindings use their existing packing, embedding and failure paths. [Adapter routi
 Use the pinned tokenizer to count the normalized body, optional D80 header and separator, and model special tokens.
 The largest header plus one nonblank Unicode scalar must fit. The **16,384-token code constant**
 changes only with a release and stays outside work and embedding identities. CHUNK keeps fitting
-spans and rechecks after cuts because final order and count can change the header. EMBED_CHUNK
-checks before new carry-forward or dispatch. Keep ordered batching, attestations and same-chunk
-replay. [Pinned Qwen tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
+spans and rechecks them after cuts because the final chunk count can change the D80 header mode.
+EMBED_CHUNK checks before new carry-forward or dispatch. Keep ordered batching, attestations
+and same-chunk replay. [Pinned Qwen tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
 
 ## 2. Split only failing candidates
 
@@ -28,8 +28,12 @@ and nonblank text on both sides. Repeat until each piece fits and their exact by
 Assign UUIDv4 IDs, consecutive document ordinals, half-open E0 spans within the same section
 and legacy whitespace token counts. Record inclusive intersected block ordinals, using the
 preceding block for both fields on gap-only pieces. Clip source maps and converter origins.
-Section history and resolved references select the chunk containing the first block's start
-within the same version and representation, preserving order.
+
+Section history and resolved document references populate `first_chunk_ids` within the same
+deployment, version and representation. For `span_kind = 'whole'`, including legacy rows,
+match `chunk.block_start <= section.block_start <= chunk.block_end`. This covers zero-width
+whole chunks. For `span_kind = 'split'`, match the first block's character start with
+`chunk.char_start <= section.char_start < chunk.char_end`. Order by `(version_id, ordinal, chunk_id)`.
 
 Use existing key builders on the final grid. Hash exact ordered block fragments and gap bytes
 with a split discriminator. Selection and Claimify label nonblank gap-only windows by exact
@@ -95,12 +99,17 @@ Clone the checkpoint after additive migration. Clear candidate target E1/E2 work
 `chunk_search`, `selection_results` and Claimify state (target-owned claims, occurrence links,
 decisions and completion stamps). Match exact ordered requests, including routing and framing,
 to saved replies. Require zero splits and zero live calls. Compare all `chunks` and `chunk_search`
-columns and recomputed D122 order and stamps. Record fixture digests and the replay command.
+columns and recomputed D122 order and stamps against the frozen baseline. Also compare
+`selection_results` payloads (`output`, `cards`, `truncated`), accepted `claims` rows, and the
+target `chunk_claims` links and their occurrence `evidence_spans`. Record fixture digests and
+the replay command.
 
 Test exact bytes, deterministic cuts, provenance, gap-only grounding, header growth and
-empty Selection without a call. Both section-entry readers keep fitting-grid IDs and order
-and resolve the piece containing the first block's start. Verify the hosted routing payload
-and preserve request and error parity on self-host and custom bindings.
+empty Selection without a call. For both section-entry readers, test version and representation
+scoping, ordered fitting-grid IDs, and the split piece containing the first block's start.
+Include `Lead\u2028\n# Terms {#terms}\n` and require both readers to return the same ID for its
+`[5, 5)` whole chunk as before. Verify the hosted routing payload and preserve request and
+error parity on self-host and custom bindings.
 
 In a dated unsplit → split → unsplit lineage, put an intact sibling in a different chunker
 generation of the middle version. Test all four reuse paths on both sides with that sibling

@@ -488,7 +488,9 @@ generations (D65 representations, D79 structure generations; sections are unique
 null. A duplicate key in one generation keeps the first occurrence and records a structure
 warning; the later headings get no key. Every read that resolves a key — section history,
 reference endpoints, first chunk ids — looks it up only in the version's current
-representation's current structure generation. The [D162 span rule](split_oversized_chunks_design.md#2-split-only-failing-candidates) selects its first chunk.
+representation's current structure generation. Section history and resolved references use
+the first block's ordinal for whole chunks and its character start for split pieces when
+populating `first_chunk_ids`. [D162 section-entry rule](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 
 The hash columns are nullable at the schema level. Sections created before D140 are backfilled
 by a maintenance job that recomputes, from each representation's stored `blocks.json` and the

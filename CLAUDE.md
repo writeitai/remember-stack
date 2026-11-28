@@ -89,12 +89,13 @@ over are content identities and the paid products keyed on them
   edit never moves chunk boundaries in another section. A length change can shift boundaries
   to the next anchor accepted by both versions or the end of the owner run. An anchor satisfies
   `uint64(block_hash) mod anchor_modulus == 0` after at least `anchor_min_gap_tokens` since the last anchor.
-- **Embeddings (D80).** A vector carries forward from an earlier version or an earlier
-  processing generation of the same version of one
-  lineage when `chunk_content_hash`, `embedding_text_hash` (the rendered D80 input:
-  location header + body, so it depends on all D80 location facts: title, source kind and
-  shape, section title, path and role, chunk count, and message metadata), the policy
-  generation and the embedding model all match. Neighbours are not part of this key.
+- **Embeddings (D80).** A vector carries forward within a lineage from an earlier version
+  or processing generation of the same version when `chunk_content_hash`,
+  `embedding_text_hash`, the policy generation and the embedding model all match.
+  `embedding_text_hash` is the SHA-256 of the exact rendered D80 string, the normalized
+  body with an optional location header. Chunk count can change the header mode. D80
+  omits chunk ordinals and numeric section paths from the string. Neighbours are not
+  part of this key.
 - **Selection (D56, D140).** `extraction_input_hash` = own block hashes + previous/next
   *same-section* neighbour hashes + header facts (`header_title()`, `source_kind`, the
   chunk's text-origin date, `language`, `file_name`; plus the eligibility policy for
