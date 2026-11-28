@@ -105,8 +105,10 @@ Every vector arrives as a JSON array of numbers and must be finite, nonzero and 
 the configured dimension.
 `empty_body` is the successful skip. Isolate failures as needed. Local fit failures and
 confirmed per-input size rejections dead-letter as `embedding.input_too_large`, other deterministic
-rejections as `embedding.input_rejected`. Apply the same codes to explicit input
-rejections inside error-only success responses. Record chunk ID, rendered hash and binding.
+rejections as `embedding.input_rejected`. A structured size code from OpenRouter or its
+upstream provider takes precedence over a generic rejection or a capacity status. Apply
+the same codes to explicit input rejections inside error-only success responses. Record
+chunk ID, rendered hash and binding.
 Capacity errors, including error-only HTTP 200 envelopes with a request ID, take bounded
 retries. Outages and unusable responses use the existing retry budget. Keep committed
 batches and the saved grid. Use existing ledger operations and D159 unarchive.

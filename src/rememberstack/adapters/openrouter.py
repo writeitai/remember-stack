@@ -1219,15 +1219,15 @@ def _embedding_input_rejection(
 ) -> EmbeddingRejectionCode | None:
     """Read explicit input error codes, including structured upstream errors.
 
-    An HTTP status or an overload message alone does not identify an input.
-    In particular a bare 429 remains under the usual bounded retry policy.
+    A size code in either layer takes precedence over generic rejections and
+    capacity retries. An HTTP status or overload message alone identifies no input.
     """
     if success_body is not None:
         if success_body.get("data"):
             return None
         error = success_body.get("error")
     else:
-        if response.status_code not in {400, 403, 413, 422, 429}:
+        if not response.is_error:
             return None
         try:
             error = response.json()["error"]
@@ -1248,6 +1248,14 @@ def _embedding_input_rejection(
             upstream = raw.get("error", raw)
             if isinstance(upstream, dict):
                 details.append(upstream)
+    generic_allowed = success_body is not None or response.status_code in {
+        400,
+        403,
+        413,
+        422,
+        429,
+    }
+    rejection = None
     for detail in details:
         codes = {
             code
@@ -1262,12 +1270,15 @@ def _embedding_input_rejection(
             "max_input_tokens_exceeded",
         }:
             return "embedding.input_too_large"
-        if codes & {"embedding_input_rejected", "invalid_embedding_input"} or (
-            codes & {"invalid_input", "content_policy_violation"}
-            and detail.get("param") == "input"
+        if generic_allowed and (
+            codes & {"embedding_input_rejected", "invalid_embedding_input"}
+            or (
+                codes & {"invalid_input", "content_policy_violation"}
+                and detail.get("param") == "input"
+            )
         ):
-            return "embedding.input_rejected"
-    return None
+            rejection = "embedding.input_rejected"
+    return rejection
 
 
 def _success_body(

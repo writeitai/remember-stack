@@ -171,6 +171,7 @@ class Replies:
         search: dict[UUID, dict[str, Any]],
         selections: dict[UUID, dict[str, Any]],
         model: str,
+        embedding_route: dict[str, object],
     ) -> None:
         self.tape: dict[tuple[str, str], deque[dict[str, Any]]] = defaultdict(deque)
         for entry in records or ():
@@ -179,11 +180,13 @@ class Replies:
         self.search = search
         self.selections = selections
         self.model = model
+        self.embedding_route = embedding_route
         self.stage = ""
         self.target = UUID(int=0)
         self.pending_vectors: deque[UUID] = deque()
         self.calls: dict[str, int] = defaultdict(int)
         self.request_digest = hashlib.sha256()
+        self.stage_request_digests = defaultdict(hashlib.sha256)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content) if request.content else None
@@ -192,6 +195,10 @@ class Replies:
         envelope = (key, request.method, str(request.url), body)
         self.request_digest.update(
             json.dumps(envelope, sort_keys=True, ensure_ascii=False).encode() + b"\n"
+        )
+        # Include exact wire bytes in the per-stage digest, including JSON framing.
+        self.stage_request_digests[self.stage].update(
+            json.dumps(envelope[:3]).encode() + hashlib.sha256(request.content).digest()
         )
         if self.strict:
             if not self.tape[key]:
@@ -209,10 +216,11 @@ class Replies:
                 request.url.path != "/api/v1/embeddings"
                 or body["model"] != self.model
                 or body["dimensions"] != P1_VECTOR_DIMENSIONS
-                or body.get("provider")
-                != {"only": ["nebius"], "allow_fallbacks": False}
+                or body.get("provider") != self.embedding_route
             ):
-                raise ValueError("embedding routing or framing differs from Full-v45")
+                raise ValueError(
+                    "embedding routing or framing differs from the binding"
+                )
             data = []
             for index, value in enumerate(body["input"]):
                 frozen = self.search[self.pending_vectors.popleft()]
@@ -370,7 +378,11 @@ def replay(
         chunk_ids=chunk_ids,
     )
     replies = Replies(
-        records=exact_replies, search=search, selections=selections, model=args.model
+        records=exact_replies,
+        search=search,
+        selections=selections,
+        model=args.model,
+        embedding_route={"only": ["nebius"], "allow_fallbacks": False},
     )
     if args.routing == "locomo-v45":
         settings = OpenRouterSettings(
