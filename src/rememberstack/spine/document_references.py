@@ -819,7 +819,7 @@ class _Reader:
         drafts: Sequence[DraftRow],
         sections: dict[tuple[UUID, str], RowMapping],
     ) -> dict[tuple[UUID, int], tuple[UUID, ...]]:
-        probes: set[tuple[UUID, UUID, int]] = set()
+        probes: set[tuple[UUID, UUID, int, int]] = set()
         for draft in drafts:
             target = draft.target
             key = draft.candidate.to_section_key
@@ -833,7 +833,12 @@ class _Reader:
                 continue
             section = sections[(target.structure_generation_id, key)]
             probes.add(
-                (target.version_id, target.representation_id, section["block_start"])
+                (
+                    target.version_id,
+                    target.representation_id,
+                    section["block_start"],
+                    section["char_start"],
+                )
             )
         if not probes:
             return {}
@@ -846,6 +851,7 @@ class _Reader:
                 "version_ids": [probe[0] for probe in ordered],
                 "representation_ids": [probe[1] for probe in ordered],
                 "blocks": [probe[2] for probe in ordered],
+                "starts": [probe[3] for probe in ordered],
             },
         ).mappings():
             found.setdefault((row["version_id"], row["block"]), []).append(
@@ -1343,7 +1349,7 @@ _INCOMING_EXCLUSIVE = text(_INCOMING + _after(">") + _ORDER)
 
 _SELECT_SECTIONS_BY_KEY = text(
     """
-    SELECT s.structure_generation_id, s.section_key, s.title, s.block_start
+    SELECT s.structure_generation_id, s.section_key, s.title, s.block_start, s.char_start
     FROM unnest(CAST(:generation_ids AS uuid[]), CAST(:keys AS text[]))
         AS probe(structure_generation_id, section_key)
     JOIN document_sections s
@@ -1369,13 +1375,15 @@ _SELECT_FIRST_CHUNKS = text(
     FROM unnest(
         CAST(:version_ids AS uuid[]),
         CAST(:representation_ids AS uuid[]),
-        CAST(:blocks AS integer[])
-    ) AS probe(version_id, representation_id, block)
+        CAST(:blocks AS integer[]), CAST(:starts AS integer[])
+    ) AS probe(version_id, representation_id, block, char_start)
     JOIN chunks c
       ON c.version_id = probe.version_id
      AND c.representation_id = probe.representation_id
-     AND c.block_start <= probe.block
-     AND c.block_end >= probe.block
+     AND (
+        (c.span_kind = 'whole' AND c.block_start <= probe.block AND probe.block <= c.block_end)
+        OR (c.span_kind = 'split' AND c.char_start <= probe.char_start AND probe.char_start < c.char_end)
+     )
     WHERE c.deployment_id = :deployment_id
     ORDER BY c.version_id, c.ordinal, c.chunk_id
     """

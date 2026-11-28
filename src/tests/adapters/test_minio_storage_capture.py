@@ -701,7 +701,7 @@ def test_d163_collector_handoff(
                     old.setattr(
                         module,
                         "_BODY",
-                        module._BODY.replace("p9_58_0079", "p9_55_0076"),
+                        module._BODY.replace("p9_60_0081", "p9_55_0076"),
                     )
                 install()
             command.upgrade(config=config, revision="p9_56_0077")

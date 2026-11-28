@@ -1,6 +1,6 @@
 # Split oversized chunks before embedding (D162)
 
-**Status** Proposed. [Analysis and probe evidence](../analysis/split_oversized_chunks_analysis.md).
+**Status** Accepted. [Analysis and probe evidence](../analysis/split_oversized_chunks_analysis.md).
 
 ## 1. Check the complete embedding input
 

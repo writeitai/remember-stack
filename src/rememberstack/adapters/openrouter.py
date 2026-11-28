@@ -30,6 +30,8 @@ from pydantic_settings import SettingsConfigDict
 from rememberstack.adapters.generation_recorder import GenerationOutcome
 from rememberstack.adapters.generation_recorder import GenerationRecord
 from rememberstack.adapters.generation_recorder import GenerationRecorder
+from rememberstack.core.hosted_embedding_ceiling import HOSTED_EMBEDDING_MODEL
+from rememberstack.core.hosted_embedding_ceiling import HOSTED_EMBEDDING_PROVIDER
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
 from rememberstack.model import GeneratedResponse
@@ -41,6 +43,8 @@ from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import record_embedding_usage
 from rememberstack.model import StructuredResponseModel
+from rememberstack.model.model_provider import EmbeddingRejectionCode
+from rememberstack.model.model_provider import ProviderEmbeddingInputRejected
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
@@ -1031,6 +1035,20 @@ class OpenRouterModelProvider:
             payload["zdr"] = True
         return payload or None
 
+    def uses_hosted_embedding_ceiling(self, *, model: str) -> bool:
+        """Match the exact endpoint and routing the D162 ceiling qualifies."""
+        return (
+            model == HOSTED_EMBEDDING_MODEL
+            and self._settings.base_url.rstrip("/") == "https://openrouter.ai/api/v1"
+            and self._embedding_provider_payload()
+            == {
+                "only": [HOSTED_EMBEDDING_PROVIDER],
+                "allow_fallbacks": False,
+                "data_collection": "deny",
+                "zdr": True,
+            }
+        )
+
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """One embeddings call for the caller's batch."""
         started_ns = time.monotonic_ns()
@@ -1043,7 +1061,12 @@ class OpenRouterModelProvider:
         provider = self._embedding_provider_payload()
         if provider is not None:
             payload["provider"] = provider
-        body = self._post(path="/embeddings", payload=payload)
+        body = self._post(
+            path="/embeddings",
+            payload=payload,
+            classify_embedding_input=request.hosted_passage
+            and self.uses_hosted_embedding_ceiling(model=request.model),
+        )
         usage = _usage(
             body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
         )
@@ -1076,7 +1099,13 @@ class OpenRouterModelProvider:
             )
         return EmbeddingResponse(vectors=vectors, usage=usage)
 
-    def _post(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
+    def _post(
+        self,
+        *,
+        path: str,
+        payload: dict[str, object],
+        classify_embedding_input: bool = False,
+    ) -> dict[str, Any]:
         """POST one JSON request; non-2xx responses become typed errors.
 
         A success status whose body is not a JSON object also becomes a typed
@@ -1089,6 +1118,12 @@ class OpenRouterModelProvider:
         """
         for attempt in range(_IN_FLIGHT_BUDGET_RETRIES + 1):
             response = self._post_once(path=path, payload=payload)
+            if classify_embedding_input:
+                rejection = _embedding_input_rejection(response)
+                if rejection is not None:
+                    raise ProviderEmbeddingInputRejected(
+                        code=rejection, status_code=response.status_code
+                    )
             retry_after = _in_flight_budget_retry_after(response=response)
             if retry_after is not None and attempt < _IN_FLIGHT_BUDGET_RETRIES:
                 _logger.warning(
@@ -1144,6 +1179,57 @@ _JSON_TYPE_NAMES: dict[type, str] = {
     bool: "boolean",
     type(None): "null",
 }
+
+
+def _embedding_input_rejection(
+    response: httpx.Response,
+) -> EmbeddingRejectionCode | None:
+    """Read explicit input error codes, including structured upstream errors.
+
+    An HTTP status or an overload message alone does not identify an input.
+    In particular a bare 429 remains under the usual bounded retry policy.
+    """
+    if response.status_code not in {400, 403, 413, 422, 429}:
+        return None
+    try:
+        error = response.json()["error"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not isinstance(error, dict):
+        return None
+    details = [error]
+    metadata = error.get("metadata")
+    if isinstance(metadata, dict):
+        raw = metadata.get("raw")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                raw = None
+        if isinstance(raw, dict):
+            upstream = raw.get("error", raw)
+            if isinstance(upstream, dict):
+                details.append(upstream)
+    for detail in details:
+        codes = {
+            code
+            for name in ("code", "type")
+            if isinstance(code := detail.get(name), str)
+        }
+        if codes & {
+            "context_length_exceeded",
+            "input_length_exceeded",
+            "input_too_large",
+            "input_too_long",
+            "max_input_tokens_exceeded",
+        }:
+            return "embedding.input_too_large"
+        if codes & {"embedding_input_rejected", "invalid_embedding_input"} or (
+            codes & {"invalid_input", "content_policy_violation"}
+            and detail.get("param") == "input"
+        ):
+            return "embedding.input_rejected"
+    return None
 
 
 def _success_body(

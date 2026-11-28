@@ -138,14 +138,16 @@ def build_passage_catalog(
             if clipped is None:
                 continue
             _record_slice(slices=slices, span=clipped, region=region)
-    if not slices:
-        for region, chunk in windows:
-            if chunk.char_end > chunk.char_start:
-                _record_slice(
-                    slices=slices,
-                    span=(chunk.char_start, chunk.char_end),
-                    region=region,
-                )
+    backed_regions = frozenset(slices.values())
+    for region, chunk in windows:
+        if chunk.char_end <= chunk.char_start:
+            continue
+        if not backed_regions or (
+            chunk.span_kind == "split" and region not in backed_regions
+        ):
+            _record_slice(
+                slices=slices, span=(chunk.char_start, chunk.char_end), region=region
+            )
     for kept in kept_ranges:
         clipped = _clip(
             start=kept[0],

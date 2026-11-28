@@ -182,8 +182,8 @@ class _ChunkCatalog:
         del representation_id, chunker_version
         return ()
 
-    def record_chunks(self, *, records: tuple[ChunkRecord, ...]) -> None:
-        self.records = records
+    def save_grid(self, *, build_records, **kwargs: object) -> None:
+        self.records = build_records({})
 
 
 def _write_representation(

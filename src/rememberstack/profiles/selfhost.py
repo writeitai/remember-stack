@@ -1871,9 +1871,17 @@ class SelfHostProfile:
                     settings=FactAdjudicationSettings(),
                 ),
             )
+        hosted_embedding = isinstance(
+            self._model_provider, OpenRouterModelProvider
+        ) and self._model_provider.uses_hosted_embedding_ceiling(
+            model=p1_settings.embedding_model
+        )
         if stage is PipelineStage.CHUNK:
             return ChunkHandler(
-                catalog=chunks, artifact_store=self._artifact_store, params=params
+                catalog=chunks,
+                artifact_store=self._artifact_store,
+                params=params,
+                hosted_embedding=hosted_embedding,
             )
         if stage is PipelineStage.EMBED_CHUNK:
             return EmbedChunksHandler(
@@ -1884,6 +1892,7 @@ class SelfHostProfile:
                 settings=E1Settings.model_validate({}),
                 embedding_model=p1_settings.embedding_model,
                 params=params,
+                hosted_embedding=hosted_embedding,
             )
         if stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.GROUND_CLAIMS):
             return ExtractClaimsHandler(

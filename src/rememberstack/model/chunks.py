@@ -6,6 +6,7 @@ a sequence comparison instead of a semantic judgment.
 """
 
 from typing import Annotated
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -86,7 +87,7 @@ class ChunkSource(BaseModel):
 
 
 class PackedChunk(BaseModel):
-    """One packed run of whole blocks: the chunker's pure output."""
+    """One section-bounded span from the base packer or the D162 splitter."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -99,6 +100,7 @@ class PackedChunk(BaseModel):
     chunk_content_hash: _NonEmpty
     token_count: int = Field(ge=0)
     extraction_eligible: bool = True
+    span_kind: Literal["whole", "split"] = "whole"
     """Whether E2 runs Selection on the chunk (D133 §4.5 eligibility policy)."""
 
 
@@ -122,6 +124,7 @@ class ChunkRecord(BaseModel):
     char_end: int = Field(ge=0)
     token_count: int = Field(ge=0)
     chunker_version: _NonEmpty
+    span_kind: Literal["whole", "split"] = "whole"
     extraction_eligible: bool = True
     extraction_eligibility_version: str | None = None
     """The eligibility policy version that decided ``extraction_eligible``."""
@@ -154,6 +157,7 @@ class ChunkForEmbedding(BaseModel):
     input for summary orientation (optional: legacy constructors omit it and
     the guard simply does not arm)."""
     section_title: str | None = None
+    span_kind: Literal["whole", "split"] = "whole"
     context_prefix: str | None = None
     """Legacy free-form prefix and/or D80 location_header stamp."""
     prefixer_version: str | None = None

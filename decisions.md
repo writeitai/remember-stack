@@ -2035,8 +2035,9 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
-> [D162](#d162-split-oversized-chunks-before-embedding) replaces semchunk and the oversized-block fallback
-> with anchored packing and lossless cuts for the pinned hosted binding. Section ownership and non-overlap still apply.
+> Anchored whole-block packing is the base packer for every binding.
+> [D162](#d162-split-oversized-chunks-before-embedding) adds lossless cuts of oversized
+> candidates for the pinned hosted binding. Section ownership and non-overlap still apply.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -8754,7 +8755,7 @@ generations, retrieval and rendering use their existing code and identities.
 
 ## D162. Split oversized chunks before embedding
 
-**Status:** Proposed. **Date:** 2026-11-27.
+**Status:** accepted. **Date:** 2026-11-27.
 
 Use a 16,384-token per-input constant for hosted OpenRouter Qwen3-Embedding-8B on
 `nebius/bf16` with fallbacks off and ZDR. Split oversized D80 inputs losslessly and keep

@@ -515,13 +515,13 @@
           "purpose": "truth_provenance"
         }
       ],
-      "schema_profile_digest": "39e40c28370423e6693b6491f141a72c55b82d0a3ec9f807f3fba3820a0be69c",
-      "source_digest": "fffcb2d1105165277cd7a110355653c66f674fd604eb0e38fb4a2746b8bd952b"
+      "schema_profile_digest": "b430f4931d4b8050d3df60c390da510e38ff575089978fbb1feb77bda3c917f5",
+      "source_digest": "30f2a8169fbea963b1daeb6b79faa568ed6aefd55fecc307017e31dc53ff370f"
     },
     "contract": "rememberstack.managed_storage_profile.v1",
     "managed_runtime_source_digest": "6666666666666666666666666666666666666666666666666666666666666666",
     "mapping": {
-      "classification_digest": "ec263e60f4fac3454df65cf8b15f460469153579f4832d1e77fb9189f1e183d9",
+      "classification_digest": "41c9dd2b056ea31f955476fae3c74435c14ec142c0f843662de5e14ee623595e",
       "contract": "rememberstack.storage_mapping.v1",
       "rules": [
         {
@@ -1150,24 +1150,24 @@
     "native": {
       "clock_error_us": "1000",
       "clock_profile_digest": "5555555555555555555555555555555555555555555555555555555555555555",
-      "profile_digest": "df498aa3a9aec0647ca72bf5fd430cc970a6b41a7d77966a61a0925a097e941a",
+      "profile_digest": "a3aa77e59160f182eb66bd1cab15fae1a513fdebfdbd6c40718c7d52f3b3763c",
       "release_margin_us": 500000,
-      "schema_digest": "66b8c4babd6fcce065883847d6f6a7f46144f47a83a4594d79839984388335a0",
-      "schema_profile_digest": "39e40c28370423e6693b6491f141a72c55b82d0a3ec9f807f3fba3820a0be69c",
-      "source_digest": "fffcb2d1105165277cd7a110355653c66f674fd604eb0e38fb4a2746b8bd952b",
+      "schema_digest": "f382820b8cf814e6c5fdfac707277d681ba2c17282ef2bf257eaa19a877883bd",
+      "schema_profile_digest": "b430f4931d4b8050d3df60c390da510e38ff575089978fbb1feb77bda3c917f5",
+      "source_digest": "30f2a8169fbea963b1daeb6b79faa568ed6aefd55fecc307017e31dc53ff370f",
       "view_lifetime_ms": 30000
     },
     "provider_clock_profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "provider_profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "request": {
-    "classification_digest": "ec263e60f4fac3454df65cf8b15f460469153579f4832d1e77fb9189f1e183d9",
+    "classification_digest": "41c9dd2b056ea31f955476fae3c74435c14ec142c0f843662de5e14ee623595e",
     "contract": "rememberstack.storage_capture_request.v1",
     "cut_at_unix_us": "1800000000000000",
     "deployment_id": "00000000000000000000000000000001",
-    "native_capture_profile_digest": "df498aa3a9aec0647ca72bf5fd430cc970a6b41a7d77966a61a0925a097e941a",
-    "operator_mapping_digest": "318369c2d92af834777611300a498c4a50d6919382dd88355c2f0424b4e150d2",
-    "schema_profile_digest": "39e40c28370423e6693b6491f141a72c55b82d0a3ec9f807f3fba3820a0be69c",
+    "native_capture_profile_digest": "a3aa77e59160f182eb66bd1cab15fae1a513fdebfdbd6c40718c7d52f3b3763c",
+    "operator_mapping_digest": "1dd0ea246c391e0895ed3a4c35266ae55f29c597d4e4dbff77d8c472b256f492",
+    "schema_profile_digest": "b430f4931d4b8050d3df60c390da510e38ff575089978fbb1feb77bda3c917f5",
     "store_binding_digest": "50fe01daa1cae64852cf6628bcccaac1e966d1c7d7a190f425e05577bcde3fc7"
   },
   "schema": {
@@ -1184,6 +1184,7 @@
         "adjudication_method",
         "adjudication_outcome",
         "alias_provenance",
+        "chunk_span_kind",
         "claim_temporal_class",
         "claim_valid_kind",
         "claim_valid_precision",
@@ -1279,6 +1280,7 @@
         "ix_chunks_reuse",
         "ix_chunks_reuse_identity",
         "ix_chunks_section",
+        "ix_chunks_split_version",
         "ix_chunks_version",
         "ix_claims_audit",
         "ix_claims_chunk",
@@ -1610,7 +1612,7 @@
       "template_public_testimony_currency_events",
       "testimony_currency_events"
     ],
-    "head": "p9_58_0079",
+    "head": "p9_60_0081",
     "migrations": {
       "__init__.py": "6c0a82ef11830b8d5cb49eac5ac1f0d2e967699377fab1cb34d751585c97366c",
       "p0_02_0001_extensions_enums.py": "d52a438d07c205fe7645249f286f1d7a8edde1215b0298cadc69d34eb999747d",
@@ -1691,7 +1693,9 @@
       "p9_55_0076_archive.py": "5c609234e8cf4dd20c5a332b7aa807cee238d9d7edd4b0aee9b2550c121bec8a",
       "p9_56_0077_keyed_memory_survivor.py": "ce7a52d48df364360a284e24e1521578d8d5554a66334e2c065183cfe175f1ee",
       "p9_57_0078_graph_survivor_projection.py": "78b5ebf4c3499b857fb893576ad4921e7d1ec77132fa5e40ba065472d38c8545",
-      "p9_58_0079_claim_history_by_id.py": "db0783a9dfd9167cd0e54936127f7940507c1bfb13d852336f86dc96b6b77534"
+      "p9_58_0079_claim_history_by_id.py": "db0783a9dfd9167cd0e54936127f7940507c1bfb13d852336f86dc96b6b77534",
+      "p9_59_0080_chunk_span_kind.py": "cef41c83c1ddd9993e93ae3c284adf0d652cb3a06759c1e05ecded6769dfcaf4",
+      "p9_60_0081_split_version_index.py": "88fbaafce0cdf50bdad5ef356afc7c051ccdce34be96b7aa2d1ecaed3f2c0bfa"
     },
     "records": {
       "NativeCatalogAcquisition": {
@@ -2427,7 +2431,7 @@
             "type": "string"
           },
           "schema_head": {
-            "const": "p9_58_0079",
+            "const": "p9_60_0081",
             "title": "Schema Head",
             "type": "string"
           },

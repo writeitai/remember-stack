@@ -58,6 +58,19 @@ class ProviderInvalidResponseError(ProviderCallError):
     """A completed generation returned no value valid for the response schema."""
 
 
+EmbeddingRejectionCode = Literal[
+    "embedding.input_too_large", "embedding.input_rejected"
+]
+
+
+class ProviderEmbeddingInputRejected(ProviderCallError):
+    """The provider explicitly attributed rejection to an embedding input."""
+
+    def __init__(self, *, code: EmbeddingRejectionCode, status_code: int) -> None:
+        super().__init__(code, status_code=status_code)
+        self.code: EmbeddingRejectionCode = code
+
+
 class GeneratedResponse(BaseModel, Generic[ResponseT]):
     """A validated structured output paired with its provider accounting."""
 
@@ -86,6 +99,8 @@ class EmbeddingRequest(BaseModel):
     model: _NonEmptyText
     texts: Annotated[tuple[_NonEmptyText, ...], Field(min_length=1)]
     dimensions: int | None = Field(default=None, ge=1)
+    hosted_passage: bool = Field(default=False, exclude=True)
+    """E1 asks the qualified adapter for typed per-input rejection."""
 
 
 class EmbeddingResponse(BaseModel):

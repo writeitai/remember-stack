@@ -14,6 +14,8 @@ from rememberstack.core.selection_references import card_payload
 from rememberstack.core.selection_references import CardDiagnostic
 from rememberstack.core.selection_references import GroundedCard
 from rememberstack.model import SelectionResponse
+from rememberstack.spine.chunk_reuse import require_reusable_chunks_on
+from rememberstack.spine.chunk_reuse import version_is_reusable
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,7 @@ class SelectionCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the source-result store to the deployment database."""
         self._engine = engine
+        self._reuse_engine = engine.execution_options(isolation_level="READ COMMITTED")
 
     def load(self, *, chunk_id: UUID, extractor_version: str) -> FrozenSelection | None:
         """Load the authoritative result, including an explicitly empty response."""
@@ -112,7 +115,7 @@ class SelectionCatalog:
         with self._engine.connect() as connection:
             row = (
                 connection.execute(
-                    text("""
+                    text(f"""
                 SELECT s.* FROM selection_results s JOIN chunks c
                   ON c.chunk_id=s.chunk_id AND c.deployment_id=s.deployment_id
                 JOIN document_versions v ON v.version_id=c.version_id
@@ -122,6 +125,8 @@ class SelectionCatalog:
                   AND v.version_no < (SELECT version_no FROM document_versions
                                        WHERE version_id=:version_id)
                   AND v.deleted_at IS NULL
+                  AND {version_is_reusable(":version_id")}
+                  AND {version_is_reusable("c.version_id")}
                 ORDER BY v.version_no DESC,c.ordinal LIMIT 1
             """),
                     {
@@ -159,7 +164,8 @@ class SelectionCatalog:
                 for d in diagnostics
             ],
         }
-        with self._engine.begin() as connection:
+        engine = self._engine if reused_from is None else self._reuse_engine
+        with engine.begin() as connection:
             require_extraction_sources_on(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -167,6 +173,12 @@ class SelectionCatalog:
                 if reused_from is None
                 else (chunk_id, reused_from),
             )
+            if reused_from is not None:
+                require_reusable_chunks_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    chunk_ids=(chunk_id, reused_from),
+                )
             connection.execute(
                 _INSERT,
                 {

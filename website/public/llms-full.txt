@@ -9289,8 +9289,15 @@ When a stage fails on an item:
   was its last attempt. The `last_error` then starts with
   `lease expired`.
 
-HTTP 429 answers from OpenRouter are handled inside the provider call and do
-not use attempts ([Models and providers](https://remember.dev/docs/self-hosting/models#openrouter-routing-and-limits)).
+OpenRouter throttling can retry inside the provider call. If it persists,
+the worker uses the stage's remaining attempts.
+
+With Qwen3-Embedding-8B pinned to OpenRouter's `nebius/bf16` route with zero
+data retention and fallbacks off, new chunk grids split passages that exceed
+16,384 model tokens. If an existing input still exceeds that ceiling or the
+provider confirms a per-input rejection, the embedding stage dead-letters
+with `embedding.input_too_large` or `embedding.input_rejected`.
+`last_error` includes the chunk ID, the rendered input hash and the binding.
 
 A dead-lettered item stays where it is. Its version is not ready, and the
 work after it in the pipeline waits. Nothing retries it on its own.

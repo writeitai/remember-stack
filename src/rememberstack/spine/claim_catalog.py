@@ -26,6 +26,8 @@ from rememberstack.model import EvidenceSpan
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
+from rememberstack.spine.chunk_reuse import require_reusable_chunks_on
+from rememberstack.spine.chunk_reuse import version_is_reusable
 from rememberstack.spine.lifecycle import archive_reconciliation_id
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.selection_catalog import require_extraction_sources_on
@@ -38,6 +40,7 @@ class ClaimCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
+        self._reuse_engine = engine.execution_options(isolation_level="READ COMMITTED")
         self.selections = SelectionCatalog(engine=engine)
 
     def chunk_already_extracted(
@@ -140,13 +143,12 @@ class ClaimCatalog:
         anything (a retried attempt inserts nothing but the prior was not
         empty).
         """
-        with self._engine.begin() as connection:
-            if claimify_input_hash is not None:
-                require_extraction_sources_on(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    chunk_ids=(chunk_id, prior_chunk_id),
-                )
+        with self._reuse_engine.begin() as connection:
+            require_extraction_sources_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                chunk_ids=(chunk_id, prior_chunk_id),
+            )
             prior_links = connection.execute(
                 _COUNT_CHUNK_CLAIMS, {"chunk_id": prior_chunk_id}
             ).scalar_one()
@@ -161,6 +163,11 @@ class ClaimCatalog:
                     if existing != claimify_input_hash:
                         raise ValueError("Claimify completion has different inputs")
                     return prior_links
+            require_reusable_chunks_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                chunk_ids=(chunk_id, prior_chunk_id),
+            )
             if prior_links:
                 claim_ids = connection.execute(
                     _SELECT_DISTINCT_CHUNK_CLAIM_IDS, {"chunk_id": prior_chunk_id}
@@ -423,7 +430,7 @@ _SELECT_EXTRACTED = text(
 )
 
 _SELECT_PRIOR_EXTRACTED = text(
-    """
+    f"""
     SELECT c.chunk_id
     FROM chunks c
     JOIN document_versions cv ON cv.version_id = c.version_id
@@ -439,6 +446,8 @@ _SELECT_PRIOR_EXTRACTED = text(
       -- version silently testifying nothing. An archived version is not
       -- removed: its claims are reused and become current again (D159).
       AND cv.deleted_at IS NULL
+      AND {version_is_reusable(":version_id")}
+      AND {version_is_reusable("c.version_id")}
       AND (EXISTS (SELECT 1 FROM chunk_claims x WHERE x.chunk_id = c.chunk_id)
            OR EXISTS (SELECT 1 FROM claim_extraction_decisions d
                       WHERE d.chunk_id = c.chunk_id))
