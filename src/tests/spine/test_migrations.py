@@ -2304,5 +2304,31 @@ def test_d162_additive_span_kind_and_interrupted_partition_index() -> None:
                 ).scalar_one()
                 is True
             )
+            split = connection.execute(
+                text("""
+                    INSERT INTO chunks (
+                        chunk_id, deployment_id, doc_id, version_id, representation_id,
+                        ordinal, block_start, block_end, chunk_content_hash, extraction_input_hash,
+                        char_start, char_end, span_kind
+                    ) VALUES (gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),
+                              gen_random_uuid(),gen_random_uuid(),0,0,0,'fragment','extraction',0,1,'split')
+                    RETURNING chunk_id
+                """)
+            ).scalar_one()
+        with pytest.raises(
+            RuntimeError,
+            match="D162 downgrade requires a database without split chunks",
+        ):
+            command.downgrade(config=config, revision="p9_58_0079")
+        assert _head_revision(database_url=database_url) == "p9_59_0080"
+        command.upgrade(config=config, revision="head")
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT span_kind FROM chunks WHERE chunk_id=:id"),
+                    {"id": split},
+                ).scalar_one()
+                == "split"
+            )
     finally:
         engine.dispose()

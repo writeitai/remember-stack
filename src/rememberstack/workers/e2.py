@@ -616,6 +616,7 @@ class ExtractClaimsHandler:
                 self._claimify_chunk(
                     source=source,
                     chunks=extract_chunks,
+                    reference_chunks=reference_chunks,
                     index=index,
                     document_md=document_md,
                     meter=meter,
@@ -883,6 +884,7 @@ class ExtractClaimsHandler:
         *,
         source: ChunkSource,
         chunks: tuple[ChunkForEmbedding, ...],
+        reference_chunks: tuple[ChunkForEmbedding, ...],
         index: int,
         document_md: str,
         meter: CostMeterPort,
@@ -1102,7 +1104,11 @@ class ExtractClaimsHandler:
             occurrences=_occurrences_for_claims(
                 claims=accepted,
                 context=context,
-                clip_exact_ranges=chunk.span_kind == "split",
+                split_windows=tuple(
+                    (window.char_start, window.char_end)
+                    for window in reference_chunks
+                    if window.span_kind == "split"
+                ),
             ),
             claimify_input_hash=claimify_hash,
         )
@@ -2220,7 +2226,7 @@ def _occurrences_for_claims(
     *,
     claims: tuple[ClaimRecord, ...],
     context: RepresentationOccurrenceContext | None,
-    clip_exact_ranges: bool = False,
+    split_windows: tuple[tuple[int, int], ...],
 ) -> dict[UUID, OccurrenceProvenance] | None:
     """Resolve every supporting span against the target representation."""
     if context is None:
@@ -2233,7 +2239,7 @@ def _occurrences_for_claims(
             ),
             ranges=context.derivation_ranges,
             source_map=context.source_map,
-            clip_exact_ranges=clip_exact_ranges,
+            split_windows=split_windows,
         )
         for claim in claims
     }

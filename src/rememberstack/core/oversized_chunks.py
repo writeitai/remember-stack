@@ -6,6 +6,7 @@ from collections.abc import Callable
 from collections.abc import Iterable
 from collections.abc import Iterator
 import hashlib
+from operator import attrgetter
 import re
 
 from rememberstack.core.chunker import count_tokens
@@ -62,6 +63,7 @@ def split_oversized_chunks(
                 _split_candidate(
                     candidate=candidate,
                     blocks=blocks[first:last],
+                    all_blocks=blocks,
                     eligibility=eligibility[first:last],
                     document_md=document_md,
                     ranges=ranges,
@@ -89,6 +91,7 @@ def _split_candidate(
     *,
     candidate: PackedChunk,
     blocks: tuple[Block, ...],
+    all_blocks: tuple[Block, ...],
     eligibility: tuple[bool, ...],
     document_md: str,
     ranges: tuple[DerivationRange, ...],
@@ -106,7 +109,6 @@ def _split_candidate(
     )
     block_starts = tuple(block.char_start for block in nonempty_blocks)
     block_ends = tuple(block.char_end for block in nonempty_blocks)
-    all_ends = tuple(block.char_end for block in blocks)
     block_seams = (*block_starts, *block_ends)
     recorded = (
         *recorded_seams[
@@ -140,19 +142,21 @@ def _split_candidate(
         first_index = bisect_right(block_ends, left)
         last_index = bisect_left(block_starts, right)
         intersected = nonempty_blocks[first_index:last_index]
-        preceding = blocks[max(0, bisect_right(all_ends, left) - 1)]
+        if intersected:
+            block_start, block_end = intersected[0].ordinal, intersected[-1].ordinal
+        else:
+            # On a D80 recheck, the candidate may start in a gap whose
+            # preceding block is outside the candidate's stored block bounds.
+            preceding = bisect_right(all_blocks, left, key=attrgetter("char_end")) - 1
+            block_start = block_end = all_blocks[max(0, preceding)].ordinal
         piece_text = document_md[left:right]
         piece = candidate.model_copy(
             update={
                 "span_kind": "split",
                 "char_start": left,
                 "char_end": right,
-                "block_start": intersected[0].ordinal
-                if intersected
-                else preceding.ordinal,
-                "block_end": intersected[-1].ordinal
-                if intersected
-                else preceding.ordinal,
+                "block_start": block_start,
+                "block_end": block_end,
                 "chunk_content_hash": _fragment_hash(
                     start=left, end=right, blocks=intersected, document_md=document_md
                 ),

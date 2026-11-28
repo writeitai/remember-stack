@@ -8,7 +8,9 @@ and reply (JSON). Records are consumed in wire order within each work item.
 
 --checkpoint-only uses persisted vectors and Selection responses when an
 archive lacks its wire tape. It verifies E1 rows, Selection and the D122
-producer order/stamps, and explicitly leaves Claimify outputs unverified.
+producer order/stamps. It records Claimify request digests using empty
+replies so they can be compared across revisions. Claimify output equality
+requires the original replies and is only checked in strict mode.
 """
 
 from __future__ import annotations
@@ -198,8 +200,12 @@ class Replies:
                     "usage": {"prompt_tokens": 0, "total_tokens": 0, "cost": 0},
                 },
             )
-        if self.stage == "extract_claims":
-            frozen = self.selections[self.target]
+        if self.stage in {"extract_claims", "ground_claims"}:
+            output = (
+                self.selections[self.target]["output"]["selection"]
+                if self.stage == "extract_claims"
+                else {"claims": []}
+            )
             return httpx.Response(
                 200,
                 json={
@@ -207,9 +213,7 @@ class Replies:
                     "provider": "OpenAI",
                     "choices": [
                         {
-                            "message": {
-                                "content": json.dumps(frozen["output"]["selection"])
-                            },
+                            "message": {"content": json.dumps(output)},
                             "finish_reason": "stop",
                         }
                     ],
@@ -523,34 +527,23 @@ def replay(
                     )
                     if stamp != row["claimify_input_hash"]:
                         raise ValueError(f"D122 stamp differs on {chunk_id}")
-                    if replies.strict:
-                        clock = occurrence_dates.get(
-                            chunk_id, decision_dates.get(chunk_id, clock)
+                    clock = occurrence_dates.get(
+                        chunk_id, decision_dates.get(chunk_id, clock)
+                    )
+                    replies.stage, replies.target = "ground_claims", chunk_id
+                    with patch.object(
+                        e2, "_grounded_claim", side_effect=freeze_claim_id
+                    ):
+                        extract.handle(
+                            work=_work(
+                                source=source,
+                                stage=PipelineStage.GROUND_CLAIMS,
+                                target=chunk_id,
+                                generation=E2_EXTRACTOR_VERSION,
+                                is_chunk=True,
+                            ),
+                            meter=meter,
                         )
-                        replies.stage, replies.target = "ground_claims", chunk_id
-                        with patch.object(
-                            e2, "_grounded_claim", side_effect=freeze_claim_id
-                        ):
-                            extract.handle(
-                                work=_work(
-                                    source=source,
-                                    stage=PipelineStage.GROUND_CLAIMS,
-                                    target=chunk_id,
-                                    generation=E2_EXTRACTOR_VERSION,
-                                    is_chunk=True,
-                                ),
-                                meter=meter,
-                            )
-                    else:
-                        # Compare every chunk column with the recomputed D122 stamp.
-                        # A saved stamp alone cannot prove Claimify grounding parity.
-                        with candidate.begin() as connection:
-                            connection.execute(
-                                text(
-                                    "UPDATE chunks SET claimify_input_hash=:hash WHERE chunk_id=:id"
-                                ),
-                                {"hash": stamp, "id": chunk_id},
-                            )
 
     if any(replies.tape.values()) or (replies.strict and any(claim_ids.values())):
         raise ValueError("unused frozen requests or claims")

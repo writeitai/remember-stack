@@ -28,6 +28,12 @@ and nonblank text on both sides. Repeat until each piece fits and their exact by
 Assign UUIDv4 IDs, consecutive document ordinals, half-open E0 spans within the same section
 and legacy whitespace token counts. Record inclusive intersected block ordinals, using the
 preceding block for both fields on gap-only pieces. Clip source maps and converter origins.
+Use each cited span's own chunk to decide whether its raw offsets can narrow, including
+spans cited through neighbouring passages and reference cards. `linear_source_offsets`
+on an E0 map entry means that each Markdown character has the same relative offset in
+one exact raw source range. If the map links Markdown `[0, 40)` to raw `[100, 140)`,
+a cited split span `[23, 40)` gets raw offsets `[123, 140)`. Other locators keep the
+converter's precision.
 
 Section history and resolved document references populate `first_chunk_ids` within the same
 deployment, version and representation. For `span_kind = 'whole'`, including legacy rows,
@@ -51,10 +57,10 @@ For D140, also check the receiver's final grid awaiting insert.
 
 | Reused product | Existing lookup |
 |---|---|
-| E1 vectors | [`ChunkCatalog.carry_forward_sources`](../../src/rememberstack/spine/chunk_catalog.py#L209-L243) |
+| E1 vectors | [`ChunkCatalog.carry_forward_sources`](../../src/rememberstack/spine/chunk_catalog.py#L323) |
 | E2 Selection | [`SelectionCatalog.prior`](../../src/rememberstack/spine/selection_catalog.py#L102-L138) |
 | E2 Claimify | [`ClaimCatalog.prior_extracted_chunk`](../../src/rememberstack/spine/claim_catalog.py#L62-L100) |
-| D140 dates | [`ChunkCatalog.text_origin_matches`](../../src/rememberstack/spine/chunk_catalog.py#L82-L116) |
+| D140 dates | [`ChunkCatalog.text_origin_matches`](../../src/rememberstack/spine/chunk_catalog.py#L130) |
 
 CHUNK packs outside the lock. In a `READ COMMITTED` transaction it locks the
 lineage row in `documents` exclusively. Statements issued after acquiring the
@@ -76,10 +82,13 @@ Add `span_kind` and its partial index online under [D160](packaging_distribution
 E1 attempts and handoffs settle. Retire outgoing CHUNK, EMBED_CHUNK, Selection, Claimify and both
 section-entry readers before enabling split writes and fit checks together. Keep the chunker
 version and work keys. Retries hand off saved grids as-is.
+The column downgrade checks for split rows under an exclusive lock. If any exist,
+rolling back requires restoring a backup from before the cutover.
 
 ## 5. Terminal failure
 
-For the hosted binding, require finite, nonzero vectors of the configured dimension.
+For the hosted binding, require finite, nonzero vectors of the configured dimension and
+exactly one integer response index per requested input.
 `empty_body` is the successful skip. Isolate failures as needed. Local fit failures and
 confirmed per-input size rejections dead-letter as `embedding.input_too_large`, other deterministic
 rejections as `embedding.input_rejected`. Record chunk ID, rendered hash and binding.

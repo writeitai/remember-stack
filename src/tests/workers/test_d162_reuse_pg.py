@@ -21,10 +21,13 @@ from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import hosted_embedding_ceiling
 from rememberstack.model import ClaimedWork
+from rememberstack.model import DecisionRecord
+from rememberstack.model import DecisionType
 from rememberstack.model import IngestedVersion
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.model import RunResultOutcome
 from rememberstack.model import SelectionResponse
 from rememberstack.spine import chunk_catalog
 from rememberstack.spine import ChunkCatalog
@@ -262,6 +265,103 @@ def test_d162_split_version_closes_all_rungs_for_intact_siblings(
             ).scalar_one()
             >= 1
         )
+
+
+@pytest.mark.parametrize("split_donor", (False, True))
+def test_d162_empty_claimify_reuse_copies_and_stamps_only_eligible_sources(
+    rig: _ReuseRig, monkeypatch: pytest.MonkeyPatch, split_donor: bool
+) -> None:
+    monkeypatch.setattr(hosted_embedding_ceiling, "HOSTED_EMBEDDING_TOKEN_CEILING", 80)
+
+    def pack(content: str) -> IngestedVersion:
+        version = _observe(rig=rig, content=content, modified_at=_EDIT)
+        for stage in (
+            PipelineStage.CONVERT,
+            PipelineStage.STRUCTURE,
+            PipelineStage.CHUNK,
+        ):
+            assert (
+                rig.worker.run_one(
+                    deployment_id=_DEPLOYMENT_ID,
+                    stage=stage,
+                    lane=ProcessingLane.STEADY,
+                ).outcome
+                is RunResultOutcome.SUCCEEDED
+            )
+        return version
+
+    first = pack(_WHOLE + _OVERSIZED)
+    second = pack(_WHOLE)
+    first_by_input = {
+        row["extraction_input_hash"]: row for row in _rows(rig, first, _PARAMS)
+    }
+    receiver = next(
+        row
+        for row in _rows(rig, second, _PARAMS)
+        if row["extraction_input_hash"] in first_by_input
+    )
+    donor = first_by_input[receiver["extraction_input_hash"]]
+    decision = DecisionRecord(
+        decision_id=uuid4(),
+        deployment_id=_DEPLOYMENT_ID,
+        doc_id=first.doc_id,
+        chunk_id=donor["chunk_id"],
+        claim_id=None,
+        decision_type=DecisionType.CLAIMIFY_OMITTED,
+        source_span="Customers may request a receipt.",
+        reason=None,
+        edit_detail=None,
+        protected_class="date",
+        extractor_version=E2_EXTRACTOR_VERSION,
+    )
+    rig.claim_catalog.record_extraction(
+        claims=(), decisions=(decision,), claimify_input_hash="shared-input"
+    )
+
+    def attach() -> int:
+        return rig.claim_catalog.attach_reused_claims(
+            deployment_id=_DEPLOYMENT_ID,
+            chunk_id=receiver["chunk_id"],
+            prior_chunk_id=donor["chunk_id"],
+            claimify_input_hash="shared-input",
+        )
+
+    if split_donor:
+        _pack_split(rig, first)
+        assert any(
+            row["span_kind"] == "split" for row in _rows(rig, first, _OTHER_GENERATION)
+        )
+        with pytest.raises(ChunkReuseBlocked):
+            attach()
+    else:
+        assert attach() == attach() == 0
+
+    with rig.engine.connect() as connection:
+        copied = connection.execute(
+            text("""
+                SELECT decision_id, decision_type, source_span, protected_class, extractor_version
+                FROM claim_extraction_decisions WHERE chunk_id=:id
+            """),
+            {"id": receiver["chunk_id"]},
+        ).all()
+    target = next(
+        row
+        for row in _rows(rig, second, _PARAMS)
+        if row["chunk_id"] == receiver["chunk_id"]
+    )
+    if split_donor:
+        assert copied == []
+        assert target["claimify_input_hash"] is None
+    else:
+        (row,) = copied
+        assert row.decision_id != decision.decision_id
+        assert tuple(row)[1:] == (
+            decision.decision_type.value,
+            decision.source_span,
+            decision.protected_class,
+            decision.extractor_version,
+        )
+        assert target["claimify_input_hash"] == "shared-input"
 
 
 def test_d162_copy_rolls_back_and_committed_replay_survives_split(

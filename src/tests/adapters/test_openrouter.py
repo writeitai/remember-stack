@@ -3173,3 +3173,60 @@ def test_d162_throttling_stays_retryable_and_bounded(
             )
     assert rejected.value.status_code == 429
     assert waits == [30.0, 30.0, 30.0]
+
+
+@pytest.mark.parametrize(
+    ("indices", "hosted", "expected_order"),
+    [
+        ((1, 0), True, (2.0, 1.0)),
+        ((0, 0), False, (1.0, 2.0)),
+        ((0, 0), True, None),
+        ((0,), True, None),
+        ((1, 2), True, None),
+        ((-1, 0), True, None),
+        ((False, 1), True, None),
+        ((0.0, 1), True, None),
+        (("0", "1"), True, None),
+    ],
+)
+def test_d162_hosted_embedding_requires_one_integer_index_per_input(
+    indices: tuple[object, ...], hosted: bool, expected_order: tuple[float, ...] | None
+) -> None:
+    from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
+
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", embedding_provider_only=["nebius/bf16"], zdr=True
+        )
+    )
+
+    def respond(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "qwen/qwen3-embedding-8b",
+                "data": [
+                    {"index": index, "embedding": [float(position)] * 1536}
+                    for position, index in enumerate(indices, start=1)
+                ],
+                "usage": {"prompt_tokens": 3, "total_tokens": 3, "cost": 0},
+            },
+        )
+
+    request = EmbeddingRequest(
+        model="qwen/qwen3-embedding-8b",
+        texts=("first passage", "second passage"),
+        dimensions=1536,
+        hosted_passage=hosted,
+    )
+    provider._client.close()
+    with httpx.Client(
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(respond)
+    ) as client:
+        provider._client = client
+        if expected_order is None:
+            with pytest.raises(OpenRouterInvalidResponseError, match="index|count"):
+                provider.embed(request=request)
+        else:
+            response = provider.embed(request=request)
+            assert tuple(vector[0] for vector in response.vectors) == expected_order

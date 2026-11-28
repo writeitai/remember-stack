@@ -9,6 +9,7 @@ import pytest
 from rememberstack.core import blockize
 from rememberstack.core import ChunkerParams
 from rememberstack.core import pack_blocks
+from rememberstack.core.embedding_input_policy import EmbeddingInputRender
 from rememberstack.core.embedding_input_policy import H_MAX
 from rememberstack.core.embedding_input_policy import LocationFacts
 from rememberstack.core.embedding_input_policy import render_embedding_input
@@ -294,6 +295,60 @@ def test_final_grid_rechecks_when_d80_gains_a_header() -> None:
     ]
 
 
+def test_header_recheck_assigns_gap_only_pieces_to_original_preceding_block() -> None:
+    body = f"Lead.\n\n[link]: https://example.test/{'🙂' * 16373}\n\nTail."
+    blocks = blockize(document_md=body)
+    assert len(blocks) == 2  # The Markdown definition is an inter-block gap.
+    section = SectionSpan(
+        section_id=_SECTION, node_path="0", role="body", block_start=0, block_end=1
+    )
+    packed = pack_blocks(
+        blocks=blocks, sections=(section,), document_md=body, params=ChunkerParams()
+    )
+    assert len(packed) == 1
+
+    def rendered(text: str, count: int) -> EmbeddingInputRender:
+        return render_embedding_input(
+            facts=_FACTS.model_copy(
+                update={"chunk_count": count, "source_shape": "transcript"}
+            ),
+            body=text,
+        )
+
+    def fits(chunk: PackedChunk, count: int) -> bool:
+        return hosted_embedding_fits(
+            rendered(body[chunk.char_start : chunk.char_end], count)
+        )
+
+    assert not fits(packed[0], 1)
+    remainder = body[body.index("[link]") :]
+    assert hosted_embedding_tokens(rendered(remainder, 1).embedding_text) == 16_384
+    assert not hosted_embedding_fits(rendered(remainder, 2))
+
+    pieces = split_oversized_chunks(
+        packed=packed,
+        oversized=frozenset({0}),
+        blocks=blocks,
+        eligibility=(True, True),
+        document_md=body,
+        ranges=(),
+        source_map=(),
+        fits=fits,
+    )
+    gap_pieces = [
+        piece
+        for piece in pieces
+        if blocks[0].char_end <= piece.char_start
+        and piece.char_end <= blocks[1].char_start
+    ]
+    assert [(piece.block_start, piece.block_end) for piece in gap_pieces] == [
+        (0, 0),
+        (0, 0),
+    ]
+    assert all(fits(piece, len(pieces)) for piece in pieces)
+    assert "".join(body[piece.char_start : piece.char_end] for piece in pieces) == body
+
+
 def test_split_evidence_clips_only_exact_linear_locators() -> None:
     from rememberstack.model import EvidenceSpan
     from rememberstack.model.conversion import SourceRangeLocator
@@ -303,6 +358,7 @@ def test_split_evidence_clips_only_exact_linear_locators() -> None:
 
     page = PageLocator(page=2, precision="page")
     exact = SourceRangeLocator(start_offset=100, end_offset=120, precision="exact")
+    envelope = SourceRangeLocator(start_offset=200, end_offset=220, precision="exact")
     ranges = (
         DerivationRange(
             start=10,
@@ -312,7 +368,8 @@ def test_split_evidence_clips_only_exact_linear_locators() -> None:
         ),
     )
     mapped = (
-        SourceMapEntry(start=10, end=30, locators=(exact,)),
+        SourceMapEntry(start=10, end=30, locators=(exact,), linear_source_offsets=True),
+        SourceMapEntry(start=10, end=30, locators=(envelope,)),
         SourceMapEntry(start=10, end=30, locators=(page,)),
         SourceMapEntry(
             start=25, end=30, locators=(PageLocator(page=3, precision="page"),)
@@ -322,10 +379,12 @@ def test_split_evidence_clips_only_exact_linear_locators() -> None:
         spans=(EvidenceSpan(char_start=13, char_end=18),),
         ranges=ranges,
         source_map=mapped,
-        clip_exact_ranges=True,
+        split_windows=((12, 24),),
     )
+    assert "linear_source_offsets" not in mapped[1].model_dump(mode="json")
     assert resolved.derivation_kind == "passthrough"
     assert resolved.source_locators == (
         SourceRangeLocator(start_offset=103, end_offset=108, precision="exact"),
+        envelope,
         page,
     )

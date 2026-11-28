@@ -223,12 +223,27 @@ class SourceMapEntry(BaseModel):
     """How the converter typed the source region it read this interval from
     (``title``, ``aside_text``, ``table``, …) — source disclosure only; block
     identity stays with the engine's own blockizer (D57)."""
+    linear_source_offsets: bool = Field(
+        default=False, exclude_if=lambda value: not value
+    )
+    """Each Markdown character has the same relative offset in one exact raw range."""
 
     @model_validator(mode="after")
     def interval_is_half_open(self) -> Self:
         """A mapped interval covers at least one character: ``[start, end)``."""
         if self.end <= self.start:
             raise ValueError("source map entry end must exceed start")
+        if self.linear_source_offsets:
+            locator = self.locators[0]
+            if (
+                len(self.locators) != 1
+                or locator.kind != "source_range"
+                or locator.precision != "exact"
+                or locator.end_offset - locator.start_offset != self.end - self.start
+            ):
+                raise ValueError(
+                    "linear source offsets require one exact equal-length range"
+                )
         return self
 
 

@@ -26,6 +26,7 @@ contract:
   - '.github/ci/contract-smoke-paths.txt'
 
 workers:
+  - 'benchmarks/d162_replay.py'
   - 'src/rememberstack/workers/**'
   - 'src/rememberstack/spine/**'
   - 'src/rememberstack/model/**'

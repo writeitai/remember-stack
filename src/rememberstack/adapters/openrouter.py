@@ -1061,9 +1061,10 @@ class OpenRouterModelProvider:
         provider = self._embedding_provider_payload()
         if provider is not None:
             payload["provider"] = provider
-        if request.hosted_passage and self.uses_hosted_embedding_ceiling(
+        hosted_passage = request.hosted_passage and self.uses_hosted_embedding_ceiling(
             model=request.model
-        ):
+        )
+        if hosted_passage:
             body = self._post(
                 path="/embeddings", payload=payload, classify_embedding_input=True
             )
@@ -1087,6 +1088,13 @@ class OpenRouterModelProvider:
             raise OpenRouterInvalidResponseError(
                 f"embedding count {len(vectors)} != batch size {len(request.texts)}",
                 usage=usage,
+            )
+        if hosted_passage and any(
+            type(item["index"]) is not int or item["index"] != index
+            for index, item in enumerate(ordered)
+        ):
+            raise OpenRouterInvalidResponseError(
+                "embedding response must index every input exactly once", usage=usage
             )
         if any(len(vector) == 0 for vector in vectors):
             raise OpenRouterInvalidResponseError(

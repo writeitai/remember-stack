@@ -1,4 +1,4 @@
-"""The strict checker replays grounded extraction from recorded wire replies."""
+"""The strict benchmark checker replays grounded extraction from recorded wire replies."""
 
 from argparse import Namespace
 import json

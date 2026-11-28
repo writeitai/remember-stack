@@ -179,7 +179,7 @@ def resolve_spans_occurrence_provenance(
     spans: tuple[EvidenceSpan, ...],
     ranges: tuple[DerivationRange, ...],
     source_map: tuple[SourceMapEntry, ...] | None,
-    clip_exact_ranges: bool = False,
+    split_windows: tuple[tuple[int, int], ...] = (),
 ) -> OccurrenceProvenance:
     """Stamp every supporting span, then union locators and most-mediated labels.
 
@@ -191,6 +191,7 @@ def resolve_spans_occurrence_provenance(
     and locators remain the union of hits. That is stricter than the
     single-span overlap contract, where one interval intersecting a labeled
     range still takes that range's labels.
+    A span from a split window can narrow a converter-attested linear range.
     """
     if not spans:
         return OccurrenceProvenance()
@@ -200,7 +201,10 @@ def resolve_spans_occurrence_provenance(
             char_end=span.char_end,
             ranges=ranges,
             source_map=source_map,
-            clip_exact_ranges=clip_exact_ranges,
+            clip_exact_ranges=any(
+                start <= span.char_start and span.char_end <= end
+                for start, end in split_windows
+            ),
         )
         for span in spans
     )
@@ -345,15 +349,11 @@ def _locators_from_map(
         ):
             continue
         for locator in entry.locators:
-            # Only a single, length-preserving exact source range can supply
-            # narrower coordinates. A page box or a time segment keeps its
-            # converter's original precision.
+            # Equal lengths alone do not establish a character mapping.
             if (
                 clip_exact_ranges
-                and len(entry.locators) == 1
+                and entry.linear_source_offsets
                 and locator.kind == "source_range"
-                and locator.precision == "exact"
-                and locator.end_offset - locator.start_offset == entry.end - entry.start
             ):
                 locator = locator.model_copy(
                     update={

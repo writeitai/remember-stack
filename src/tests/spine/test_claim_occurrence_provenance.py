@@ -1,69 +1,59 @@
 """Postgres-gated proofs: occurrence fields land on chunk_claims for insert and reuse."""
 
-from collections.abc import Iterator
-from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
 
-from alembic import command
-from alembic.config import Config
-from pydantic import ValidationError
-import pytest
-from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import ClaimRecord
 from rememberstack.model import EvidenceSpan
+from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingLane
+from rememberstack.model import RunResultOutcome
 from rememberstack.model.conversion import ImageRegionLocator
 from rememberstack.model.conversion import NormalizedRegion
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.spine.claim_catalog import ClaimCatalog
-from rememberstack.spine.settings import load_database_settings
-from tests.database_reset import reset_database
+from tests.workers.test_reuse_lifecycle import _DEPLOYMENT_ID
+from tests.workers.test_reuse_lifecycle import _ReuseRig
+from tests.workers.test_reuse_lifecycle import (
+    bootstrapped_deployment as bootstrapped_deployment,
+)
+from tests.workers.test_reuse_lifecycle import database_engine as database_engine
+from tests.workers.test_reuse_lifecycle import rig as rig
 
-_ROOT = Path(__file__).resolve().parents[3]
-_DEPLOYMENT_ID = UUID("83000000-0000-0000-0000-000000000001")
 _DOC_ID = UUID("83000000-0000-0000-0000-000000000002")
 _WHOLE_IMAGE = ImageRegionLocator(
     region=NormalizedRegion(x=0.0, y=0.0, w=1.0, h=1.0), precision="image"
 )
 
 
-@pytest.fixture(scope="module")
-def database_engine() -> Iterator[Engine]:
-    """Apply structural head and expose the accepted PostgreSQL integration engine."""
-    try:
-        database_url = load_database_settings().sqlalchemy_url()
-    except ValidationError:
-        pytest.skip(
-            "REMEMBERSTACK_DATABASE_URL is required for real PostgreSQL chain proofs"
+def _pack_chunk(rig: _ReuseRig, *, content: str) -> tuple[UUID, UUID]:
+    item = rig.observe(content=content)
+    for stage in (PipelineStage.CONVERT, PipelineStage.STRUCTURE, PipelineStage.CHUNK):
+        assert (
+            rig.worker.run_one(
+                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
+            ).outcome
+            is RunResultOutcome.SUCCEEDED
         )
-    config = Config(str(_ROOT / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", database_url)
-    reset_database(config=config)
-    command.upgrade(config=config, revision="head")
-    engine = create_engine(database_url)
-    try:
-        yield engine
-    finally:
-        engine.dispose()
+    with rig.engine.connect() as connection:
+        chunk_id = connection.execute(
+            text("SELECT chunk_id FROM chunks WHERE version_id=:id"),
+            {"id": item.version_id},
+        ).scalar_one()
+    return item.doc_id, chunk_id
 
 
-@pytest.fixture(autouse=True)
-def empty_claim_tables(database_engine: Engine) -> None:
-    """Each proof starts from empty claim/occurrence partitions."""
-    with database_engine.begin() as connection:
-        for table in ("chunk_claims", "claims", "claim_extraction_decisions"):
-            connection.execute(statement=text(f"TRUNCATE TABLE {table} CASCADE"))
-
-
-def _claim(*, chunk_id: UUID, source_span: str, char_start: int) -> ClaimRecord:
+def _claim(
+    *, chunk_id: UUID, source_span: str, char_start: int, doc_id: UUID = _DOC_ID
+) -> ClaimRecord:
     """One accepted claim row for catalog insert proofs."""
     return ClaimRecord(
         claim_id=uuid4(),
         deployment_id=_DEPLOYMENT_ID,
-        doc_id=_DOC_ID,
+        doc_id=doc_id,
         chunk_id=chunk_id,
         section_id=None,
         claim_text=source_span,
@@ -146,16 +136,19 @@ def test_record_extraction_without_occurrences_stays_unknown(
 
 
 def test_reuse_writes_target_provenance_and_preserves_claim_identity(
-    database_engine: Engine,
+    rig: _ReuseRig,
 ) -> None:
     """Re-attachment keeps the claim id and stamps TARGET occurrence fields."""
-    catalog = ClaimCatalog(engine=database_engine)
-    prior_chunk = uuid4()
-    target_chunk = uuid4()
-    claim = _claim(chunk_id=prior_chunk, source_span="the red valve", char_start=0)
+    catalog = rig.claim_catalog
+    doc_id, prior_chunk = _pack_chunk(rig, content="the red valve")
+    _, target_chunk = _pack_chunk(rig, content="See the red valve")
+    claim = _claim(
+        chunk_id=prior_chunk, source_span="the red valve", char_start=0, doc_id=doc_id
+    )
     catalog.record_extraction(
         claims=(claim,),
         decisions=(),
+        claimify_input_hash="valve-input",
         occurrences={
             claim.claim_id: OccurrenceProvenance(
                 derivation_kind="ocr",
@@ -174,6 +167,7 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
         deployment_id=_DEPLOYMENT_ID,
         chunk_id=target_chunk,
         prior_chunk_id=prior_chunk,
+        claimify_input_hash="valve-input",
         occurrences={claim.claim_id: target_provenance},
         evidence_spans={claim.claim_id: remapped},
     )
@@ -183,6 +177,7 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
         deployment_id=_DEPLOYMENT_ID,
         chunk_id=target_chunk,
         prior_chunk_id=prior_chunk,
+        claimify_input_hash="valve-input",
         occurrences={claim.claim_id: target_provenance},
         evidence_spans={claim.claim_id: remapped},
     )
@@ -192,7 +187,7 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
     assert anchors[0].evidence_spans == (
         EvidenceSpan(char_start=0, char_end=len("the red valve")),
     )
-    with database_engine.connect() as connection:
+    with rig.engine.connect() as connection:
         rows = (
             connection.execute(
                 text(
@@ -220,16 +215,16 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
     assert len(rows) == 2
 
 
-def test_own_document_name_span_persists_and_survives_reuse(
-    database_engine: Engine,
-) -> None:
+def test_own_document_name_span_persists_and_survives_reuse(rig: _ReuseRig) -> None:
     """D134: the span is on the claim row, so a reused occurrence carries it."""
-    catalog = ClaimCatalog(engine=database_engine)
-    prior_chunk = uuid4()
-    target_chunk = uuid4()
+    catalog = rig.claim_catalog
+    prior_body = "This report summarizes the 2025 audit findings. Revenue grew."
+    doc_id, prior_chunk = _pack_chunk(rig, content=prior_body)
+    _, target_chunk = _pack_chunk(rig, content=prior_body + " More to come.")
     claim_text = "The report Audit_2025.pdf summarizes the 2025 audit findings."
     claim = _claim(
         chunk_id=prior_chunk,
+        doc_id=doc_id,
         source_span="This report summarizes the 2025 audit findings.",
         char_start=0,
     ).model_copy(
@@ -239,19 +234,27 @@ def test_own_document_name_span_persists_and_survives_reuse(
             "own_document_name_end": 25,
         }
     )
-    plain = _claim(chunk_id=prior_chunk, source_span="Revenue grew.", char_start=60)
-    catalog.record_extraction(claims=(claim, plain), decisions=())
+    plain = _claim(
+        chunk_id=prior_chunk,
+        source_span="Revenue grew.",
+        char_start=prior_body.index("Revenue grew."),
+        doc_id=doc_id,
+    )
+    catalog.record_extraction(
+        claims=(claim, plain), decisions=(), claimify_input_hash="document-name-input"
+    )
     catalog.attach_reused_claims(
         deployment_id=_DEPLOYMENT_ID,
         chunk_id=target_chunk,
         prior_chunk_id=prior_chunk,
+        claimify_input_hash="document-name-input",
         occurrences=None,
         evidence_spans={
-            claim.claim_id: (EvidenceSpan(char_start=0, char_end=48),),
-            plain.claim_id: (EvidenceSpan(char_start=60, char_end=73),),
+            claim.claim_id: claim.evidence_spans,
+            plain.claim_id: plain.evidence_spans,
         },
     )
-    with database_engine.connect() as connection:
+    with rig.engine.connect() as connection:
         stored = connection.execute(
             text(
                 "SELECT lower(own_document_name_span), upper(own_document_name_span)"

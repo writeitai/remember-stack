@@ -11,12 +11,15 @@ from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
+import httpx
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters import OpenRouterModelProvider
+from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.selfhost import LocalFSObjectStore
 from rememberstack.adapters.testing import FakeModelProvider
@@ -524,9 +527,9 @@ def test_d162_isolates_input_rejection_and_keeps_committed_batch(
         assert indexed > 0 and waiting > 0 and skips == 0
 
 
-@pytest.mark.parametrize("unusable", (False, True))
-def test_d162_provider_throttling_and_unusable_vectors_exhaust_attempts(
-    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, unusable: bool
+@pytest.mark.parametrize("failure", ("throttle", "zero_vector", "duplicate_index"))
+def test_d162_unusable_provider_batches_exhaust_attempts(
+    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
     from rememberstack.model import EmbeddingRequest
     from rememberstack.model import EmbeddingResponse
@@ -535,9 +538,33 @@ def test_d162_provider_throttling_and_unusable_vectors_exhaust_attempts(
     _saved_grid(rig, _SOURCE)
     original = rig.provider.embed
 
-    def broken(*, request: EmbeddingRequest):
-        if not unusable:
+    def broken(*, request: EmbeddingRequest) -> EmbeddingResponse:
+        if failure == "throttle":
             raise ProviderCallError("throttled", status_code=429)
+        if failure == "duplicate_index":
+            assert len(request.texts) > 1 and request.dimensions is not None
+            adapter = OpenRouterModelProvider(
+                settings=OpenRouterSettings(
+                    api_key="offline", embedding_provider="nebius/bf16", zdr=True
+                )
+            )
+            reply = {
+                "model": request.model,
+                "data": [
+                    {"index": 0, "embedding": [1.0] * request.dimensions}
+                    for _ in request.texts
+                ],
+                "usage": {"prompt_tokens": 10, "total_tokens": 10, "cost": 0},
+            }
+            adapter._client.close()
+            with httpx.Client(
+                base_url="https://openrouter.ai/api/v1",
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(200, json=reply)
+                ),
+            ) as client:
+                adapter._client = client
+                return adapter.embed(request=request)
         result = original(request=request)
         return EmbeddingResponse(
             vectors=tuple((0.0,) * len(vector) for vector in result.vectors),
@@ -574,5 +601,7 @@ def test_d162_provider_throttling_and_unusable_vectors_exhaust_attempts(
             )
         ).one()
         assert attempts == 3
+        if failure == "duplicate_index":
+            assert "index every input exactly once" in error
         assert "embedding.input_rejected" not in error
         assert "embedding.input_too_large" not in error

@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from alembic import op
+from sqlalchemy import text
 
 revision: str = "p9_59_0080"
 down_revision: str | None = "p9_58_0079"
@@ -20,6 +21,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Retire D162 readers before removing the column."""
+    """Drop the column only if doing so preserves every version's reuse state."""
+    op.execute("LOCK TABLE public.chunks IN ACCESS EXCLUSIVE MODE")
+    if (
+        op.get_bind()
+        .execute(
+            text("SELECT EXISTS(SELECT 1 FROM public.chunks WHERE span_kind='split')")
+        )
+        .scalar_one()
+    ):
+        raise RuntimeError("D162 downgrade requires a database without split chunks")
     op.execute("ALTER TABLE public.chunks DROP COLUMN span_kind")
     op.execute("DROP TYPE public.chunk_span_kind")
