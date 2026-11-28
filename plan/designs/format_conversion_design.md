@@ -222,9 +222,9 @@ The mechanism:
 2. **E1 ends a base candidate** wherever eligibility changes between blocks. [D162 cuts](split_oversized_chunks_design.md#2-split-only-failing-candidates)
    also apply converter labels to nonblank gap text. E1 stores `chunks.extraction_eligible`
    for each final chunk.
-3. **E2 schedules Selection only for eligible chunks.** An ineligible chunk completes
-   deterministically with zero propositions and publishes no D122 reference cards; the Selection
-   barrier counts it complete.
+3. **E1 schedules Selection for every chunk in the extraction fan-out.** For an ineligible chunk,
+   including a split piece, E2 freezes zero propositions and zero reference cards without a model
+   call. D122 counts that result toward the Selection barrier and the preceding-eight producer window.
 4. **Reuse (D56):** the policy version joins Selection's reuse basis.
 
 ### 4.6 Row-level queries

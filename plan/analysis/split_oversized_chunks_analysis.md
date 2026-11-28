@@ -66,15 +66,22 @@ handles and can invalidate extraction. One local pass over the persisted
 inputs under the cutover fence checks fit before search goes offline.
 [E1 render from saved spans](../../src/rememberstack/workers/e1.py#L262-L295).
 
-An E1-local batch item limit changes only passage request grouping. A shared
-provider limit also applies to semantic queries. Self-host uses the same
-embedder for both, and P1 readiness checks model, dimension and policy. A
-lower shared byte cap can therefore reject a query while every saved passage
-fits and P1 reports ready. Compare the framed query limits before publishing.
-Refusing a shrinking shared cap keeps queries working with the existing binding.
-[E1 provider](../../src/rememberstack/profiles/selfhost.py#L1878-L1887) ·
-[Query provider](../../src/rememberstack/profiles/selfhost.py#L1424-L1439) ·
-[P1 readiness check](../../src/rememberstack/adapters/postgres_p1.py#L2049-L2096).
+An E1-local batch item limit changes only passage request grouping. Self-host
+shares the embedder with semantic queries, claim and fact projection, entity
+resolution and profile refresh. P1 readiness checks model, dimension and
+policy. A smaller shared byte cap can break queries while P1 reports ready.
+An eight-item cap can fit a singleton query and regrouped passages while
+rejecting a nine-item claim or fact request. Both writers batch to their P1
+setting, which defaults to 64. Checking each consumer's existing requests
+before switching limits avoids changing those callers or interrupting their
+work.
+[Query wiring](../../src/rememberstack/profiles/selfhost.py#L1424-L1449) ·
+[Writer wiring](../../src/rememberstack/profiles/selfhost.py#L1953-L1978) ·
+[Profile wiring](../../src/rememberstack/profiles/selfhost.py#L1820-L1824) ·
+[Resolver wiring](../../src/rememberstack/profiles/selfhost.py#L1904-L1910) ·
+[P1 readiness](../../src/rememberstack/adapters/postgres_p1.py#L2049-L2096) ·
+[P1 batch setting](../../src/rememberstack/workers/p1.py#L56-L75) ·
+[Fact batches](../../src/rememberstack/workers/p1.py#L358-L367).
 
 ## Benchmark sizing
 

@@ -390,9 +390,10 @@ With stable packing, a paragraph edit can still change Selection inputs for
 same-section neighbours and invalidate Claimify across section boundaries.
 The cross-section Claimify window is a known Rule 4 gap. [Worked example](e1_chunks_design.md#1-the-three-layer-model).
 
-A length-changing edit can repack the rest of the edited section until the
-next accepted anchor or the section's end. A structure change can move section
-ownership and repack unchanged text. [Anchor-stabilized packing](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58-d162).
+A length-changing edit can shift base packing up to the next anchor accepted
+by both versions or the end of the owner run. A structure change can move
+section ownership and repack unchanged text.
+[Anchor-stabilized packing](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58-d162).
 
 The **occurrence record is exact** (Codex review F4): a thin `chunk_claims` map links every
 version-chunk to the claims it carries — written on fresh extraction *and* on reuse — so one

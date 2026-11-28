@@ -2051,8 +2051,8 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
-**anchor-stabilized boundaries** (packing restarts at content-defined anchor blocks, so an
-early edit perturbs packing only to the next anchor — load-bearing for sectionless documents).
+**anchor-stabilized boundaries** (packing after an edit realigns at the next anchor accepted
+by both versions or stops at the end of the owner run).
 **No overlap, ever**: overlap double-extracts (duplicate claims within one generation — the
 inflation D54 just killed), bloats P1 with near-duplicates, and its offset-arithmetic
 boundaries destroy D56 reuse; the E2 bundle's ±N neighbors provide cross-boundary context
@@ -3559,8 +3559,8 @@ second-order channel; it is not the D80 default.
 
 > **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
 > gates carry-forward on both versions at commit and keeps semantic search
-> ready for qualified request-limit-only changes that preserve the query
-> request envelope.
+> ready for qualified request-limit-only changes. Shared changes must preserve
+> the requests of every other embedding consumer.
 
 **Decision (2026-08-03).** The product path for chunk (passage) embeddings is **conventional
 embedders only** (`texts → vectors`), chosen for **interchangeability** under version-scoped
@@ -6808,9 +6808,10 @@ way to become several documents.
    (a deterministic file card for recognized formats with no reading). Structured
    families are read fully only within hard bounds (200 rows, 20,000 characters).
 3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
-   structure searchable but not claim-extracted. Converters must change eligibility
-   only at block boundaries (validated at conversion); E1 forces a chunk boundary
-   there and E2 schedules Selection only for eligible chunks.
+   structure searchable but not claim-extracted. Conversion validates that eligibility
+   changes only at block boundaries. E1 cuts there and schedules Selection for every
+   chunk in the extraction fan-out.
+   E2 freezes an empty result for ineligible chunks without a model call.
 4. Profiled tables are stored as normalized Parquet in a new **private store** (a
    third object-store root no mount, P3 or `hydrate` reads), and a new direct
    primitive, **`data_query`**, runs one read-only SQL statement over them in DuckDB
@@ -8781,8 +8782,8 @@ Fence replay and drain legacy E1 before enabling splits and fit checks.
 Skip blocked legacy E1 resets during D159 unarchive. Fence actual undos
 during later binding switches so eligible resets can commit after the switch.
 Check persisted rebuild and replay inputs against an incoming binding.
-Publish qualified request-limit-only changes with semantic search ready
-when they preserve the outgoing query request envelope.
+Verify that shared limit changes preserve every other embedding consumer's
+requests. Publish qualified request-limit-only changes with semantic search ready.
 Confirmed input rejections are typed terminal failures. Require offline
 equality of legacy requests and full rows on frozen LoCoMo Full-v45 and BEAM.
 

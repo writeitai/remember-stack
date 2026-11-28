@@ -216,8 +216,11 @@ An oversized block forms a candidate on its own.
 - **Uniform extraction eligibility** (D133). The extraction eligibility policy marks some
   `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
   tables). The base packer cuts at eligibility changes between blocks. D162 pieces have
-  uniform eligibility for nonblank text, including gaps. `chunks.extraction_eligible` records it and
-  E2 schedules Selection only for eligible chunks (`format_conversion_design.md` §4.5).
+  uniform eligibility for nonblank text, including gaps. `chunks.extraction_eligible` records it.
+  E1's extraction fan-out schedules Selection for every final chunk. E2 freezes an empty
+  result without a model call for each ineligible chunk, including split pieces. The result counts
+  toward the [D122 barrier](document_reference_context_design.md#persistence-scheduling-and-retries)
+  and keeps its slot in the preceding-eight producer window.
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost
@@ -228,8 +231,9 @@ An oversized block forms a candidate on its own.
   identity or extraction costs.
 - **Anchor-stabilized boundaries** (A2). Accept a block as an anchor when
   `uint64(block_hash) mod M == 0` and at least `min_gap` tokens have accumulated since the
-  last accepted anchor. A boundary before each anchor limits packing changes to the next
-  anchor or the end of the owner run. The budget, `M` and `min_gap` are part of `chunker_version`.
+  last accepted anchor. A length edit can change which blocks clear that gap. Base packing can
+  differ up to the next unchanged anchor accepted by both versions or the end of the owner run.
+  The budget, `M` and `min_gap` are part of `chunker_version`.
 - **Determinism:** base candidates = f(blocks, sections, budget, anchors, `chunker_version`) — a
   chunker bump is a cheap repack of existing atoms (no re-conversion, no re-blockize), though
   it does re-key reuse (a deliberate version boundary, like any D7 version bump).

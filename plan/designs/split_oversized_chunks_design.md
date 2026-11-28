@@ -15,7 +15,8 @@ and framing. Hosted Qwen3-Embedding-8B on OpenRouter `nebius/bf16` starts at
 **22,528 tokens**. Keep each binding active through its outstanding work.
 Check persisted grids against the incoming binding while queries still use
 the outgoing binding.
-Online limit changes also preserve the outgoing query request envelope.
+Shared limit changes also preserve the requests of every other embedding
+consumer.
 [D80 maintenance cutover](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse).
 
 CHUNK checks new legacy candidates for input and singleton-request fit. Fitting
@@ -143,8 +144,10 @@ splits and zero live model calls. Compare every column of `chunks` and
 and stamps. Record fixture digests and the replay command.
 
 Test deterministic cuts, gap-only extraction and grounding, exact bytes and
-provenance, header growth and D122 order. Run `section_history` and
-`document_references` on a fitting grid and compare ordered
+provenance, header growth and D122 order. Verify E2 freezes an empty Selection
+result without a model call for an ineligible split piece. The result counts
+toward the barrier and occupies its slot in producer order. Run
+`section_history` and `document_references` on a fitting grid and compare ordered
 `first_chunk_ids` to the legacy readers. On a grid split inside a keyed
 section's first block, both return exactly the ID of the piece containing
 that block's start.
@@ -175,12 +178,15 @@ and new D140 keys.
 
 Rehearse a binding switch after all work settles. Reject incoming caps that
 fail fit for a completed grid or for an input reached only by eligible replay.
-Also reject a lower shared byte cap when every saved passage fits but a
-previously accepted semantic query would fail. Issue that query again in a
-fresh request and verify it succeeds on the outgoing binding and vectors.
-A fitting E1-local batch-item-limit change and a shared limit change that
-preserves the query envelope both publish with queries succeeding throughout
-and zero vector writes or rebuild calls. A fitting generation change
+Reject a lower shared byte cap that excludes a previously accepted semantic
+query even when every saved passage fits. Reject a shared eight-item cap
+when claim and fact writers send nine-item requests, even if queries and
+regrouped E1 batches fit. Reject unverified shared limits. After refusal,
+verify that affected requests succeed on the outgoing binding and a fresh
+semantic query still reads the outgoing vectors. A fitting change to E1's
+batch item limit and a compatible shared limit change publish with semantic
+queries succeeding throughout, successful claim and fact writes, and zero
+migration vector writes or rebuild calls. A fitting generation change
 completes D80 rebuild and verification.
 
 Race unarchive with the later fence. Resets committed before installation

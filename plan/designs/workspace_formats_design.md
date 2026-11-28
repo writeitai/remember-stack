@@ -39,10 +39,11 @@ descriptions) when a deployment configures those routes.
 | **profile** | a deterministic description of a data file (§5) | no |
 | **card** | a short description of a file memory does not read (§6) | no |
 
-Search-only uses D133 §4.5's eligibility mechanism: converters label every range with a
-`derivation_kind`; the eligibility policy lists the kinds that are never claim-extracted; E1 cuts
-chunks where eligibility changes and E2 schedules Selection only for eligible chunks. The
-ineligible kinds are `code`, `config`, `log`, `other_text`, `large_text`, `profile_structure`,
+Search-only uses [D133's eligibility mechanism](format_conversion_design.md#45-extraction-eligibility).
+Converters label ranges by `derivation_kind`. E1 cuts at eligibility changes and schedules
+Selection for every chunk in the extraction fan-out. E2 freezes an empty result without
+a model call for ineligible chunks. The ineligible kinds are
+`code`, `config`, `log`, `other_text`, `large_text`, `profile_structure`,
 `profile_sample`, `file_card` and `pdf_page_status`. Everything else a converter emits is prose.
 
 ## 3. Detection and routing

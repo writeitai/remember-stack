@@ -88,10 +88,11 @@ do not corrupt evidence.
 
 The Selection barrier uses the expected chunks of the immutable representation
 and pinned generations. Create Claimify work idempotently and transactionally
-once all results exist. Reused results count as complete. A terminal missing or
-invalid Selection result cannot be silently treated as zero references. Existing
-failure/retry policy remains visible. Claim normalization begins only after the
-existing extraction-completion barrier, now covering Claimify.
+once every expected result is frozen and its Selection job has succeeded.
+Reused results and frozen empty results from ineligible chunks satisfy the
+result check. Terminal missing or invalid results remain visible as failures.
+Claim normalization begins after the existing extraction-completion barrier,
+now covering Claimify.
 Successful Selection with no kept propositions may still publish grounded cards
 for other chunks. Its own Claimify completes deterministically without a model
 call. Empty representations follow the existing empty completion path.

@@ -272,7 +272,7 @@ produced from different text.
 | Policy version changes | Use the cutover below. Re-render in-scope chunks and reuse exactly attested vectors or re-embed. |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
 | Embedder generation changes | Use the cutover below to re-embed (§7). |
-| Qualified request limits change by themselves | Check passage fit and preserve the query request envelope for online publication. |
+| Qualified request limits change by themselves | Check passage fit and, for shared limits, preserve other consumers' requests for online publication. |
 | Summary-only regeneration | No render/embed |
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
@@ -305,14 +305,18 @@ refuse the switch and release the fence. Semantic search continues on the
 outgoing binding and vectors.
 [D162 fit check](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
 
-Publish a request-limit-only change under the fence with current vector
-attestations and semantic search ready if it is local to E1 or preserves the
-outgoing query request envelope. For a shared binding, the incoming
-per-input and whole-request limits on every reachable query route must still
-allow every semantic embedding request the outgoing binding allowed,
-including preprocessing and framing. If the envelope would shrink or
-compatibility is unknown, refuse the switch and keep the outgoing binding and
-vectors. Release the fence after publication or refusal.
+An E1-local limit change qualifies through passage fit and D162 batch
+grouping. Before changing shared request limits, also verify that every other
+embedding consumer can still send every request the outgoing binding allowed.
+In self-host this includes `QueryEngine`, open SQL, claim and fact writers,
+entity resolution and profile refresh. Check per-input and whole-request
+limits on every reachable route using each consumer's configured batching,
+preprocessing and framing. If compatibility fails or is unknown, refuse the
+switch, keep the outgoing binding and vectors active, and release the fence.
+
+Publish a qualified request-limit-only change under the fence with current
+vector attestations and semantic search ready. Release the fence after
+publication.
 
 Changes that require new attestations, vectors or indexes take the affected
 semantic channels unready after fit passes. Rebuild as required, publish the
