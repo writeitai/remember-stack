@@ -618,6 +618,11 @@ COMMENT ON TABLE cost_ledger IS
 CREATE INDEX ix_cost_budget_window ON cost_ledger (deployment_id, stage, lane, occurred_at);
 ```
 
+The [D162 replay guard](split_oversized_chunks_design.md#4-rollout) skips fenced
+or permanently blocked E1 resets before the constraints run. Skipped rows are
+absent from `UPDATE ... RETURNING`, so D159 unarchive can restore testimony and
+wake eligible work in the same transaction.
+
 ### Post-head deployment bootstrap (D69)
 
 The cold-start order is exact:

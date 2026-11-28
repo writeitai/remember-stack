@@ -78,11 +78,13 @@ results, its generation and stable source-input basis. Normalize temporary label
 to validated source descriptors before persistence; preserve exact text and
 range/origin information needed for occurrence remapping.
 
-Matching prior-version inputs reuse the frozen Selection output; retries never
-regenerate a committed response. Uncommitted concurrent calls may race, but only
-one accepted result becomes authoritative through existing transaction/CAS
-patterns. Do not add a second queue or distributed cache. Associate results with
-each consuming chunk occurrence so position changes do not corrupt evidence.
+Matching prior-version inputs reuse frozen Selection output subject to the
+reuse rules below. Retries replay committed Selection and Claimify results
+by chunk ID and extractor generation. Uncommitted concurrent calls may race,
+but only one accepted result becomes authoritative through existing
+transaction/CAS patterns. Do not add a second queue or distributed cache.
+Associate results with each consuming chunk occurrence so position changes
+do not corrupt evidence.
 
 The Selection barrier uses the expected chunks of the immutable representation
 and pinned generations. Create Claimify work idempotently and transactionally
@@ -108,13 +110,15 @@ document is unnecessarily broad. A fixed source region captures both positive
 and negative dependencies while bounding the spread of invalidation.
 
 Do not include absolute offsets, document-version IDs, temporary labels or freshly
-generated summaries in content identity. Identical stable inputs must reuse the
-same frozen Selection decision, not call the model to obtain new cards. For each
-new occurrence remap all selected evidence into its allowed source units, including
-reference-card passages. Reject ambiguous repeated-text remapping; never take the
-first global substring match. Existing D56 same-claim-ID reuse and D119 occurrence
-evidence stay mandatory. Header timestamp changes retain their documented broader
-invalidation; shifting chunk boundaries can also change actual input context.
+generated summaries in content identity. Reuse matching Selection and Claimify
+inputs when both the donor and receiver pass the
+[D162 version-wide gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate)
+and the evidence remaps successfully. Remap all evidence into each new
+occurrence's allowed source units, including reference-card passages. Require
+an unambiguous match in those units. Existing D56 same-claim-ID reuse and D119
+occurrence evidence stay mandatory. Header timestamp changes retain their
+documented broader invalidation. Chunk boundary shifts can also change actual
+input context.
 
 ## Relationship to E3 and entity resolution
 

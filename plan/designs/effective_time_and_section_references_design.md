@@ -494,6 +494,10 @@ warning; the later headings get no key. Every read that resolves a key — secti
 reference endpoints, first chunk ids — looks it up only in the version's current
 representation's current structure generation.
 
+Both readers resolve `first_chunk_ids` by half-open character span containment
+of the first block's start (`document_sections.char_start` for a keyed heading).
+[D162 chunk spans](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+
 The hash columns are nullable at the schema level. Sections created before D140 are backfilled
 by a maintenance job that recomputes, from each representation's stored `blocks.json` and the
 section's block range (no model, no reprocessing): both hashes, **and the section key** — the

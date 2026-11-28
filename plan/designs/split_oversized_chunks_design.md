@@ -12,8 +12,9 @@ and separators) plus framing. Check per-input and aggregate token, item and
 byte limits. One nonblank Unicode scalar must fit with the largest D80 header
 and framing. Hosted Qwen3-Embedding-8B on OpenRouter `nebius/bf16` starts at
 **16,384 tokens** for qualification. The benchmark binding requires at least
-**22,528 tokens**. Keep it active through outstanding work. Use [D80's maintenance cutover](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse)
-for incompatible changes.
+**22,528 tokens**. Keep each binding active through its outstanding work.
+Before switching, check persisted grids for fit under the incoming binding
+while semantic search still serves. [D80 maintenance cutover](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse).
 
 CHUNK checks new legacy candidates for input and singleton-request fit. Fitting
 candidates keep their spans. Render against final order and count, rechecking
@@ -39,9 +40,11 @@ Pieces use UUIDv4, consecutive document ordinals, exact half-open E0 spans
 within the same section, and legacy whitespace token counts. Store the first
 and last intersected block ordinals inclusive, or the preceding block in
 both fields for a gap-only piece. Ordinals may repeat across pieces. Clip
-source map and converter-origin ranges to each piece. Section references and
-history use the chunk containing the first block's start.
-[Current section-entry lookup](../../src/rememberstack/spine/section_history.py#L737-L752).
+source map and converter-origin ranges to each piece. Section history and
+resolved document references use the chunk whose half-open span contains the
+start of the keyed section's first block. Preserve each reader's version and
+representation scope and result order.
+[D140 section keys](effective_time_and_section_references_design.md#42-storage-and-uniqueness).
 
 Use the existing key builders on the final grid. A piece's hash covers its ordered
 exact block fragments and gap bytes under a fixed split discriminator.
@@ -77,18 +80,25 @@ and eligible donors.
 
 ## 4. Rollout
 
-Add the version flag and ledger replay eligibility compatibly under D160.
+Install the version flag and replay guard compatibly under D160.
 Pause STRUCTURE claims and settle running attempts. Fence CHUNK and
 EMBED_CHUNK `dead_letter` to `pending` transitions in PostgreSQL across all
-callers and lanes. Serialize the fence with in-flight replays. With the
-outgoing workers and binding, drain all legacy jobs of both stages to
-terminal status, including delayed jobs, retries, leases, saved-grid CHUNK
-handoffs and replays committed before the fence. Mark remaining legacy E1
-dead letters `replay_blocked` while fenced. PostgreSQL keeps them terminal.
+callers and lanes. Serialize the fence with in-flight resets. A
+`BEFORE UPDATE` trigger skips the individual reset when the fence is active
+or the row is already `replay_blocked`. A skipped row is absent from
+`RETURNING`. This lets D159 unarchive restore testimony and wake eligible
+work in one transaction, including on the outgoing release.
+
+Use the outgoing workers and binding to drain all legacy jobs of both stages
+to terminal status, including delayed jobs, retries, leases, saved-grid CHUNK
+handoffs and replays committed before the fence. Mark remaining legacy E1 dead
+letters `replay_blocked` while fenced. The trigger keeps applying the permanent
+block after the fence lifts.
 Retire previous-release CHUNK, EMBED_CHUNK, Selection and Claimify workers
 and section-entry readers. Turn on split writes and fit enforcement together,
 then resume admission and eligible replay.
 [Replay](orchestration_design.md#6-dead-letter-operations) ·
+[Unarchive](archive_and_forget_design.md#23-undo-and-coming-back) ·
 [D160](packaging_distribution_design.md#61-migration-compatibility).
 
 ## 5. Terminal failure
@@ -102,10 +112,11 @@ Throttling, ambiguous 429s, outages and unusable responses take bounded
 retries. Committed batches remain durable.
 
 Keep the chunker version, work keys and persisted grids. Pre-cutover E1
-dead letters stay pipeline-failed. Changed bytes at the same D55 source
-identity create a successor. Identical D55 ingest returns the existing
-version. Submitting the same bytes afresh requires D159 forget and re-add
-with `allow_forgotten=true`.
+dead letters stay pipeline-failed. At the same D55 source identity, a
+keyless ingest is a no-op when its bytes match the latest version and that
+version is non-deleted. A revert to bytes matching only an older version
+or a new D140 `version_key` creates a successor. D159 forget and re-add
+with `allow_forgotten=true` starts a fresh lineage.
 [Version registration](../../src/rememberstack/spine/document_catalog.py#L221-L250) ·
 [D159 re-ingest](archive_and_forget_design.md#36-re-ingest-guard-and-adding-a-document-back).
 
@@ -120,15 +131,32 @@ splits and zero live model calls. Compare every column of `chunks` and
 and stamps. Record fixture digests and the replay command.
 
 Test deterministic cuts, gap-only extraction and grounding, exact bytes and
-provenance, header growth, section entry and D122 order. In a dated lineage,
-count E1 and both E2 calls and check dates and claim IDs through unsplit →
-split → unsplit. Exercise matching keys for a distant intact chunk, including
-same-date E2 matches and empty results. The split target runs fresh. The next
-version skips the split donor, taking an older eligible match or running fresh
-at its own date. Retain D56 packing and D122 coverage for ordinary edits.
+provenance, header growth and D122 order. Run `section_history` and
+`document_references` on a fitting grid and compare ordered
+`first_chunk_ids` to the legacy readers. On a grid split inside a keyed
+section's first block, both return exactly the ID of the piece containing
+that block's start.
+
+In a dated lineage, count E1 and both E2 calls and check dates and claim IDs
+through unsplit → split → unsplit. Exercise matching keys for a distant intact
+chunk, including same-date E2 matches and empty results. The split target
+runs fresh. Retry its committed results by chunk ID with zero model calls.
+The next version skips the split donor, taking an older eligible match or
+running fresh at its own date. Retain D56 packing and D122 coverage for
+ordinary edits.
 
 Rehearse cutover with an above-cap legacy grid, CHUNK retry after grid
 write and EMBED_CHUNK in backoff. Test replay on both sides of the fence,
 including from the outgoing CLI. Refusals preserve the row and announce no
-work. Eligible post-cutover work can replay. Test typed rejection versus
-bounded retries, identical re-ingest and an edited successor.
+work. Test unarchive on the outgoing release with mixed cut-short work,
+once during the fence and once with the permanent block alone. Require
+testimony restoration, wakes for eligible resets and unchanged blocked
+dead letters with no wake. Eligible post-cutover work can replay. Test typed
+rejection versus bounded retries, latest-byte no-op and successors on reverts
+and new D140 keys.
+
+Rehearse a binding switch after all work settles. Use an incoming cap below
+a completed grid's input and, separately, below an input reached only by
+eligible replay. Require refusal with semantic search still serving and the
+outgoing vectors intact. A fitting binding completes D80 rebuild and
+verification.

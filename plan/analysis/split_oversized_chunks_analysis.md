@@ -29,6 +29,20 @@ a gap-only window unlabelled beside a block-backed neighbour.
 [Ledger replay](../../src/rememberstack/spine/work_ledger.py#L2365-L2392) ·
 [Passage labels](../../src/rememberstack/core/source_passages.py#L124-L148).
 
+Unarchive resets cut-short jobs in the same transaction that restores
+testimony. A check constraint alone makes one blocked reset roll back the
+undo. An application filter would miss the outgoing release. A PostgreSQL
+row guard skips blocked updates, and the reset's existing `RETURNING` clause
+wakes only rows that moved to pending.
+[Reset statement](../../src/rememberstack/spine/lifecycle.py#L2024-L2053) ·
+[Unarchive transaction](../../src/rememberstack/workers/reconcile.py#L1024-L1064).
+
+A drained queue can still leave a successfully embedded 20,000-token chunk
+that exceeds an incoming 16,384-token cap. Repacking would change chunk
+handles and can invalidate extraction. One local pass over the persisted
+inputs under the cutover fence checks fit before search goes offline.
+[E1 render from saved spans](../../src/rememberstack/workers/e1.py#L262-L295).
+
 ## Benchmark sizing
 
 The author-reported Full-v45 audit found a 21,567-token OCR singleton

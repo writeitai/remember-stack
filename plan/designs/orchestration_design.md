@@ -252,9 +252,10 @@ infrastructure). The operational surface over it is thin and deterministic:
   same transition per row, scoped by version or error class. An explicit operator
   transition may reroute it through the backfill lane when large. `payload` remains handler input
   for inspection, never the source of route, schedule, or retry state.
-- **D162 cutover** fences CHUNK and EMBED_CHUNK replays and leaves outstanding legacy
-  dead letters permanently ineligible. Single and bulk refusals preserve the row and error
-  and announce no work. [Rollout](split_oversized_chunks_design.md#4-rollout).
+- **D162 cutover** skips fenced or permanently blocked CHUNK and EMBED_CHUNK
+  dead-letter resets in PostgreSQL, including in D159 unarchive. Single and
+  bulk replay preserve blocked rows and their errors. Only committed resets
+  are announced. [Rollout](split_oversized_chunks_design.md#4-rollout).
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.

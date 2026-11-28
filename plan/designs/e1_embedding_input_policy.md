@@ -268,9 +268,9 @@ produced from different text.
 |---|---|
 | Body bytes change | Re-render; new hash ⇒ provider embed under the configured current state |
 | Location field that affects header/mode changes | Re-render; new hash ⇒ provider embed |
-| Policy version changes | Mark semantic channel unready; re-render all in-scope chunks; reuse an exactly attested vector or re-embed; verify and publish |
+| Policy version changes | Use the cutover below. Re-render in-scope chunks and reuse exactly attested vectors or re-embed. |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
-| Embedder generation changes | Mark semantic channel unready; provider re-embed, verify and publish (§7) |
+| Embedder generation changes | Use the cutover below to re-embed (§7). |
 | Summary-only regeneration | No render/embed |
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
@@ -279,11 +279,20 @@ Content-hash-only vector carry-forward is **insufficient** when embedding text
 includes location. Block-level **extraction** reuse (D56 A1–A3) remains
 content-addressed without LLM output in identity keys.
 
-**Maintenance cutover:** an incompatible model, dimension, or policy change
-makes semantic search unavailable while disposable vector state is rebuilt and
-verified. Temporary migration state is allowed; two permanent searchable
-generations are not. The configured pair is published only after coverage,
-dimension, policy, and hash checks pass.
+Before switching the qualified binding or input policy, fence new E1 admission
+and replay for the **maintenance cutover**. Let outgoing work and its handoffs
+settle under the outgoing binding. With the fence held, render every persisted
+chunk needed for rebuild or eligible replay, including chunks with completed
+jobs. Use the incoming policy and each saved grid's spans, order and count.
+Check each non-skipped input locally against D162's input and singleton-request
+limits on every reachable route. If any input fails, report its chunk ID,
+refuse the switch and release the fence. Semantic search continues on the
+outgoing binding and vectors.
+[D162 fit check](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
+
+After the fit check passes, mark semantic search unready for the rebuild.
+Publish the incoming pair and release the fence after coverage, dimension,
+policy and hash checks pass. Discard temporary migration state after cutover.
 
 ---
 
@@ -378,10 +387,10 @@ retained on the PG stamp and returned **separately** on hydration when present.
 That keeps short-message BM25 from being dominated by headers and matches
 “header returned separately from source body” in retrieval design.
 
-**Migration:** one active row is keyed by `(deployment_id, chunk_id)`. An
-incompatible model/dimension/policy change marks semantic search unready,
-rebuilds and verifies the derived state, then publishes the new configuration.
-Temporary build state is discarded; it is not a permanent second generation.
+One active row is keyed by `(deployment_id, chunk_id)`. The
+[maintenance cutover](#45-migration-triggers-and-vector-reuse) checks fit
+before semantic search goes unready and verifies the rebuilt state before
+publishing the configuration.
 
 ---
 
@@ -426,7 +435,8 @@ A deployment may swap conventional embedders when:
 5. **Reuse locality** — edit that moves a chunk’s section/channel changes
    embedding_text_hash; content-only body edit without location change reuses
    vector when hash matches.  
-6. **Two conventional embedders** — exercise unready/rebuild/verify/publish.
+6. **Two conventional embedders** — exercise
+   [fit refusal and successful rebuild](split_oversized_chunks_design.md#6-acceptance).
 7. **D159** — forget purges derived search state and location facts.
 
 ---

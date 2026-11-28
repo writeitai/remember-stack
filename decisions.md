@@ -8767,9 +8767,11 @@ excludes its whole version as both a receiver and donor for E1/E2 reuse
 and D140 text origin. Fitting grids retain legacy identities.
 
 Fence replay and drain legacy E1 before enabling splits and fit checks.
-Confirmed input rejections are typed terminal failures. Legacy dead letters
-stay terminal. Require offline equality of legacy requests and full rows
-on frozen LoCoMo Full-v45 and BEAM.
+Skip blocked E1 resets so D159 unarchive can restore testimony and resume
+eligible work. Check persisted rebuild and replay inputs against an incoming
+binding before taking semantic search offline. Confirmed input rejections
+are typed terminal failures. Require offline equality of legacy requests
+and full rows on frozen LoCoMo Full-v45 and BEAM.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
