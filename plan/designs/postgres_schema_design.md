@@ -482,8 +482,8 @@ CREATE INDEX ix_forgets_content ON forgets USING gin (content_hashes);
 -- D155 publish_corpus uses a fresh corpus_publication event UUID per committed trigger,
 -- stored only in this ledger with payload doc_id; no request table or revision counter (§10).
 -- Lane is intentionally not part of that key: it routes one logical unit of work. A duplicate
--- steady enqueue may promote pending/failed backfill work (never the reverse); replay of an
--- eligible dead letter may also reroute it. Promotion clears only defer_reason='budget' and resets
+-- steady enqueue may promote pending/failed backfill work (never the reverse); an explicit
+-- dead-letter replay may also reroute it. Promotion clears only defer_reason='budget' and resets
 -- that row's not_before to now(); scheduled and retry_backoff waits are preserved. The dead-letter
 -- queue is status='dead_letter' rows.
 -- ─────────────────────────────────────────────────────────────────────────
@@ -502,7 +502,7 @@ CREATE TABLE processing_state (
   attempts        smallint NOT NULL DEFAULT 0, -- handler executions actually begun; delivery attempts and budget parking do not increment it
   max_attempts    smallint NOT NULL DEFAULT 3, -- total handler-attempt limit; starting point = initial + D12's two retries
   last_error      text,                        -- full traceback + cause chain for the most recent handler failure; failures never disappear
-  replay_blocked  boolean NOT NULL DEFAULT false, -- D162 cutover marks legacy CHUNK and EMBED_CHUNK dead letters
+  replay_blocked  boolean NOT NULL DEFAULT false, -- D162 marks legacy E1 dead letters at cutover
   payload         jsonb,                       -- open-ended handler input for DLQ inspection/replay; never route, due, retry, budget, or DLQ state
   enqueued_at     timestamptz NOT NULL DEFAULT now(),
   started_at      timestamptz,
@@ -1247,6 +1247,7 @@ CREATE TABLE document_versions (
   published_at    timestamptz,                 -- document's own date (resolves "last year"); world-time origin
   language        text,                        -- detected primary language (per version — it can change)
   source_shape    text,                        -- D80 typed filter grain: document | message_atom | thread | channel_export | connector-defined extension
+  has_split_chunks boolean NOT NULL DEFAULT false, -- sticky D162 reuse gate, committed with the grid
   current_representation_id uuid,              -- → document_representations (D65): the LIVE reading of this snapshot; swapped only after the new representation's conversion→E1→E2 chain completes (real FK added after that table)
   status          document_status NOT NULL DEFAULT 'ingesting', -- ingesting | converting | structuring | ready | failed | deleted
   error           text,
@@ -1643,8 +1644,8 @@ stored as derived metadata, not body text).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
--- chunks — section-bounded E1 units (D58, D162). Body is the [char_start,char_end)
--- slice of representation Markdown (D37). P1 is keyed by chunk_id. Large
+-- chunks — section-bounded E1 units (D58, D162). Body = Markdown slice [char_start,char_end).
+-- P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (
@@ -1655,17 +1656,16 @@ CREATE TABLE chunks (
   representation_id uuid NOT NULL,             -- LOGICAL FK → document_representations (D65): the reading whose block grid + document.md offsets this chunk is cut from — the basis coordinate on every occurrence
   section_id      uuid,                        -- LOGICAL FK → document_sections; section (role/path signal for E2)
   ordinal         integer NOT NULL,            -- position within the document
-  block_start     integer NOT NULL,            -- first intersected block ordinal, or preceding block for a gap-only piece (D162)
-  block_end       integer NOT NULL,            -- last intersected block ordinal (inclusive), or same as block_start for a gap-only piece
+  block_start     integer NOT NULL,            -- first intersected block ordinal, or preceding block for a gap-only piece
+  block_end       integer NOT NULL,            -- last intersected block ordinal (inclusive), or same as block_start for gap-only pieces
   chunk_content_hash text NOT NULL,            -- ordered block hashes or D162 split hash
-  extraction_input_hash text NOT NULL,         -- stable Selection inputs including text_origin_at (e1_chunks_design.md §7)
+  extraction_input_hash text NOT NULL,         -- stable Selection inputs including text_origin_at (E1 design §7)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
-  text_origin_at  timestamptz,                 -- D140: recorded once from the earliest eligible origin after D162 window checks, else this version's source_modified_at or published_at; feeds the E2 header, the Selection key, and fresh claims' asserted_at
-  reuse_identity_hash text,                    -- D140: date-free identity for the text-origin lookup (e1_chunks_design.md §7)
-  reuse_window_check boolean,                 -- D162: true for a split neighbour or a marked reuse candidate, NULL otherwise
-  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5 governs labeled ranges. Eligibility is uniform for nonblank text in D162 split pieces.
+  text_origin_at  timestamptz,                 -- earliest eligible D140 origin or this version's own date, subject to the D162 version gate
+  reuse_identity_hash text,                    -- D140: date-free identity for the text-origin lookup (E1 design §7)
+  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5. Eligibility is uniform for nonblank text in D162 split pieces.
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
   -- stored here (D37); chunk_search holds normalized body + one current vector.
@@ -1682,7 +1682,7 @@ CREATE TABLE chunks (
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'Section-bounded E1 retrieval units, one row per (version, position). Private chunk_search holds normalized search text and current vectors (D94). The authority row stores offsets, section link, D80 policy and location stamps, version stamps, and D56 extraction reuse keys. Vector carry-forward matches the content hash, embedding text hash, policy and model (D80). Monthly-partitioned, logical FKs (D23).';
+  'Section-bounded E1 retrieval units. Normalized search text and current embeddings live in private chunk_search (D94). Chunks hold offsets, section link, D80 location and policy stamps, version stamps, and D56 reuse keys. The D162 reuse gate is on document_versions. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup

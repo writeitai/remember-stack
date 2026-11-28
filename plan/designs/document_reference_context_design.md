@@ -101,9 +101,6 @@ header and generation. Claimify's effective basis adds the ordered stable
 Selection-input bases of every owning unit in its eligible preceding region,
 including units that emitted no cards, and the reference-policy generation.
 Those Selection bases include any neighbor source used to define their cards.
-For the target and each matched producer, verify the actual donor's consumed
-windows when either row carries D162's window-check marker.
-[D162 hash rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 
 Hashing only cited/admitted cards is incorrect: an edited chunk may introduce a
 competing referent even though the old cited card is unchanged. Hashing the entire

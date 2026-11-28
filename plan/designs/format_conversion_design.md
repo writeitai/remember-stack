@@ -217,15 +217,11 @@ text, every profile section, cards). Those ranges are chunked, embedded and sear
 The mechanism:
 
 1. **Each E0 block has one eligibility.** Converters start every differently labelled section
-   with a Markdown heading on its own line after a blank line. The blockizer treats the heading
-   as a block start. Convert fails if ranges with different eligibility overlap one block.
-2. **E1 packs whole-block candidates within sections** using content anchors and a whitespace
-   budget. An eligibility change between blocks starts a new candidate. E1 checks the full
-   rendered embedding request and splits only candidates that fail provider fit. These cuts
-   preserve the exact Markdown and use block eligibility inside blocks and converter labels
-   for nonblank gap text. E1 stores `chunks.extraction_eligible` for each final chunk.
-   [E1 packing](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58-d162) ·
-   [D162 cuts](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+   with a Markdown heading on its own line after a blank line, which the blockizer treats
+   as a block start. Convert fails if an eligibility change falls inside a block.
+2. **E1 ends a base candidate** wherever eligibility changes between blocks. [D162 cuts](split_oversized_chunks_design.md#2-split-only-failing-candidates)
+   also apply converter labels to nonblank gap text. E1 stores `chunks.extraction_eligible`
+   for each final chunk.
 3. **E2 schedules Selection only for eligible chunks.** An ineligible chunk completes
    deterministically with zero propositions and publishes no D122 reference cards; the Selection
    barrier counts it complete.

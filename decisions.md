@@ -1947,12 +1947,8 @@ identity rules per source kind are a named spike.
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
 > this decision's cost promise did not hold. Everything else here remains binding.
 
-> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> adds exact split-piece content hashes. For a verified neighbour window,
-> both keys can retain legacy block hashes from clipped passages or empty
-> content and origin slots left by a child section. A row marker preserves
-> window checks after the cut disappears. A reusable Selection result at
-> the resolved origin date takes priority when choosing matching slots.
+> **Proposed amendment.** [D162](#d162-split-oversized-chunks-before-embedding)
+> limits E1 and E2 result reuse to unsplit versions on both sides.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -2001,9 +1997,7 @@ speaker labels, model family). D57–D58 formalize the chunking-strategy design 
 
 ## D57. The block substrate — a deterministic blockizer owns identity; sections snap to the block grid
 
-> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> uses the block grid and section ranges for base packing. Provider-fit
-> cuts address exact character spans within those candidates.
+> [D162](#d162-split-oversized-chunks-before-embedding) keeps block-based packing and allows cuts within blocks.
 
 **Decision.** Between conversion and everything else sits one deterministic layer: the
 **blockizer** (ours, versioned `blockizer_version`) derives the document's **block sequence**
@@ -2046,9 +2040,8 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
 > **Proposed amendment.** [D162](#d162-split-oversized-chunks-before-embedding)
-> replaces the `semchunk` choice and oversized-block fallback with anchored
-> whitespace-token packing of whole-block candidates and lossless cuts for
-> provider fit. Section ownership and non-overlap apply to the final chunks.
+> replaces `semchunk` and the oversized-block fallback with anchored base packing
+> and lossless provider-fit cuts, keeping section ownership and non-overlap.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2218,9 +2211,7 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
 > (since the D98 RC 1 amendment, a relational one-hop join instead of SQL/PGQ).
 
-> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> replaces the `semchunk` choice with the engine's anchored packer and
-> provider-fit cuts.
+> [D162](#d162-split-oversized-chunks-before-embedding) replaces `semchunk` with anchored packing and provider-fit cuts.
 
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
@@ -6394,6 +6385,7 @@ promising billed tokens or a fixed saving.
 
 ## D122. Share frozen source reference context between extraction chunks
 
+> [D162](#d162-split-oversized-chunks-before-embedding) limits cross-version reuse to unsplit versions on both sides.
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -7257,9 +7249,7 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 > that `scope_pending` gains `complete` (false when a replayed nomination stopped on a bound).
 
 > **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> verifies the donor's consumed windows when either row is marked for a
-> split neighbour or inherited slots. The D140 order still chooses the
-> date, which can be used with a different verified Selection donor's slots.
+> limits text-origin inheritance to unsplit versions on both sides.
 
 **Status:** accepted when merged. **Date:** 2026-09-30. **Refines:** D36, D55, D56,
 D79, D134 (in-entry notes mark each); D118 is unchanged and gains one adjudication
@@ -8771,24 +8761,15 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status** Proposed. **Date** 2026-11-27.
 
-Measure the full D80 input with a pinned tokenizer and provider-qualified
-ceiling. Split only failing candidates and preserve exact spans and
-provenance under the existing chunker version and ID allocator. Preserve
-fitting grids with legacy-only reuse state. Keep a row marker for exact
-window verification across split boundaries and after the cut disappears.
-Resolve the D140 date first and prefer verified frozen Selection at that date
-when choosing the slots for both keys.
+Check the full D80 input under a qualified binding and split failing
+candidates losslessly under the existing chunker version. Any split piece
+excludes its whole version as both a receiver and donor for E1/E2 reuse
+and D140 text origin. Fitting grids retain legacy identities.
 
-Fence operator replay and drain durable legacy CHUNK and EMBED_CHUNK work
-under the outgoing binding before enabling split writes and embed fit checks
-together. The remaining legacy E1 dead letters stay ineligible for replay
-under the incoming binding. Confirmed input rejections are typed terminal
-failures. A document can recover through ordinary ingest of a changed
-successor or D159 forget and re-add.
-
-Qualify hosted embeddings starting at 16,384 tokens. Require at least 22,528
-for the benchmark binding and offline equality of legacy requests and
-full rows on frozen LoCoMo Full-v45 and BEAM.
+Fence replay and drain legacy E1 before enabling splits and fit checks.
+Confirmed input rejections are typed terminal failures. Legacy dead letters
+stay terminal. Require offline equality of legacy requests and full rows
+on frozen LoCoMo Full-v45 and BEAM.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).

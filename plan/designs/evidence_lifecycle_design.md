@@ -354,6 +354,9 @@ across re-extraction by construction. "A new claim row exists for the same testi
 
 ## 6. Content-addressed reuse (D56) — cost proportional to the edit
 
+The chunk reuse rules below require both versions to pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
+A split version processes its whole grid fresh and supplies no E1/E2 results or D140 dates to later versions.
+
 The efficiency ladder for the hourly watcher, cheapest exit first:
 
 1. **Connector metadata no-op** — unchanged revision/etag: no fetch.
@@ -361,31 +364,28 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    reused (and `UNIQUE` dedup means a copy in another folder reuses conversion too).
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
 4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
-   **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's
-   content hash + same-section neighbour hashes + stable header facts (deterministic document
+   **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
+   block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
    metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
-   consumed converter-origin hashes + the extractor version + the
+   extractor version + the
    structurer version (a stable config string — a deliberate structurer bump is a
    re-extraction boundary, since section roles feed Selection).
-   [D162 hash rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
    discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
-   origin time of the earliest eligible donor matching a candidate date-free reuse identity in a
-   non-deleted version of the lineage. The donor date must be at or before this version's date,
-   and D162 checks the consumed windows when either row carries the window-check marker.
-   Without an eligible donor, the chunk takes its version's `source_modified_at` or
-   `published_at`. It is one per-chunk date used by the reuse key, the
+   origin time of the earliest chunk of a non-deleted version of the lineage with the same
+   date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
+   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
    E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
    version's own date instead would change every key whenever the source stamps a new
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of
    the claim it reuses.
-   A matching key can reuse frozen Selection after D162 window checks and remapping.
-   Claimify also needs a matching D122 key and remappable spans to reuse claim IDs. A changed
-   neighbour window can require fresh Selection for an intact target. Vector reuse also
-   checks the rendered input and policy under D80. **The mechanics — block-hash diff alignment,
+   A chunk whose key is already extracted for this lineage **reuses its claims**
+   (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
+   re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
+   embedding version) the same way. **The mechanics — block-hash diff alignment,
    anchor-stabilized boundaries, the carry-forward rules — are bound in
    `e1_chunks_design.md` §7 (D57–D58)**; this design owns the contract.
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,

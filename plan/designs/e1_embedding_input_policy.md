@@ -173,12 +173,8 @@ membership is still **token-in-union** (existing D32 token rule).
 
 Changing any of the above is a **new policy version**.
 
-[D162](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
-uses a pinned provider tokenizer to check the full rendered input and framing
-after D80 chooses the mode. CHUNK and EMBED_CHUNK use the same qualified
-binding through retries. D80's length counter still chooses the header mode.
-The rollout gates embed fit enforcement and split writes together.
-[D162 rollout](split_oversized_chunks_design.md#rollout).
+[D162](split_oversized_chunks_design.md#1-check-the-complete-embedding-input) checks provider
+fit (including framing) after D80 chooses the mode and renders the input.
 
 ### 4.2 Modes
 
@@ -278,6 +274,7 @@ produced from different text.
 | Summary-only regeneration | No render/embed |
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
+Vector carry-forward requires both versions to pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
 Content-hash-only vector carry-forward is **insufficient** when embedding text
 includes location. Block-level **extraction** reuse (D56 A1–A3) remains
 content-addressed without LLM output in identity keys.
@@ -350,8 +347,7 @@ pack chunks
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
 - **Document readiness:** all in-scope chunks have prepare stamps and successful
-  embed matching the configured current state. The only successful skip is
-  `empty_body`. [D162 failures](split_oversized_chunks_design.md#3-terminal-failure-and-the-next-version).
+  embed matching the configured current state, or an `empty_body` skip. [D162 failures](split_oversized_chunks_design.md#5-terminal-failure).
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.
