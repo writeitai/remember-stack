@@ -70,7 +70,7 @@ def split_oversized_chunks(
                     chunk_count=len(packed),
                 )
             )
-        header_mode_changed = len(packed) == 1 and len(split) > 1
+        count_changed = len(packed) != len(split)
         packed = tuple(
             chunk
             if chunk.ordinal == ordinal
@@ -79,7 +79,7 @@ def split_oversized_chunks(
         )
         oversized = (
             frozenset(chunk.ordinal for chunk in packed if not fits(chunk, len(packed)))
-            if header_mode_changed
+            if count_changed
             else frozenset()
         )
     return packed

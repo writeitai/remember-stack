@@ -100,7 +100,9 @@ class PackedChunk(BaseModel):
     chunk_content_hash: _NonEmpty
     token_count: int = Field(ge=0)
     extraction_eligible: bool = True
-    span_kind: Literal["whole", "split"] = "whole"
+    span_kind: Literal["whole", "split"] = Field(
+        default="whole", exclude_if=lambda kind: kind == "whole"
+    )
     """Whether E2 runs Selection on the chunk (D133 §4.5 eligibility policy)."""
 
 

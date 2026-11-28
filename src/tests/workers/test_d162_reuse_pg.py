@@ -149,6 +149,17 @@ def _embedder(
     )
 
 
+def _extractor(rig: _ReuseRig, params: ChunkerParams) -> ExtractClaimsHandler:
+    return ExtractClaimsHandler(
+        catalog=rig.claim_catalog,
+        chunk_catalog=rig.chunk_catalog,
+        artifact_store=rig.artifact_store,
+        model_provider=rig.provider,
+        settings=E2Settings(),
+        chunker_version=chunker_version(params=params),
+    )
+
+
 def test_d162_split_version_closes_all_rungs_for_intact_siblings(
     rig: _ReuseRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -168,6 +179,29 @@ def test_d162_split_version_closes_all_rungs_for_intact_siblings(
     assert all(row["span_kind"] == "whole" for row in intact)
     assert {row["text_origin_at"] for row in split} == {_EDIT}
     assert _OLD in {row["text_origin_at"] for row in intact}
+    assert not rig.chunk_catalog.text_origin_matches(
+        deployment_id=_DEPLOYMENT_ID,
+        doc_id=middle.doc_id,
+        version_id=middle.version_id,
+        reuse_identity_hashes=tuple(row["reuse_identity_hash"] for row in intact),
+        not_after=_EDIT,
+    )
+
+    before = len(rig.calls)
+    legacy_extractor = _extractor(rig, _PARAMS)
+    for stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.GROUND_CLAIMS):
+        for row in intact:
+            legacy_extractor.handle(
+                work=_work(
+                    middle,
+                    representation,
+                    stage,
+                    E2_EXTRACTOR_VERSION,
+                    chunk_id=row["chunk_id"],
+                ),
+                meter=NoopCostMeter(),
+            )
+    assert len(rig.calls) == before
 
     embedded = len(rig.provider.embedded_texts)
     _embedder(rig, _OTHER_GENERATION, hosted=True).handle(
@@ -176,14 +210,7 @@ def test_d162_split_version_closes_all_rungs_for_intact_siblings(
     )
     assert len(rig.provider.embedded_texts) - embedded == len(split)
     split = _rows(rig, middle, _OTHER_GENERATION)
-    extract = ExtractClaimsHandler(
-        catalog=rig.claim_catalog,
-        chunk_catalog=rig.chunk_catalog,
-        artifact_store=rig.artifact_store,
-        model_provider=rig.provider,
-        settings=E2Settings(),
-        chunker_version=chunker_version(params=_OTHER_GENERATION),
-    )
+    extract = _extractor(rig, _OTHER_GENERATION)
     before = len(rig.calls)
     for stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.GROUND_CLAIMS):
         for row in split:
