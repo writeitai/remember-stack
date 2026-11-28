@@ -34,6 +34,7 @@ from rememberstack.core.extraction_eligibility import (
 )
 from rememberstack.core.hosted_embedding_ceiling import HOSTED_EMBEDDING_BINDING
 from rememberstack.core.hosted_embedding_ceiling import hosted_embedding_fits
+from rememberstack.core.hosted_embedding_ceiling import hosted_request_batches
 from rememberstack.core.oversized_chunks import split_oversized_chunks
 from rememberstack.core.source_origins import origin_input_hash
 from rememberstack.core.source_origins import SOURCE_ORIGINS_VERSION
@@ -469,10 +470,20 @@ class EmbedChunksHandler:
             pair for pair in need_embed if pair[0].chunk_id not in pg_complete
         )
         poison_skips: list[tuple[ChunkForEmbedding, EmbeddingInputRender]] = []
-        for batch_start in range(0, len(need_embed), self._settings.embed_batch_size):
-            batch = need_embed[
-                batch_start : batch_start + self._settings.embed_batch_size
+        if self._hosted_embedding:
+            # The hosted endpoint also caps a request's total tokens.
+            provider_batches = hosted_request_batches(
+                need_embed,
+                max_items=self._settings.embed_batch_size,
+                text=lambda pair: pair[1].embedding_text,
+            )
+        else:
+            size = self._settings.embed_batch_size
+            provider_batches = [
+                need_embed[start : start + size]
+                for start in range(0, len(need_embed), size)
             ]
+        for batch in provider_batches:
             self._embed_batch_with_poison_split(
                 work=work,
                 source=source,

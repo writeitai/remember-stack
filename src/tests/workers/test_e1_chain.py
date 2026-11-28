@@ -32,6 +32,10 @@ from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.hosted_embedding_ceiling import HOSTED_EMBEDDING_BINDING
+from rememberstack.core.hosted_embedding_ceiling import (
+    HOSTED_EMBEDDING_REQUEST_TOKEN_BUDGET,
+)
+from rememberstack.core.hosted_embedding_ceiling import hosted_embedding_tokens
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
 from rememberstack.model import PipelineStage
@@ -492,6 +496,30 @@ def test_d162_above_ceiling_saved_grid_hits_typed_dead_letter(rig: _E1Rig) -> No
             connection.execute(text("SELECT count(*) FROM chunk_search")).scalar_one()
             == 0
         )
+
+
+def test_d162_hosted_requests_stay_within_the_request_token_budget(
+    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A document whose chunks exceed the budget in total is sent in several requests."""
+    from rememberstack.model import EmbeddingRequest
+
+    paragraphs = (
+        " ".join(f"w{p}x{w}z{p * w % 97}" for w in range(400)) for p in range(40)
+    )
+    _saved_grid(rig, "\n\n".join(paragraphs))
+    original = rig.provider.embed
+    request_tokens: list[int] = []
+
+    def record(*, request: EmbeddingRequest):
+        request_tokens.append(sum(hosted_embedding_tokens(t) for t in request.texts))
+        return original(request=request)
+
+    monkeypatch.setattr(rig.provider, "embed", record)
+    assert _run_hosted(_hosted_worker(rig)) is RunResultOutcome.SUCCEEDED
+    assert sum(request_tokens) > HOSTED_EMBEDDING_REQUEST_TOKEN_BUDGET
+    assert len(request_tokens) > 1
+    assert max(request_tokens) <= HOSTED_EMBEDDING_REQUEST_TOKEN_BUDGET
 
 
 def test_d162_isolates_input_rejection_and_keeps_committed_batch(
