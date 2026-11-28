@@ -191,9 +191,9 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    stage). Pure prepare (location facts + render) may run in that job before provider calls;
    it does not require separate ledger rows.
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
-   configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
-   (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
-   generation.
+   configured `(policy_generation, embedder_generation)` into batches that fit the
+   [qualified binding's request limits](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
+   A batch **never crosses** document, representation, lane, or embedder generation.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
@@ -201,9 +201,10 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    dead-letters the job through the existing terminal path. Keep committed batches. [D162](split_oversized_chunks_design.md#5-terminal-failure).
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
-   vector/hash/current attestation and stamps the chunk authority row. There is
-   no cross-store gap. A crash after provider response but before commit may
-   repeat a billable call; the design does not claim exactly-once provider spend.
+   vector/hash/current attestation and stamps the chunk authority row. A vector
+   copy includes the [locked D162 eligibility recheck](split_oversized_chunks_design.md#3-version-wide-reuse-gate)
+   in that transaction. A crash after provider response but before commit may
+   repeat a billable call.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
    stamp matching the **configured** `(policy_generation, embedder_generation)`
    and input hash, or an `empty_body` skip. Mixed or

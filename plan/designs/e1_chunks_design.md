@@ -42,7 +42,7 @@ chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  FIT
 | produced by | the **blockizer** (deterministic, ours — §2) | PageIndex (**LLM** — may redraw on re-run) | the packer (deterministic — §4) |
 | carry | **identity**: hashes, offsets, source back-pointers | **meaning**: hierarchy, roles, summaries, placement | **the unit**: embedding, extraction, claim anchoring |
 | used for | reuse diff (D56), the grounding chain, edit locality | chunk boundaries, E2 role signal, P1 role filter, P3 placement | P1 index rows, E2 bundles, `claims.chunk_id` |
-| in identity/reuse keys? | yes | **never** (non-deterministic) | content hash (§4) |
+| in identity/reuse keys? | yes | Content, Selection and text-origin keys omit section metadata. [D80](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse) can render the section title and role into the text hashed for vector reuse. | content hash (§4) |
 
 An edit to `b5` with stable spans, locations and generations changes only `c2`'s
 vector input. Selection reruns for `c2` and its same-section neighbour `c3`.
@@ -315,7 +315,7 @@ Carry-forward of E1/E2 results and D140 dates requires both versions to pass the
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
   inputs are unchanged.** For **Selection**, reused chunks keep prior Selection outcomes
   when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
-  under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
+  under `structurer_version`. The Selection identity excludes LLM output (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
   facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the

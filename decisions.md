@@ -8760,10 +8760,12 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27.
 
-Check the full D80 input against a release constant for the pinned binding.
+Check the full D80 input against the release-qualified binding's limits. Stock
+self-host pins a qualified route. CHUNK and EMBED_CHUNK reject unqualified bindings.
 Split failing candidates losslessly under the existing chunker version.
 A saved split piece excludes its entire version from both sides of E1/E2 reuse
-and D140 text-origin inheritance. Keep saved grids and work keys.
+and D140 text-origin inheritance. Commit vector copies and authority stamps
+together under the reuse lock. Keep saved grids and work keys.
 Confirmed input rejections use typed terminal failures. Require offline request
 and full-row equality on frozen LoCoMo Full-v45 and BEAM.
 

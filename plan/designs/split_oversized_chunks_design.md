@@ -4,14 +4,22 @@
 
 ## 1. Check the complete embedding input
 
-CHUNK and EMBED_CHUNK use the same size ceiling, a code constant shipped for the pinned
-embedding model and provider route, matching P1's model and dimensions. A different ceiling
-requires a new release. An unqualified self-host binding uses the conservative default constant.
-Pin tokenizer, vocabulary and framing. Qualify full delivery on every route, including fallbacks,
-for the full D80 render (normalized body, header and separators) plus framing. Pin per-input and
-aggregate token, byte and item limits in the release. One nonblank Unicode scalar must fit with the largest
-header and framing. Hosted Qwen3-Embedding-8B on OpenRouter `nebius/bf16` starts qualification
-at **16,384 tokens**. The benchmark binding requires at least **22,528 tokens**.
+CHUNK and EMBED_CHUNK share a release-qualified passage binding. It pins P1's model and
+dimensions, one route or a closed allowlist, tokenizer, vocabulary and route framing.
+Stock self-host, including Compose, defaults to one hard-pinned route qualified for that
+release. Overrides must match a release-qualified binding. OpenRouter provider order alone
+leaves marketplace fallback open. Qualify every reachable endpoint, including variants and
+fallbacks, at the binding's common limits.
+
+Ship the per-input and aggregate token, byte and item limits as code constants. A different
+ceiling requires a release. Check the full D80 render (normalized body, any header and their
+separator) with each allowed route's framing. One nonblank Unicode scalar must fit with the
+largest header and framing. Hosted Qwen3-Embedding-8B on OpenRouter
+`nebius/bf16` starts qualification at **16,384 tokens**. The benchmark binding requires at
+least **22,528 tokens**.
+
+An unqualified effective binding is a configuration error. CHUNK rejects it before grid
+writes and EMBED_CHUNK before vector carry-forward or dispatch.
 
 CHUNK checks the [base candidates](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58-d162)
 for input and singleton-request fit. It keeps fitting spans and rechecks fit against final order and
@@ -62,9 +70,10 @@ CHUNK packs outside the lock. In one transaction it locks the lineage row in `do
 exclusively, then checks for a saved grid. Replay the saved grid or resolve D140 dates and
 insert the complete grid before commit. E1/E2 reuse writers take a shared lock on the same
 row, recheck both versions in a new `READ COMMITTED` statement and hold the lock through
-commit. Commit carried vectors with their authority stamps. A blocked receiver runs fresh.
-A blocked donor triggers another eligible lookup. Keep artifact reads and provider calls
-outside these locks.
+commit. For an E1 copy, the locked eligibility recheck, `chunk_search` upsert and `chunks`
+authority stamp share one PostgreSQL transaction. A blocked receiver runs fresh. A blocked
+donor triggers another eligible lookup. Keep artifact reads and provider calls outside
+these locks.
 
 The split takes effect when its grid commits, including before the representation becomes
 current. Replay committed results and dates by chunk ID under the existing identity checks.
@@ -78,7 +87,8 @@ and eligible donors.
 Add `span_kind` and build its partial index online under [D160](packaging_distribution_design.md#61-migration-compatibility).
 Pause STRUCTURE claims and let legacy E1 attempts and handoffs settle. Retire outgoing CHUNK,
 EMBED_CHUNK, Selection, Claimify and both section-entry readers before enabling split writes and fit
-checks together. Keep the chunker version and work keys. Retries hand off saved grids as-is.
+checks together. Use a qualified binding before resuming claims. Keep the chunker version and
+work keys. Retries hand off saved grids as-is.
 
 ## 5. Terminal failure
 
@@ -97,6 +107,13 @@ key create a successor. D159 forget and re-add with `allow_forgotten=true` start
 [D159 re-ingest](archive_and_forget_design.md#36-re-ingest-guard-and-adding-a-document-back).
 
 ## 6. Acceptance
+
+Verify full delivery on each allowed endpoint at the singleton and batch limits. Use
+equal-length inputs that differ at the last token and require the vectors to distinguish
+the tails. Record the probe results for the release. A prefix-only mock must fail
+qualification. Verify the stock self-host default selects its qualified route.
+Open routing, order-only routing and a list containing an unqualified endpoint must fail
+before CHUNK writes a grid or EMBED_CHUNK copies a vector or dispatches input.
 
 Replay frozen LoCoMo Full-v45 and BEAM E0 artifacts, settings, donor state, UUIDs and
 clocks offline. Apply the additive schema to the frozen checkpoint and clone it. Clear
@@ -117,7 +134,10 @@ sibling in a different chunker generation. The pending split must use the versio
 date. After that grid commits, with the intact sibling still current, exercise all four reuse
 paths with intact grids of that version as donors and receivers. Race each reuse write
 against a split on either side. Require same-chunk replay for results committed first.
-When a split commits first, require an eligible donor or fresh work without partial copies.
+When a split commits first, require an eligible donor or fresh work. Interrupt a PostgreSQL
+vector copy after the `chunk_search` upsert and before stamping `chunks`. Verify rollback
+leaves both tables in their pre-attempt state. Commit a split on either side before retry
+and require an eligible donor or fresh work.
 Count E1 and both E2 calls and check dates and claim IDs. Keep ordinary-edit D56 and D122 coverage.
 
 Race two first CHUNK writes for one grid and verify a single set of rows and IDs. Rehearse rollout

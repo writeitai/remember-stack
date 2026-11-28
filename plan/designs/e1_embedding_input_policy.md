@@ -281,7 +281,8 @@ makes semantic search unavailable while disposable vector state is rebuilt and
 verified. Temporary migration state is allowed; two permanent searchable
 generations are not. The configured pair is published only after coverage,
 dimension, policy, and hash checks pass.
-A rebuild uses saved spans and requires a binding that fits their rendered inputs.
+A rebuild uses saved spans and requires a [release-qualified binding](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
+that fits their rendered inputs.
 
 ---
 

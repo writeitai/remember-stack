@@ -229,6 +229,9 @@ call that carries customer content can be held to both.
   Unlike chat, the allowlist alone allows fallback within it,
   because an embedding batch pinned to one failing host would dead-letter the
   stage; chat gets the same in-set failover from its local rotation.
+  [D162](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
+  requires passage embedding routes and all their reachable endpoints to qualify
+  for the release's common limits.
 - The image-description converter posts pixels through its own client and
   settings, so it has its own flag, `ImageDescriptionSettings.zdr` (env
   `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`). When true, every description attempt,

@@ -8,6 +8,14 @@ Cutting in E0 changes blocks and keys. E1 checks the full D80 render because a c
 Hosted probes reportedly accepted 19,960 input tokens and a 45,919-token batch via OpenRouter
 `nebius/bf16`. Larger probes returned generic 429s. Qualification must verify full delivery.
 
+Stock Compose leaves embedding routing open. An OpenRouter order by itself still permits
+marketplace fallback. A prefix-only embedder can return a finite, nonzero vector of the
+expected dimension, so even a small cap needs evidence that the endpoint consumes the tail.
+One pinned default keeps qualification to one route. A closed allowlist gives failover
+when every reachable endpoint passes the same limits.
+[Compose](../../compose.yaml#L28-L36) · [Routing payload](../../src/rememberstack/adapters/openrouter.py#L1001-L1032) ·
+[Vector validation](../../src/rememberstack/ports/p1_index.py#L22-L49).
+
 A live ceiling change can alter fit between packing and dispatch. A release constant makes
 that check stable. Repacking saved spans would change handles and extraction inputs, so a retry
 uses the saved grid and can fail again on an oversized input. [CHUNK replay](../../src/rememberstack/workers/e1.py#L132-L146).
@@ -22,6 +30,11 @@ split-row checks independent of the number of whole chunks. The existing lineage
 those checks with grid commits. Committed results and dates remain available for replay.
 [D65 schema](../../src/rememberstack/spine/migrations/versions/p0_02_0003_entities_evaluation_e0_e1.py#L399-L415) ·
 [E1 slots](../../src/rememberstack/workers/e1.py#L734-L765) · [E2 windows](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
+
+The vector upsert and authority stamp currently commit separately. Replay reads `chunk_search`
+by chunk ID, so an interrupted copy can be recovered after a split has made reuse ineligible.
+One transaction gives the locked gate check and both writes a single commit point.
+[Write order](../../src/rememberstack/workers/e1.py#L569-L572) · [Replay](../../src/rememberstack/workers/e1.py#L319-L336).
 
 ## Benchmark sizing
 

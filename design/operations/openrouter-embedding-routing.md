@@ -91,6 +91,9 @@ once.
 
 ## Policy (compose / smoke / local)
 
+The example below describes pre-D162 routing. Passage jobs under [D162](../../plan/designs/split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
+require a release-qualified pin or closed allowlist.
+
 ```bash
 # Preferred: ordered shortlist + allow_fallbacks (implemented when ORDER is set)
 REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER=nebius,deepinfra,siliconflow
