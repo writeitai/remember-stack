@@ -1948,9 +1948,11 @@ identity rules per source kind are a named spike.
 > this decision's cost promise did not hold. Everything else here remains binding.
 
 > **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> adds split-piece content hashes. A whole-block neighbour can retain its
-> legacy hash in the Selection and text-origin keys after verifying the
-> actual donor's consumed window.
+> adds exact split-piece content hashes. For a verified neighbour window,
+> both keys can retain legacy block hashes from clipped passages or empty
+> content and origin slots left by a child section. A row marker preserves
+> window checks after the cut disappears. A reusable Selection result at
+> the resolved origin date takes priority when choosing matching slots.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -7255,8 +7257,9 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 > that `scope_pending` gains `complete` (false when a replayed nomination stopped on a bound).
 
 > **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> verifies the donor's consumed neighbour windows before inheriting a date
-> across a split boundary.
+> verifies the donor's consumed windows when either row is marked for a
+> split neighbour or inherited slots. The D140 order still chooses the
+> date, which can be used with a different verified Selection donor's slots.
 
 **Status:** accepted when merged. **Date:** 2026-09-30. **Refines:** D36, D55, D56,
 D79, D134 (in-entry notes mark each); D118 is unchanged and gains one adjudication
@@ -8771,13 +8774,17 @@ generations, retrieval and rendering use their existing code and identities.
 Measure the full D80 input with a pinned tokenizer and provider-qualified
 ceiling. Split only failing candidates and preserve exact spans and
 provenance under the existing chunker version and ID allocator. Preserve
-fitting grids with legacy-only reuse state. Verify split-neighbour windows
-against the actual donor before carrying Selection or text origin forward.
-Drain durable legacy CHUNK and EMBED_CHUNK
-work under the outgoing binding before enabling split writes and embed
-fit checks together. Confirmed input rejections are typed terminal
-failures. Dead-lettered versions stay failed, with ordinary ingest of a
-successor or D159 forget and re-add available to the document.
+fitting grids with legacy-only reuse state. Keep a row marker for exact
+window verification across split boundaries and after the cut disappears.
+Resolve the D140 date first and prefer verified frozen Selection at that date
+when choosing the slots for both keys.
+
+Fence operator replay and drain durable legacy CHUNK and EMBED_CHUNK work
+under the outgoing binding before enabling split writes and embed fit checks
+together. The remaining legacy E1 dead letters stay ineligible for replay
+under the incoming binding. Confirmed input rejections are typed terminal
+failures. A document can recover through ordinary ingest of a changed
+successor or D159 forget and re-add.
 
 Qualify hosted embeddings starting at 16,384 tokens. Require at least 22,528
 for the benchmark binding and offline equality of legacy requests and

@@ -518,12 +518,9 @@ readers treat it as unknown (`changed = null`, and `section_history` reports `no
 
 ## 5. Reuse across versions: text origin time
 
-D56 keys extraction reuse on stable inputs. On `main`, the "stable header facts" in
-`extraction_input_hash` include both `source_modified_at` and `published_at` of the version
-(`e1.py:629-635`), the E2 header shows `source_modified_at or published_at` (`e2.py:1741-1749`)
-and claims take the same value as `asserted_at` (`e2.py:1293-1296`). Since nearly every new
-version has a new modification time, no chunk of a new version matches the previous version,
-and D56's "cost proportional to the edit" does not hold.
+Before D140, both version dates entered `extraction_input_hash`, and the source
+date fed the E2 header and claim assertions. That made a newly dated version
+miss every extraction key, even for unchanged chunks.
 
 **One per-chunk date.** Each chunk gets `text_origin_at`, and it replaces the version date in
 all three places: the reuse key (replacing *both* `source_modified_at` and `published_at`
@@ -544,13 +541,14 @@ to each window. Indexed on `(deployment_id, doc_id, reuse_identity_hash)`.
 2. let `d` be the new version's own date, `source_modified_at or published_at` (the value E2
    uses today). A chunk of `L` is an **eligible match** when it has a candidate
    `reuse_identity_hash`, belongs to a version that is non-deleted at this moment, and has a
-   known `text_origin_at` that is **not later than `d`**. Apply the D162 comparison to
-   the candidate's consumed windows when a split neighbour is involved. If `d` is
-   unknown there is no eligible match;
+   known `text_origin_at` that is **not later than `d`**. Apply the D162 window
+   comparison when either row carries `reuse_window_check`. A new chunk with a
+   split neighbour requires the comparison at creation. If `d` is unknown there
+   is no eligible match;
 3. with verified eligible matches, the new chunk's `text_origin_at` is the smallest of their
    `text_origin_at` (ties broken by `version_no`, then `ordinal`). Otherwise
-   `text_origin_at = d` (`NULL` for an unknown date). D162 chooses the neighbour content
-   and origin slots for the final identity and Selection key, which includes the recorded date.
+   `text_origin_at = d` (`NULL` for an unknown date). At that date, D162 prefers the slots
+   of a verified frozen Selection result for both keys.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the

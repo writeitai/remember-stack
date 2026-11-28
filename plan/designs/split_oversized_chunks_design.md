@@ -61,38 +61,44 @@ under D56 and D119.
 
 E2 reads the nearest same-section chunk on each side, including across a
 child section. Legacy E1 fills the content and converter-origin slots only
-for adjacent document chunks of the same section. Keep the legacy key
-rules for matches with no split neighbour in either grid.
+for adjacent document chunks of the same section. Set `reuse_window_check`
+on a new chunk with a split neighbour or a marked candidate in either
+lookup. Write the marker with the keys. Ordinary and pre-D162 rows have
+`NULL` in this column. The marker follows inherited slots after a cut
+disappears, so an empty pair cannot later hide a removed neighbour.
 
-To match across a cut, try the exact split hash and the legacy ordered-block
-hash of each present window, each paired with its relative converter-origin
-hash. Feed the legacy block hashes of the ordered, clipped block passages
-to the legacy chunk hash. This covers partial blocks and passages separated
-by nonblank gaps. Also try the pair of empty slots that a legacy donor can
-have across a child section. An absent window uses only the empty pair.
-Look up same-lineage candidates by date-free key using the combinations of
-previous and next pairs. Try these forms when a cut appears or disappears.
+For each previous or next window, start with its legacy pair. For a present
+window also try the exact split hash or the legacy ordered-block hash of
+its clipped block passages, each paired with its relative converter-origin
+hash. Include the empty pair to match a donor across a child section. An
+absent window offers only the empty pair. Try combinations of these pairs
+against same-lineage keys. Read candidate markers before choosing donors.
+An unmarked target uses only its legacy pair combination. If either row
+is marked, compare the actual E2 target and neighbour windows using their
+grids and E0 artifacts. Require matching presence on each side, verbatim
+Markdown including gaps, ordered relative passage boundaries, and canonical
+converter origins.
 
-If either occurrence has a split neighbour, verify both actual E2 windows
-before choosing a donor for either key. Use the saved grids and E0 artifacts
-to compare presence, verbatim Markdown including gaps, ordered relative
-passage boundaries, and canonical converter origins. A legacy hash or an
-empty pair can match even when the consumed text differs.
+1. Use the date-free candidates and [D140 order](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time)
+   to pick the origin date after checking each donor. Use the version's own
+   date or unknown date when no origin donor qualifies.
+2. Build the Selection keys at that fixed date. Prefer the slot pairs of a
+   matching frozen Selection result in an earlier non-deleted version, with
+   verified windows and D119-remappable cards. An empty result qualifies.
+   Follow Selection order (highest version number, then lowest ordinal).
+   Without such a result, use the origin donor's pairs. With neither donor, a
+   marked target uses the content and relative origin hashes of its actual
+   neighbours. An unmarked target uses its legacy pairs. Use the
+   same pairs in both stored keys. Break remaining ties by ascending
+   date-free key.
 
-Use the slot pairs that matched the first verified donor in
-[D140 order](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time).
-With no eligible origin, use the slots of the newest verified earlier
-occurrence whose Selection key matches using the version's own date or
-unknown date. With neither match at a split boundary, use the final grid's
-content and actual origin hashes for present neighbours, including the
-split hash and origin for a split neighbour across a child section. Break
-remaining ties by ascending date-free key. Use the same slots in both keys.
+If the Selection lookup first finds a marked candidate for an unmarked
+target, mark the target and repeat both lookups before writing.
 
-Apply the same check to the actual Selection donor, including empty
-results, and to Claimify's matched target and D122 producers. Skip unequal
-donors and apply D119 remapping to the verified donor. D122 uses the final
-document order and the previous eight Selection producers, including frozen
-empty results.
+Apply the marker check to the actual Selection donor and to each matched
+target and producer in Claimify. Skip unequal donors and apply D119
+remapping before reuse. D122 uses the final document order and the previous
+eight Selection producers, including frozen empty results.
 
 In Selection and Claimify, label each nonblank gap-only window by its exact
 span even when a neighbour has clipped blocks. Keep Claimify origins tied
@@ -102,13 +108,21 @@ to target keeps and use exact spans and typed location elements for grounding.
 
 ### Rollout
 
-Pause STRUCTURE claims and settle running attempts to fence admission to
-legacy CHUNK. Keep the outgoing workers and binding until every legacy
-CHUNK and EMBED_CHUNK job is terminal in the durable ledger across all
-lanes. Include delayed jobs, leases, retries and CHUNK replays of already
-written grids. Retire previous-release CHUNK, EMBED_CHUNK, Selection and
-Claimify workers and section-entry readers. Enable split writes and
-EMBED_CHUNK fit enforcement together, then resume admission.
+Add the window marker and replay eligibility field compatibly under D160.
+Pause STRUCTURE claims and settle running attempts. Fence the
+`dead_letter` to `pending` transition for CHUNK and EMBED_CHUNK in
+PostgreSQL across all lanes and callers. Serialize the fence with in-flight
+replay transactions and include any replay that committed before it. Keep
+the outgoing workers and binding until every legacy job of either stage is
+terminal, including delayed jobs, leases, retries and CHUNK replays of
+saved grids.
+
+While fenced, mark the remaining legacy CHUNK and EMBED_CHUNK dead letters
+`replay_blocked` in the ledger. PostgreSQL keeps marked rows terminal.
+Retire previous-release CHUNK, EMBED_CHUNK, Selection and Claimify workers
+and section-entry readers. Enable split writes and EMBED_CHUNK fit
+enforcement together, then resume admission and eligible replay.
+[Replay contract](orchestration_design.md#6-dead-letter-operations) ·
 [D160](packaging_distribution_design.md#61-migration-compatibility).
 
 ## 3. Terminal failure and the next version
@@ -122,9 +136,9 @@ and record its chunk ID, rendered input hash and binding. Throttling,
 ambiguous 429s, transient outages and unusable responses take bounded
 retries. Committed successful batches remain durable.
 
-Keep the chunker version, work keys and persisted grids. Already
-dead-lettered versions stay pipeline-failed. Changed bytes at the same
-D55 source identity create a successor that can process independently.
+Keep the chunker version, work keys and persisted grids. Versions blocked
+by a pre-cutover E1 dead letter stay pipeline-failed. Changed bytes at the
+same D55 source identity create a successor that can process independently.
 Identical re-ingest returns the existing version in ordinary D55 ingest.
 To submit the same bytes afresh, complete D159 forget and re-add them with
 `allow_forgotten=true`.
@@ -142,8 +156,9 @@ clocks at allocation. Match the complete ordered provider requests,
 including routing and framing, and use only matching saved replies.
 Fail if the benchmark binding would change any request, even when each
 input fits alone. Require zero splits and zero model calls. Compare all
-columns of `chunks` and `chunk_search`, including nulls, and compare D122
-producer order and stamps. Record fixture digests and the replay command.
+columns of `chunks` and `chunk_search`, including the null window-check
+marker on both sides, and compare D122 producer order and stamps. Record
+fixture digests and the replay command.
 
 Test structural and scalar cuts, labelled gaps and blank separators, exact
 reconstruction and provenance, and a header growing after a cut. Exercise
@@ -153,7 +168,11 @@ Rehearse the rollout with a legacy grid above the incoming ceiling, a CHUNK
 retry after its grid write, and pending and backed-off EMBED_CHUNK work.
 Verify a backed-off job holds the gate closed even with no active leases.
 Verify legacy dispatch or committed-vector recovery completes before cutover
-and fresh work uses the shared binding after cutover. Test typed terminal
+and fresh work uses the shared binding after cutover. Attempt operator
+replay of both legacy stages during and after the drain. A replay that
+commits before the fence joins the drain. Refused replays leave the dead
+letters intact and announce no work, even from a previous-release CLI.
+Verify ordinary replay for eligible post-cutover jobs. Test typed terminal
 rejection versus bounded throttling and invalid-vector retries.
 
 With two dated versions, count calls and compare claim IDs for unchanged
@@ -170,8 +189,18 @@ change the consumed cross-child neighbour while keeping its legacy slots
 empty. For each changed window, require both keys to use the split hash and
 actual origin hash. Require the new version's date and a fresh Selection
 call even if the old result has no cards. When candidate donors share a key,
-verify that an unequal window cannot win either lookup. The Claimify key
-follows the D122 producer window. Cover anchors and mark the existing D122
-cross-section reuse gap as an expected failure.
+verify that an unequal window cannot win either lookup. Carry an empty pair
+and the marker from a split donor into an unsplit grid with the same
+neighbour now adjacent. Remove the neighbour in the next version and
+require a fresh date and Selection despite the matching empty pair. Run
+with and without the original legacy donor eligible.
+
+Give two exact donors the same origin date and different slot pairs. The
+older donor fails before Selection and the newer freezes a result. Require
+the same date, the frozen result's pairs in both keys and zero paid Selection
+calls. Repeat with that result frozen at a different date and retain the
+date donor's pairs. The Claimify key follows the D122 producer window.
+Cover anchors and mark the existing D122 cross-section reuse gap as an
+expected failure.
 Verify that identical ingest returns the failed version and an edited
 successor publishes with the matching origin.

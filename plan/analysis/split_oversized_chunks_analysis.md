@@ -98,13 +98,28 @@ and the target took February's date with the split and origin hashes.
 [E1 slots](../../src/rememberstack/workers/e1.py#L734-L765) ·
 [E2 window query](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
 
-D140 takes the earliest eligible origin. Selection picks the newest frozen
-result, and remapping can succeed with no cards to compare. Verify each
-actual donor's window before applying the stage's ordering. The indexed keys
-find candidates, and their saved Markdown and blocks supply the comparison.
-This confines the extra reads to reuse across split windows and keeps the
-stored legacy keys available for exact matches.
+An intact target can adopt that empty slot pair from a split donor even
+when its restored neighbour is now adjacent in the document. Removing the
+neighbour in the next version yields the same empty pair. A probe using
+the E1 key builders and the E2 window query reproduced the stale January
+origin and Selection key with the original legacy donor excluded. The
+saved grid alone no longer shows the earlier split. A row marker carries
+the comparison requirement with the adopted slots through later versions.
+When a lookup finds a marked candidate, compare every donor's windows so
+the original empty-slot donor cannot win the same lookup unchecked.
+[E1 key builders](../../src/rememberstack/workers/e1.py#L656-L765) ·
+[E2 window query](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
+
+A failed older row can have the same origin date and E2 windows as a
+newer frozen result with different slots. D140 considers the failed row
+and breaks the date tie by ascending version number. Selection finds
+only committed results at the key it receives and prefers newer versions.
+The probe reproduced a miss under the empty pair and a hit under the
+populated pair at the same date. Choose slots after fixing the date to
+recover that result. Check each actual donor, including empty results,
+because D119 can remap an empty card set without reading its windows.
 [Origin lookup](../../src/rememberstack/spine/chunk_catalog.py#L332-L345) ·
+[D140 order](../../src/rememberstack/core/text_origin.py#L54-L85) ·
 [Selection lookup](../../src/rememberstack/spine/selection_catalog.py#L102-L138) ·
 [Card remapping](../../src/rememberstack/workers/extraction_references.py#L156-L173).
 
@@ -141,6 +156,18 @@ must start with the target grid absent.
 [Atomic ledger completion](../../src/rememberstack/spine/work_ledger.py#L231-L264) ·
 [Due-work predicate](../../src/rememberstack/spine/work_ledger.py#L2154-L2174) ·
 [Vector recovery](../../src/rememberstack/workers/e1.py#L319-L336).
+
+`remember ops replay` reopens a dead letter directly in the ledger and
+announces it after commit. Pausing STRUCTURE and waiting for terminal E1
+rows leaves that admission path open. An EMBED_CHUNK replay can read the
+saved grid under the incoming fit check. Fence the ledger transition
+before the drain and mark the dead letters left at cutover. A row marker
+covers embeds enqueued during the drain and jobs sharing the incoming
+component version.
+[Operator entry point](../../src/remember/cli.py#L692-L708) ·
+[Replay transition](../../src/rememberstack/spine/work_ledger.py#L2365-L2392) ·
+[Announcement](../../src/rememberstack/workers/operations.py#L20-L42) ·
+[Saved grid read](../../src/rememberstack/workers/e1.py#L262-L280).
 
 ## Benchmark sizing
 

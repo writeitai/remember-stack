@@ -372,10 +372,11 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
    discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
-   origin time of the earliest eligible donor with the same date-free reuse identity in a
+   origin time of the earliest eligible donor matching a candidate date-free reuse identity in a
    non-deleted version of the lineage. The donor date must be at or before this version's date,
-   and D162 checks consumed windows at split boundaries. Without an eligible donor, the chunk
-   takes its version's `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
+   and D162 checks the consumed windows when either row carries the window-check marker.
+   Without an eligible donor, the chunk takes its version's `source_modified_at` or
+   `published_at`. It is one per-chunk date used by the reuse key, the
    E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
    version's own date instead would change every key whenever the source stamps a new
    modification time — nearly every version — and no chunk would ever be reused. Unchanged

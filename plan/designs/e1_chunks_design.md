@@ -329,8 +329,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own content hash + same-section neighbour hashes + stable
   header facts + consumed converter-origin hashes + extractor_version + structurer_version)`.
-  At split boundaries, both this key and the D140 identity can keep the
-  donor's neighbour content and origin slots after verifying its consumed windows.
+  D162 can keep a donor's neighbour content and origin slots in both keys after
+  verifying its windows. The row marker preserves the comparison requirement
+  when a split disappears. At the chosen origin date, a reusable frozen Selection
+  result determines which matching slots to keep.
   [D162 hash rules](split_oversized_chunks_design.md#2-split-only-failing-candidates).
   **Stable header facts** are the deterministic document metadata the E2 bundle
   feeds the extractor. They include title, **file name**
@@ -340,7 +342,7 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
   `published_at` header facts. It is recorded once when the chunk is created: the
   smallest `text_origin_at` (ties by version number, ordinal) among verified chunks of non-deleted
-  versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
+  versions of the lineage matching a candidate `reuse_identity_hash` whose `text_origin_at` is known
   and **not later than this version's own date** (so a back-filled older edition never inherits
   a later date) — own content and same-section neighbour hashes, non-date
   header facts, consumed converter-origin hashes, and blockizer/structurer/extractor

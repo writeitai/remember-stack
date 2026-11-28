@@ -244,14 +244,17 @@ The DLQ **is** `processing_state` rows with `status='dead_letter'` (D12 — no s
 infrastructure). The operational surface over it is thin and deterministic:
 
 - **Inspect** — SQL views by (stage, error class, component version, age); the preserved
-  enqueue `payload` makes every dead letter self-describing and manually replayable.
-- **Replay** — reset the row to `pending`, clear its retry defer reason, choose `not_before`, raise
-  `max_attempts` above the current `attempts` by the approved replay allowance, and re-announce
+  enqueue `payload` identifies the original handler input.
+- **Replay** — reset an eligible row to `pending`, clear its retry defer reason, choose
+  `not_before`, raise `max_attempts` above `attempts` by the approved allowance, and re-announce
   its `processing_id`. Attempts never reset, so cost-ledger deduplication remains stable.
-  Unconditionally safe: the idempotency key is unchanged, so a partially-succeeded earlier attempt
-  no-ops. Bulk replay is the same operation scoped by version or error class; an explicit operator
-  transition may reroute it through the backfill lane when large. `payload` remains handler input
-  for inspection, never the source of route, schedule, or retry state.
+  Replay keeps the idempotency key so eligible attempts can recover committed results. Bulk
+  replay uses the same transition per row, scoped by version or error class. An operator may
+  route large replays through the backfill lane. The ledger owns route, schedule and retry state.
+- **D162 replay eligibility** — the ledger fences CHUNK and EMBED_CHUNK replay during the drain.
+  Pre-cutover dead letters of those stages stay blocked under the incoming binding. Single and
+  bulk refusals report the reason, preserve the row and its error, and announce no work.
+  [D162 rollout](split_oversized_chunks_design.md#rollout).
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.
