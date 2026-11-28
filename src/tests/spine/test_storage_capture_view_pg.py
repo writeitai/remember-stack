@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timezone
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ from rememberstack.model.documents import UploadRecord
 from rememberstack.model.metering import ManagedDocumentVersionOutcome
 from rememberstack.model.metering import ManagedMeasurementDraft
 from rememberstack.model.storage_capture import StorageCaptureRequest
+from rememberstack.spine import storage_capture_view
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.spine.storage_capture_catalog import install_native_capture_catalog
 from rememberstack.spine.storage_capture_view import NativeCaptureProfile
@@ -89,6 +91,99 @@ def _catalog(
         connect=connect or (lambda: scope.connect(role=scope.collector_role)),
         profile=_profile(lifetime_ms=lifetime_ms),
     )
+
+
+def _while_guard_holds(
+    *, monkeypatch: pytest.MonkeyPatch, action: Callable[[], None]
+) -> None:
+    """Run a second session after the original view is acquired under the guard."""
+    check = storage_capture_view._check_acquisition
+
+    def check_then_act(**kwargs: Any) -> None:
+        """Keep the native acquisition check before the competing operation."""
+        check(**kwargs)
+        action()
+
+    monkeypatch.setattr(storage_capture_view, "_check_acquisition", check_then_act)
+
+
+@pytest.mark.parametrize("analysis_first", [True, False])
+def test_parent_analyze_preserves_the_original_cut(
+    capture_scope: _Scope, monkeypatch: pytest.MonkeyPatch, analysis_first: bool
+) -> None:
+    """Keep the native cut in both lock orders on the actual engine parent."""
+    with capture_scope.connect(role=capture_scope.runtime_role) as runtime:
+        if analysis_first:
+            # Hold the real ANALYZE lock after the statement to force the overlap.
+            runtime.execute("BEGIN")
+            runtime.execute("ANALYZE ONLY public.mentions")
+            assert runtime.execute(
+                "SELECT EXISTS (SELECT FROM pg_locks WHERE pid=pg_backend_pid() "
+                "AND relation='public.mentions'::regclass "
+                "AND mode='ShareUpdateExclusiveLock' AND granted)"
+            ).fetchone() == (True,)
+        else:
+
+            def analyze() -> None:
+                """The parent lock is available and the catalog still yields."""
+                runtime.execute("SET lock_timeout='50ms'")
+                with runtime.transaction():
+                    runtime.execute(
+                        "LOCK TABLE ONLY public.mentions IN SHARE UPDATE EXCLUSIVE MODE NOWAIT"
+                    )
+                with pytest.raises(psycopg.errors.LockNotAvailable):
+                    runtime.execute("ANALYZE ONLY public.mentions")
+                with pytest.raises(psycopg.errors.LockNotAvailable):
+                    runtime.execute("TRUNCATE ONLY public.mentions_default")
+
+            _while_guard_holds(monkeypatch=monkeypatch, action=analyze)
+
+        request = _request(scope=capture_scope, lead_us=2_000_000)
+        with _catalog(scope=capture_scope).open_view(request=request) as view:
+            cut = int(request.cut_at_unix_us)
+            witness = view.witness
+            assert int(witness.view_acquired_after_unix_us) < cut - 1000
+            assert cut + 1000 < int(witness.guard_checked_after_unix_us)
+            assert view.allocation_sample.allocated_fork_bytes == (
+                view.allocation_sample.physical_table_total_bytes
+            )
+            view.check_continuity()
+
+        if not analysis_first:
+            runtime.execute("ANALYZE ONLY public.mentions")
+
+
+def test_in_flight_partition_attach_cannot_change_the_cut(
+    capture_scope: _Scope, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refuse an already-written attachment that commits after guard acquisition."""
+    with (
+        capture_scope.connect(role=capture_scope.runtime_role) as setup,
+        capture_scope.connect(role=capture_scope.runtime_role) as ddl,
+    ):
+        # Remove the default leaf so the already-running attach doesn't have
+        # to lock an existing physical relation, then restore it after the test.
+        setup.execute("DROP TABLE public.mentions_default")
+        try:
+            ddl.execute("BEGIN")
+            ddl.execute("CREATE TABLE public.capture_new_leaf (LIKE public.mentions)")
+            ddl.execute(
+                "ALTER TABLE public.mentions ATTACH PARTITION public.capture_new_leaf "
+                "FOR VALUES FROM ('2100-01-01') TO ('2100-02-01')"
+            )
+            _while_guard_holds(monkeypatch=monkeypatch, action=ddl.commit)
+            request = _request(scope=capture_scope, lead_us=2_000_000)
+            with pytest.raises(
+                NativeStorageCaptureRefused, match="native_partition_topology_changed"
+            ):
+                with _catalog(scope=capture_scope).open_view(request=request):
+                    pytest.fail("a commit changed the original cut's partition tree")
+        finally:
+            ddl.rollback()
+            setup.execute("DROP TABLE IF EXISTS public.capture_new_leaf")
+            setup.execute(
+                "CREATE TABLE public.mentions_default PARTITION OF public.mentions DEFAULT"
+            )
 
 
 @dataclass(frozen=True, kw_only=True)
