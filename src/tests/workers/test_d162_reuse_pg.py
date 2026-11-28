@@ -332,7 +332,7 @@ def test_d162_first_grid_race_reuses_committed_ids(
 
 
 @pytest.mark.parametrize("split_side", ("donor", "receiver"))
-def test_d162_rechecks_selection_and_claimify_after_waiting_for_split(
+def test_d162_rechecks_embedding_and_extraction_after_waiting_for_split(
     rig: _ReuseRig, split_side: str
 ) -> None:
     first = _observe(rig=rig, content=_WHOLE, modified_at=_OLD)
@@ -352,7 +352,10 @@ def test_d162_rechecks_selection_and_claimify_after_waiting_for_split(
     claims = ClaimCatalog(engine=snapshot_engine)
     shelved = donor if split_side == "donor" else receiver
     params = {"doc_id": first.doc_id, "seed": shelved["chunk_id"], "split": uuid4()}
-    with ThreadPoolExecutor(2) as executor:
+    saved_embedding_calls = len(rig.provider.embedded_texts)
+    embed = _embedder(rig, _PARAMS, hosted=False)
+    embed._catalog = ChunkCatalog(engine=snapshot_engine)
+    with ThreadPoolExecutor(3) as executor:
         with rig.engine.begin() as connection:
             connection.execute(
                 text("SELECT doc_id FROM documents WHERE doc_id=:doc_id FOR UPDATE"),
@@ -392,16 +395,26 @@ def test_d162_rechecks_selection_and_claimify_after_waiting_for_split(
                 prior_chunk_id=donor["chunk_id"],
                 claimify_input_hash="pending",
             )
+            embedding = executor.submit(
+                embed.handle,
+                work=_work(
+                    second,
+                    receiver["representation_id"],
+                    PipelineStage.EMBED_CHUNK,
+                    E1_EMBED_VERSION,
+                ),
+                meter=NoopCostMeter(),
+            )
             deadline = monotonic() + 6
             while True:
                 waiting = connection.execute(
                     text("""
                     SELECT count(*) FROM pg_stat_activity
                     WHERE datname=current_database() AND wait_event_type='Lock'
-                      AND query LIKE '%FOR SHARE OF d, r%'
+                          AND query LIKE '%FOR SHARE%'
                 """)
                 ).scalar_one()
-                if waiting == 2:
+                if waiting == 3:
                     break
                 assert monotonic() < deadline, (
                     "reuse writers did not reach the lineage lock"
@@ -412,6 +425,10 @@ def test_d162_rechecks_selection_and_claimify_after_waiting_for_split(
         for attempted in (selection, claimify):
             with pytest.raises(ChunkReuseBlocked):
                 attempted.result(timeout=6)
+        embedding.result(timeout=10)
+    assert len(rig.provider.embedded_texts) - saved_embedding_calls == len(
+        _rows(rig, second, _PARAMS)
+    )
     assert (
         selections.load(
             chunk_id=receiver["chunk_id"], extractor_version=E2_EXTRACTOR_VERSION

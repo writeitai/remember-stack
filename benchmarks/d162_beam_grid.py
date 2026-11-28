@@ -1,9 +1,9 @@
 """Check the retained BEAM 100K/1 grid against its original Markdown.
 
 The PostgreSQL lab dump predates Selection, Claimify and PostgreSQL P1. It
-retains ordered chunk rows and the converted reading's source hash. This
-check compares every packing field available in both generations, with the
-historical E0 section grid and the non-hosted packer's original parameters.
+retains ordered chunk rows, D80 input stamps and the reading's source hash.
+This check compares the packing fields and re-renders the D80 inputs from
+the frozen location facts, reading and section grid.
 """
 
 from __future__ import annotations
@@ -19,6 +19,9 @@ from sqlalchemy import text
 from rememberstack.core import blockize
 from rememberstack.core import ChunkerParams
 from rememberstack.core import pack_blocks
+from rememberstack.core.embedding_input_policy import location_facts_json
+from rememberstack.core.embedding_input_policy import LocationFacts
+from rememberstack.core.embedding_input_policy import render_embedding_input
 from rememberstack.model import SectionSpan
 
 _FIELDS = (
@@ -64,13 +67,20 @@ def check(*, database_url: str, markdown: Path) -> dict[str, object]:
                     {"id": version.representation_id},
                 ).mappings()
             )
-            frozen = connection.execute(
-                text(f"""
-                SELECT {", ".join(_FIELDS)} FROM chunks WHERE representation_id=:id
+            frozen_rows = (
+                connection.execute(
+                    text(f"""
+                    SELECT {", ".join(_FIELDS)}, location_facts_json, location_header,
+                           context_prefix, embedding_text_hash,
+                           embedding_input_policy_version, policy_generation, prefixer_version
+                    FROM chunks WHERE representation_id=:id
                 ORDER BY ordinal
             """),
-                {"id": version.representation_id},
-            ).all()
+                    {"id": version.representation_id},
+                )
+                .mappings()
+                .all()
+            )
     finally:
         engine.dispose()
     packed = pack_blocks(
@@ -80,6 +90,7 @@ def check(*, database_url: str, markdown: Path) -> dict[str, object]:
         params=ChunkerParams(),
     )
     current = [tuple(getattr(chunk, name) for name in _FIELDS) for chunk in packed]
+    frozen = [tuple(row[name] for name in _FIELDS) for row in frozen_rows]
     if current != frozen:
         for index, (actual, expected) in enumerate(zip(current, frozen, strict=False)):
             if actual != expected:
@@ -95,12 +106,34 @@ def check(*, database_url: str, markdown: Path) -> dict[str, object]:
     splits = sum(chunk.span_kind == "split" for chunk in packed)
     if splits:
         raise ValueError("the BEAM lab binding must keep its whole grid")
+    for chunk, row in zip(packed, frozen_rows, strict=True):
+        facts = LocationFacts.model_validate(row["location_facts_json"]["facts"])
+        rendered = render_embedding_input(
+            facts=facts, body=body[chunk.char_start : chunk.char_end]
+        )
+        expected = {
+            "embedding_text_hash": rendered.embedding_text_hash,
+            "location_header": rendered.location_header,
+            "context_prefix": rendered.location_header,
+            "embedding_input_policy_version": rendered.policy_generation,
+            "policy_generation": rendered.policy_generation,
+            "prefixer_version": rendered.policy_generation,
+            "location_facts_json": json.loads(
+                location_facts_json(facts=facts, elements=rendered.location_elements)
+            ),
+        }
+        differing = [name for name, value in expected.items() if value != row[name]]
+        if differing:
+            raise ValueError(
+                f"BEAM D80 input differs at ordinal {chunk.ordinal}: {differing}"
+            )
     return {
         "markdown_sha256": digest,
         "chunks": len(current),
         "splits": splits,
         "packing_fields": list(_FIELDS),
         "packing_rows_equal": True,
+        "embedding_inputs_equal": True,
         "live_calls": 0,
         "full_replay_verified": False,
     }
