@@ -19,6 +19,7 @@ from rememberstack.model.conversion import SourceMapEntry
 
 _NONBLANK = re.compile(r"\S")
 _SENTENCES = re.compile(r"(?<=[。！？])|(?<=[.!?])(?=\s|$)")
+_MARKDOWN_ROW_ENDS = re.compile(r"\r\n|[\n\r]")
 _LINES = re.compile(r"\r\n|[\n\r\v\f\x85\u2028\u2029]")
 _SPACES = re.compile(r"\s+")
 
@@ -118,7 +119,7 @@ def _split_candidate(
             row.end()
             for block in nonempty_blocks
             if block.type is BlockType.TABLE
-            for row in _LINES.finditer(
+            for row in _MARKDOWN_ROW_ENDS.finditer(
                 document_md, max(start, block.char_start), min(end, block.char_end)
             )
         ),

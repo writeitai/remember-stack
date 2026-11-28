@@ -1162,7 +1162,9 @@ class OpenRouterModelProvider:
                 time.sleep(retry_after)
                 continue
             overload_wait = _upstream_overload_retry_after(
-                response=response, attempt=attempt
+                response=response,
+                attempt=attempt,
+                hosted_embedding_error=body is not None,
             )
             if overload_wait is not None and attempt < _IN_FLIGHT_BUDGET_RETRIES:
                 _logger.warning(
@@ -1421,7 +1423,9 @@ def unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
     return "id" not in body and response.status_code in (429, 503)
 
 
-def _retryable_upstream_error(*, response: httpx.Response) -> bool:
+def _retryable_upstream_error(
+    *, response: httpx.Response, hosted_embedding_error: bool = False
+) -> bool:
     """Recognize capacity errors, including unbilled HTTP-200 error envelopes.
 
     Never regenerate a completion carrying choices or usage. Authentication,
@@ -1435,8 +1439,13 @@ def _retryable_upstream_error(*, response: httpx.Response) -> bool:
         body = response.json()
     except ValueError:
         body = None
-    if isinstance(body, dict) and any(
-        key in body for key in ("usage", "choices", "id")
+    # A request ID can accompany an error-only hosted embedding response.
+    if isinstance(body, dict) and (
+        any(key in body for key in ("usage", "choices"))
+        or (
+            "id" in body
+            and not (hosted_embedding_error and response.status_code == 200)
+        )
     ):
         return False
     if isinstance(body, dict) and isinstance(body.get("error"), dict):
@@ -1466,7 +1475,7 @@ def _retryable_upstream_error(*, response: httpx.Response) -> bool:
 
 
 def _upstream_overload_retry_after(
-    *, response: httpx.Response, attempt: int
+    *, response: httpx.Response, attempt: int, hosted_embedding_error: bool = False
 ) -> float | None:
     """Return one bounded wait for an upstream capacity error.
 
@@ -1474,7 +1483,9 @@ def _upstream_overload_retry_after(
     at the bound; otherwise a small linear backoff keeps a hot shared pool
     from being hammered while the worker's own attempt budget still applies.
     """
-    if not _retryable_upstream_error(response=response):
+    if not _retryable_upstream_error(
+        response=response, hosted_embedding_error=hosted_embedding_error
+    ):
         return None
     parsed = _response_retry_after_s(response=response)
     if parsed is None or parsed < 0:

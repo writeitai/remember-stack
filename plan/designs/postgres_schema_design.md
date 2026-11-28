@@ -258,6 +258,7 @@ CREATE TYPE currency_reason        AS ENUM ('reextracted','version_superseded','
 -- judged the old claim correct and the new extractor regressed — the old claim stands as the
 -- chunk's current transcription until a fixed extractor re-derives it (lifecycle §4).
 CREATE TYPE section_role           AS ENUM ('body','abstract','introduction','results','methods','discussion','conclusion','references','appendix','table','figure_caption','nav','boilerplate','legal');
+CREATE TYPE chunk_span_kind         AS ENUM ('whole','split'); -- D162 chunk grid marker
 CREATE TYPE crossref_kind          AS ENUM ('cites','links_to','attaches','replies_to','refers_to','amends','implements'); -- D140 adds the last three
 CREATE TYPE crossref_binding       AS ENUM ('floating','pinned');       -- D140: target version resolved at read time vs one named version
 CREATE TYPE crossref_origin        AS ENUM ('extracted','supplied');    -- D140: E0 extraction rungs vs a caller-supplied reference set (NDJSON)
@@ -1652,7 +1653,7 @@ CREATE TABLE chunks (
   representation_id uuid NOT NULL,             -- LOGICAL FK → document_representations (D65): the reading whose block grid + document.md offsets this chunk is cut from — the basis coordinate on every occurrence
   section_id      uuid,                        -- LOGICAL FK → document_sections; section (role/path signal for E2)
   ordinal         integer NOT NULL,            -- position within the document
-  span_kind       text NOT NULL DEFAULT 'whole', -- immutable: 'split' for a D162 piece
+  span_kind       chunk_span_kind NOT NULL DEFAULT 'whole', -- immutable: 'split' for a D162 piece
   block_start     integer NOT NULL,            -- first intersected block ordinal or preceding block for a gap-only piece
   block_end       integer NOT NULL,            -- last intersected block ordinal (inclusive) or same as block_start for a gap-only piece
   chunk_content_hash text NOT NULL,            -- ordered block hash sequence or D162 split hash

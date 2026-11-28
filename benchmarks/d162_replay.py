@@ -289,6 +289,11 @@ def _json_digest(value: object) -> str:
 def replay(
     args: argparse.Namespace, baseline: Engine, candidate: Engine
 ) -> dict[str, object]:
+    exact_replies = None
+    if args.wire_tape is not None:
+        exact_replies = json.loads(args.wire_tape.read_text())
+        if not isinstance(exact_replies, list):
+            raise ValueError("--wire-tape must contain a JSON array of wire records")
     params = ChunkerParams.model_validate_json(args.packing)
     generation = chunker_version(params=params)
     current = _rows(
@@ -364,7 +369,6 @@ def replay(
         """,
         chunk_ids=chunk_ids,
     )
-    exact_replies = json.loads(args.wire_tape.read_text()) if args.wire_tape else None
     replies = Replies(
         records=exact_replies, search=search, selections=selections, model=args.model
     )

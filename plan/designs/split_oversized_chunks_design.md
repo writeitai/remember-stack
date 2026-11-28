@@ -26,6 +26,8 @@ For failing base candidates, cut first at nonblank eligibility changes using E0 
 D133 gap labels. Unlabelled gaps are eligible. Keep whitespace labels, attaching leading space
 to the first piece and separator whitespace to the preceding piece. For size cuts, prefer block
 seams, recorded turn/page/table-row seams, sentence, line, whitespace, then Unicode scalars.
+Markdown table rows end at LF, CRLF or CR. Unicode line separators inside a cell
+count as cell text.
 In the first legal tier, cut nearest the midpoint, breaking ties earlier. Keep CRLF together
 and nonblank text on both sides. Repeat until each piece fits and their exact bytes reassemble.
 
@@ -80,6 +82,9 @@ calls outside the locks.
 Replay committed results and dates by chunk ID under existing identity checks. E1 checks
 for a matching vector and stamp after taking the lineage lock. This covers a retry that
 committed after an older attempt read for replay, even if a split has since closed reuse.
+Before dispatching a fresh Selection or Claimify call, read the target's committed result
+again and check its input hash. This covers a retry that commits while a stale attempt
+looks for a donor.
 Missing results for a split version run fresh under existing skip rules. New chunks in that
 version take its `source_modified_at` or `published_at` (`NULL` if undated). Eligible pairs
 keep keys, ranking and remapping.
@@ -102,9 +107,9 @@ the configured dimension.
 confirmed per-input size rejections dead-letter as `embedding.input_too_large`, other deterministic
 rejections as `embedding.input_rejected`. Apply the same codes to explicit input
 rejections inside error-only success responses. Record chunk ID, rendered hash and binding.
-Capacity errors, including error-only HTTP 200 envelopes, take bounded retries. Outages and
-unusable responses use the existing retry budget. Keep committed batches and
-the saved grid. Use existing ledger operations and D159 unarchive.
+Capacity errors, including error-only HTTP 200 envelopes with a request ID, take bounded
+retries. Outages and unusable responses use the existing retry budget. Keep committed
+batches and the saved grid. Use existing ledger operations and D159 unarchive.
 
 A keyless D55 ingest is a no-op if its bytes match the highest-numbered version and that
 version is non-deleted. Changed bytes, re-ingest after deletion of the latest version, or a

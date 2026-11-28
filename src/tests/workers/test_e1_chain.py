@@ -584,8 +584,9 @@ def test_d162_error_only_success_response_records_typed_dead_letter(
 
 
 @pytest.mark.parametrize("exhausts_adapter", (False, True))
+@pytest.mark.parametrize("with_id", (False, True))
 def test_d162_http_200_capacity_envelope_retries_and_completes(
-    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, exhausts_adapter: bool
+    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, exhausts_adapter: bool, with_id: bool
 ) -> None:
     _saved_grid(rig, "Every traveler needs a receipt.")
     adapter = OpenRouterModelProvider(
@@ -602,7 +603,13 @@ def test_d162_http_200_capacity_envelope_retries_and_completes(
     def reply(request: httpx.Request) -> httpx.Response:
         submitted.append(request.content)
         if len(submitted) <= capacity_replies:
-            return httpx.Response(200, json={"error": {"code": 429}})
+            return httpx.Response(
+                200,
+                json={
+                    **({"id": "embed-capacity-rejected"} if with_id else {}),
+                    "error": {"code": 429},
+                },
+            )
         payload = json.loads(request.content)
         return httpx.Response(
             200,
@@ -630,6 +637,14 @@ def test_d162_http_200_capacity_envelope_retries_and_completes(
                     FROM processing_state WHERE stage='embed_chunk'
                 """)
                 ).one() == (1, "retry_backoff")
+                assert (
+                    connection.execute(
+                        text(
+                            "SELECT count(*) FROM cost_ledger WHERE stage='embed_chunk'"
+                        )
+                    ).scalar_one()
+                    == 0
+                )
                 connection.execute(
                     text("""
                     UPDATE processing_state SET not_before=now() WHERE stage='embed_chunk'

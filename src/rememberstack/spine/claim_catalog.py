@@ -44,16 +44,29 @@ class ClaimCatalog:
         self.selections = SelectionCatalog(engine=engine)
 
     def chunk_already_extracted(
-        self, *, chunk_id: UUID, extractor_version: str
+        self,
+        *,
+        chunk_id: UUID,
+        extractor_version: str,
+        claimify_input_hash: str | None = None,
     ) -> bool:
         """Whether this extractor generation already processed the chunk (D12/D7).
 
-        True if any claim, any ledgered decision, or any occurrence link
-        exists — a chunk whose extraction yielded only drops is still done,
-        and a chunk that REUSED prior claims (D56, occurrence links only) is
-        equally done.
+        With a Claimify input hash, check the completion stamp written atomically
+        with results. Otherwise check for a claim, decision or occurrence from
+        this extractor generation, including results from before the stamp.
         """
         with self._engine.connect() as connection:
+            if claimify_input_hash is not None:
+                committed = connection.execute(
+                    text(
+                        "SELECT claimify_input_hash FROM chunks WHERE chunk_id=:chunk_id"
+                    ),
+                    {"chunk_id": chunk_id},
+                ).scalar_one_or_none()
+                if committed is not None and committed != claimify_input_hash:
+                    raise ValueError("Claimify completion has different inputs")
+                return committed is not None
             return (
                 connection.execute(
                     _SELECT_EXTRACTED,

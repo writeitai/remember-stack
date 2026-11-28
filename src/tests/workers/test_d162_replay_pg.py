@@ -9,6 +9,7 @@ from benchmarks.d162_replay import _clone
 from benchmarks.d162_replay import _work
 from benchmarks.d162_replay import replay
 import httpx
+import pytest
 from sqlalchemy import text
 
 from rememberstack.adapters import OpenRouterModelProvider
@@ -191,27 +192,27 @@ def test_strict_replay_compares_persisted_claims_and_occurrence_spans(
 
     tape = tmp_path / "wire.json"
     tape.write_text(json.dumps(records))
+    args = Namespace(
+        packing=_PARAMS.model_dump_json(),
+        representation=None,
+        wire_tape=tape,
+        model=model,
+        routing="custom",
+        base_url=endpoint,
+        embedding_provider="nebius",
+        artifacts=tmp_path / "artifacts",
+        batch_size=64,
+        extract_model=E2Settings().extract_model,
+    )
     rig.engine.dispose()
     with _clone(rig.engine.url.render_as_string(hide_password=False)) as (
         baseline,
         candidate,
     ):
-        result = replay(
-            Namespace(
-                packing=_PARAMS.model_dump_json(),
-                representation=None,
-                wire_tape=tape,
-                model=model,
-                routing="custom",
-                base_url=endpoint,
-                embedding_provider="nebius",
-                artifacts=tmp_path / "artifacts",
-                batch_size=64,
-                extract_model=E2Settings().extract_model,
-            ),
-            baseline,
-            candidate,
-        )
+        result = replay(args, baseline, candidate)
+        tape.write_text("null")
+        with pytest.raises(ValueError, match="--wire-tape must contain a JSON array"):
+            replay(args, baseline, candidate)
     assert result["wire_verified"] is True
     assert result["splits"] == result["live_calls"] == 0
     tables = result["tables"]

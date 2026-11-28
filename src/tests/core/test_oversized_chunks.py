@@ -163,6 +163,45 @@ def test_split_tiers_keep_crlf_and_attach_separator_to_left() -> None:
     assert _size_cut(text="🙂🙃🙂🙃", block_seams=(), recorded_seams=()) == 2
 
 
+@pytest.mark.parametrize("row_end", ("\n", "\r\n", "\r"))
+def test_table_row_seam_ignores_in_cell_unicode_line_separator(row_end: str) -> None:
+    header = f"| Data |{row_end}| --- |{row_end}"
+    first_row = "| " + "🙂界" * 5_000 + " |" + row_end
+    second_row = "| " + "🙂界" * 500 + "\u2028" + "🙂界" * 500 + " |" + row_end
+    body = header + first_row + second_row + "| " + "🙂界" * 5_000 + " |"
+    block = _block(0, 0, len(body)).model_copy(update={"type": BlockType.TABLE})
+    section = SectionSpan(
+        section_id=_SECTION, node_path="0", role="body", block_start=0, block_end=0
+    )
+    packed = pack_blocks(
+        blocks=(block,), sections=(section,), document_md=body, params=ChunkerParams()
+    )
+
+    def fits(chunk: PackedChunk, count: int) -> bool:
+        return (
+            hosted_embedding_tokens(
+                _render(body[chunk.char_start : chunk.char_end], count)
+            )
+            <= HOSTED_EMBEDDING_TOKEN_CEILING
+        )
+
+    assert not fits(packed[0], len(packed))
+    left, right = split_oversized_chunks(
+        packed=packed,
+        oversized=frozenset({0}),
+        blocks=(block,),
+        eligibility=(True,),
+        document_md=body,
+        ranges=(),
+        source_map=(),
+        fits=fits,
+    )
+    assert left.char_start == 0
+    assert left.char_end == right.char_start == len(header + first_row)
+    assert right.char_end == len(body)
+    assert fits(left, 2) and fits(right, 2)
+
+
 def _block(ordinal: int, start: int, end: int) -> Block:
     return Block(
         ordinal=ordinal,

@@ -607,6 +607,125 @@ def test_d162_copy_rolls_back_and_committed_replay_survives_split(
     assert seed.version_id != target.version_id
 
 
+@pytest.mark.parametrize(
+    "stage", (PipelineStage.EXTRACT_CLAIMS, PipelineStage.GROUND_CLAIMS)
+)
+def test_d162_stale_extraction_attempt_replays_before_fresh_dispatch(
+    rig: _ReuseRig, monkeypatch: pytest.MonkeyPatch, stage: PipelineStage
+) -> None:
+    monkeypatch.setattr(hosted_embedding_ceiling, "HOSTED_EMBEDDING_TOKEN_CEILING", 80)
+    donor = _observe(rig=rig, content=_WHOLE, modified_at=_OLD)
+    rig.drain()
+    target = _observe(rig=rig, content=_WHOLE + _OVERSIZED, modified_at=_EDIT)
+    for upstream in (
+        PipelineStage.CONVERT,
+        PipelineStage.STRUCTURE,
+        PipelineStage.CHUNK,
+        PipelineStage.EMBED_CHUNK,
+    ):
+        assert (
+            rig.worker.run_one(
+                deployment_id=_DEPLOYMENT_ID, stage=upstream, lane=ProcessingLane.STEADY
+            ).outcome
+            is RunResultOutcome.SUCCEEDED
+        )
+    if stage is PipelineStage.GROUND_CLAIMS:
+        for _ in _rows(rig, target, _PARAMS):
+            assert (
+                rig.worker.run_one(
+                    deployment_id=_DEPLOYMENT_ID,
+                    stage=PipelineStage.EXTRACT_CLAIMS,
+                    lane=ProcessingLane.STEADY,
+                ).outcome
+                is RunResultOutcome.SUCCEEDED
+            )
+
+    receiver = _rows(rig, target, _PARAMS)[0]
+    prior = _rows(rig, donor, _PARAMS)[0]
+    assert receiver["extraction_input_hash"] == prior["extraction_input_hash"]
+    with rig.engine.connect() as connection:
+        processing_id = connection.execute(
+            text(
+                "SELECT processing_id FROM processing_state WHERE target_id=:id AND stage=:stage"
+            ),
+            {"id": receiver["chunk_id"], "stage": stage.value},
+        ).scalar_one()
+
+    def run_extraction(worker: Worker) -> RunResultOutcome:
+        return worker.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=stage,
+            lane=ProcessingLane.STEADY,
+            processing_id=processing_id,
+        ).outcome
+
+    handler = _extractor(rig, _PARAMS)
+    handler._catalog = ClaimCatalog(engine=rig.engine)
+    if stage is PipelineStage.EXTRACT_CLAIMS:
+        catalog, lookup_name = handler._catalog.selections, "prior"
+    else:
+        catalog, lookup_name = handler._catalog, "prior_extracted_chunk"
+    lookup = getattr(catalog, lookup_name)
+    observed, resume = Event(), Event()
+    lookup_results: list[object] = []
+
+    def lookup_after_split(**kwargs: object):
+        observed.set()
+        assert resume.wait(timeout=10)
+        result = lookup(**kwargs)
+        lookup_results.append(result)
+        return result
+
+    monkeypatch.setattr(catalog, lookup_name, lookup_after_split)
+    ledger = rig.worker._ledger
+    registry = HandlerRegistry()
+    registry.register(stage=stage, handler=handler)
+    stale_worker = Worker(ledger=ledger, registry=registry)
+    before = len(rig.calls)
+    with ThreadPoolExecutor(1) as executor:
+        stale = executor.submit(run_extraction, stale_worker)
+        try:
+            assert observed.wait(timeout=10)
+            with rig.engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE processing_state SET lease_until=now() - interval '1s' WHERE processing_id=:id"
+                    ),
+                    {"id": processing_id},
+                )
+            (expired,) = ledger.reap_expired_leases(deployment_id=_DEPLOYMENT_ID)
+            assert expired.work.attempt == 1 and expired.requeued
+            assert run_extraction(rig.worker) is RunResultOutcome.SUCCEEDED
+            assert len(rig.calls) == before
+            if stage is PipelineStage.EXTRACT_CLAIMS:
+                frozen = rig.claim_catalog.selections.load(
+                    chunk_id=receiver["chunk_id"],
+                    extractor_version=E2_EXTRACTOR_VERSION,
+                )
+                assert (
+                    frozen is not None
+                    and frozen.input_hash == receiver["extraction_input_hash"]
+                )
+            else:
+                stamped = _rows(rig, target, _PARAMS)[0]
+                assert (
+                    stamped["claimify_input_hash"]
+                    == prior["claimify_input_hash"]
+                    is not None
+                )
+            _pack_split(rig, target)
+            assert any(
+                row["span_kind"] == "split"
+                for row in _rows(rig, target, _OTHER_GENERATION)
+            )
+        finally:
+            resume.set()
+        assert stale.result(timeout=10) is RunResultOutcome.LEASE_LOST
+
+    assert lookup_results == [None]
+    assert len(rig.calls) == before
+
+
 def test_d162_first_grid_race_reuses_committed_ids(
     database_engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

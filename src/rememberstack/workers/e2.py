@@ -534,10 +534,8 @@ class ExtractClaimsHandler:
         index, chunk = _require_chunk(
             chunks=chunks, chunk_id=chunk_id, representation_id=source.representation_id
         )
-        frozen = self._catalog.selections.load(
-            chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
-        )
-        if frozen is None and not chunk.extraction_eligible:
+        committed = self._selection_is_committed(chunk=chunk)
+        if not committed and not chunk.extraction_eligible:
             # D133 §4.5: an ineligible chunk completes like an empty Selection
             # result, with no model call and no reference cards.
             self._catalog.selections.freeze(
@@ -551,7 +549,7 @@ class ExtractClaimsHandler:
                 diagnostics=(),
                 truncated=False,
             )
-        elif frozen is None:
+        elif not committed:
             document_md = self._read_markdown(source=source)
             if not self._reuse_prior_selection(
                 source=source,
@@ -652,6 +650,16 @@ class ExtractClaimsHandler:
             loaded=loaded, required_ids=producer_ids
         )
 
+    def _selection_is_committed(self, *, chunk: ChunkForEmbedding) -> bool:
+        frozen = self._catalog.selections.load(
+            chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
+        )
+        if frozen is None:
+            return False
+        if frozen.input_hash != chunk.extraction_input_hash:
+            raise ValueError("committed Selection input identity differs")
+        return True
+
     def _reuse_prior_selection(
         self,
         *,
@@ -695,12 +703,7 @@ class ExtractClaimsHandler:
                     reused_from=prior.chunk_id,
                 )
             except ChunkReuseBlocked:
-                if (
-                    self._catalog.selections.load(
-                        chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
-                    )
-                    is not None
-                ):
+                if self._selection_is_committed(chunk=chunk):
                     return True
                 continue
             return True
@@ -780,6 +783,9 @@ class ExtractClaimsHandler:
         derivation_ranges = (
             origin_context.derivation_ranges if origin_context is not None else ()
         )
+        # A retry may have committed while this attempt was looking for a donor.
+        if self._selection_is_committed(chunk=chunk):
+            return
         selection_call = self._model_provider.generate(
             request=ModelRequest(
                 model=self._settings.extract_model,
@@ -873,7 +879,9 @@ class ExtractClaimsHandler:
                 )
             except ChunkReuseBlocked:
                 if self._catalog.chunk_already_extracted(
-                    chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
+                    chunk_id=chunk.chunk_id,
+                    extractor_version=E2_EXTRACTOR_VERSION,
+                    claimify_input_hash=claimify_hash,
                 ):
                     return True
                 continue
@@ -954,6 +962,12 @@ class ExtractClaimsHandler:
                 for candidate in keeps
                 if candidate.verdict is SelectionVerdict.KEEP_FLAGGED
             }
+            if self._catalog.chunk_already_extracted(
+                chunk_id=chunk.chunk_id,
+                extractor_version=E2_EXTRACTOR_VERSION,
+                claimify_input_hash=claimify_hash,
+            ):
+                return
             response_call = self._model_provider.generate(
                 request=ModelRequest(
                     model=self._settings.extract_model,

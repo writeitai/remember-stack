@@ -9296,8 +9296,9 @@ uses the stage's remaining attempts.
 With Qwen3-Embedding-8B pinned to OpenRouter's `nebius/bf16` route with zero
 data retention and fallbacks off, new chunk grids split passages that exceed
 16,384 model tokens. Adding the same sole host to the provider order also
-activates these checks. If an existing input exceeds the ceiling or the
-provider confirms a per-input rejection, including in an error-only HTTP 200
+activates these checks. This binding retries error-only HTTP 200 capacity
+responses that carry a request ID. If an existing input exceeds the ceiling or
+the provider confirms a per-input rejection, including in an error-only HTTP 200
 response, the embedding stage dead-letters with `embedding.input_too_large`
 or `embedding.input_rejected`. Malformed vector batches use the stage's retry budget.
 `last_error` includes the chunk ID, the rendered input hash and the binding.
