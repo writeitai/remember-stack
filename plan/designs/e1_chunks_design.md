@@ -34,7 +34,7 @@ One document, one ordered text, three views over it:
 document.md = [b1][b2][b3][b4][b5][b6][b7][b8][b9][b10]      BLOCKS — deterministic atoms
 sections    = [   §1 Intro    ][     §2 Results    ][§3 Refs] SECTIONS — PageIndex ranges
                  role=intro         role=results     role=refs   over blocks (LLM meaning)
-chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  WHOLE-BLOCK CANDIDATES
+chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  FITTING CHUNKS
 ```
 
 | | Blocks | Sections | Chunks |
@@ -44,17 +44,10 @@ chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  WHO
 | used for | reuse diff (D56), the grounding chain, edit locality | chunk boundaries, E2 role signal, P1 role filter, P3 placement | P1 index rows, E2 bundles, `claims.chunk_id` |
 | in identity/reuse keys? | yes | **never** (non-deterministic) | content hash (§4) |
 
-Suppose an edit to paragraph `b5` changes its text and hash in this unsplit grid.
-Chunk boundaries, location fields and generations stay fixed. Only `c2`'s body
-changes.
-
-- **Embedding.** Only `c2` needs a new vector. The others carry forward when
-  their full rendered inputs and other identity fields match. [D80 reuse](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse).
-- **Selection.** `c2` has new text and `c3` has a changed same-section
-  neighbour. Both get new Selection inputs. `c1`, `c4` and `c5` keep theirs.
-- **Claimify.** The changed Selection hashes affect `c2` and `c3` and also
-  enter the previous-eight window of `c4` and `c5`. Claimify can rerun across
-  section boundaries even when Selection reuses its result. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
+An edit to `b5` with stable spans, locations and generations changes only `c2`'s
+vector input. Selection reruns for `c2` and its same-section neighbour `c3`.
+The changed Selection hashes also enter the preceding-eight window of `c4`
+and `c5`, so Claimify can rerun across sections. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 ## 2. Blocks and the blockizer (D57)
 
@@ -207,20 +200,15 @@ blocks ≈ paragraphs, and the machinery is uniform.
 
 ## 4. Non-overlapping chunks within sections (D58, D162)
 
-**Packing rules.** Group whole blocks within each section by whitespace-token budget.
-An oversized block forms a candidate on its own.
+**Packing rules.** Pack whole blocks by whitespace-token budget within each section.
+An oversized block forms its own candidate. [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates)
+cuts candidates that fail fit. Character spans govern coverage, and block ordinals may repeat.
 
-- [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates) cuts candidates
-  that fail provider fit. Character spans govern coverage, and block ordinals may repeat.
-- **Never cross a section boundary** (§3 makes this well-defined).
-- **Uniform extraction eligibility** (D133). The extraction eligibility policy marks some
-  `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
-  tables). The base packer cuts at eligibility changes between blocks. D162 pieces have
-  uniform eligibility for nonblank text, including gaps. `chunks.extraction_eligible` records it.
-  E1's extraction fan-out schedules Selection for every final chunk. E2 freezes an empty
-  result without a model call for each ineligible chunk, including split pieces. The result counts
-  toward the [D122 barrier](document_reference_context_design.md#persistence-scheduling-and-retries)
-  and keeps its slot in the preceding-eight producer window.
+- **Uniform extraction eligibility** (D133). Cut at eligibility changes between blocks.
+  Use gap labels as well for split pieces. Store eligibility in `chunks.extraction_eligible`.
+  E1 schedules Selection for every chunk in the extraction fan-out. E2 freezes an empty
+  result without a call for ineligible chunks, including split pieces. It counts toward the
+  [D122 barrier](document_reference_context_design.md#persistence-scheduling-and-retries) and keeps its slot in the preceding-eight window.
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost
@@ -229,11 +217,10 @@ An oversized block forms a candidate on its own.
   destroying D56 reuse entirely. Where overlap has a real virtue (context continuity across a
   boundary), the E2 bundle already provides it explicitly (±N neighbor chunks) without paying
   identity or extraction costs.
-- **Anchor-stabilized boundaries** (A2). Accept a block as an anchor when
-  `uint64(block_hash) mod M == 0` and at least `min_gap` tokens have accumulated since the
-  last accepted anchor. A length edit can change which blocks clear that gap. Base packing can
-  differ up to the next unchanged anchor accepted by both versions or the end of the owner run.
-  The budget, `M` and `min_gap` are part of `chunker_version`.
+- **Anchor-stabilized boundaries** (A2). Force a boundary before a block when
+  `uint64(block_hash) mod M == 0` and at least `min_gap` tokens have accumulated since the last anchor.
+  Length edits can shift packing to the next anchor accepted by both versions or the end of
+  the owner run. The budget, `M` and `min_gap` are part of `chunker_version`.
 - **Determinism:** base candidates = f(blocks, sections, budget, anchors, `chunker_version`) — a
   chunker bump is a cheap repack of existing atoms (no re-conversion, no re-blockize), though
   it does re-key reuse (a deliberate version boundary, like any D7 version bump).
@@ -317,7 +304,7 @@ change.
 
 ## 7. Reuse mechanics (D56 bound here; amendments A1–A3)
 
-These rules apply when both versions pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
+These rules apply when both grids pass the [D162 reuse gate](split_oversized_chunks_design.md#3-grid-wide-reuse-gate).
 
 - **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
   new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain).
@@ -373,15 +360,14 @@ These rules apply when both versions pass the [D162 reuse gate](split_oversized_
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
-- **Claimify reuse (D122).** Match the target's Selection hash, the preceding
-  eight Selection hashes in document order and the reference-policy generation.
-  Reuse keeps the claim IDs when the evidence remaps. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
+- **Claimify reuse (D122).** Match target and preceding-eight Selection hashes and the
+  reference-policy generation. Keep claim IDs when evidence remaps. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 ## 8. What reaches Postgres
 
 Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 
-- `chunks`: `version_id`, `block_start`/`block_end` ordinals, `chunk_content_hash` (§4),
+- `chunks`: `version_id`, block ordinals, `span_kind`, `chunk_content_hash` (§4),
   `extraction_input_hash` (§7), `section_id`, offsets. **D80**
   location-facts snapshot ref / bounded optional header, `embedding_text_hash`,
   `embedding_input_policy_version` and current embedder stamps. The normalized body and

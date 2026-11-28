@@ -1945,16 +1945,7 @@ identity rules per source kind are a named spike.
 > toolchain versions), else the new version's source time. It replaces both date header
 > facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
-> this decision's cost promise did not hold. Everything else here remains binding.
-
-> **Reuse refinements.** [D80](plan/designs/e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse)
-> also matches rendered input and policy for passage vectors.
-> [D122](#d122-share-frozen-source-reference-context-between-extraction-chunks)
-> adds a preceding-eight Selection dependency to Claimify, so the original
-> edit example below understates the possible re-extraction.
-
-> **Proposed amendment.** [D162](#d162-split-oversized-chunks-before-embedding)
-> limits E1 and E2 result reuse to unsplit versions on both sides.
+> this decision's cost promise did not hold. [D162](#d162-split-oversized-chunks-before-embedding) limits reuse to unsplit grids on both sides.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -2003,7 +1994,7 @@ speaker labels, model family). D57–D58 formalize the chunking-strategy design 
 
 ## D57. The block substrate — a deterministic blockizer owns identity; sections snap to the block grid
 
-> [D162](#d162-split-oversized-chunks-before-embedding) keeps block-based packing and allows cuts within blocks.
+> [D162](#d162-split-oversized-chunks-before-embedding) keeps the block substrate and allows cuts within blocks.
 
 **Decision.** Between conversion and everything else sits one deterministic layer: the
 **blockizer** (ours, versioned `blockizer_version`) derives the document's **block sequence**
@@ -2045,14 +2036,13 @@ way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_des
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
-> **Proposed amendment.** [D162](#d162-split-oversized-chunks-before-embedding)
-> replaces `semchunk` and the oversized-block fallback with anchored base packing
-> and lossless provider-fit cuts, keeping section ownership and non-overlap.
+> [D162](#d162-split-oversized-chunks-before-embedding) replaces semchunk and the oversized-block fallback
+> with anchored base packing and lossless provider-fit cuts. Section ownership and non-overlap still apply.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
-**anchor-stabilized boundaries** (packing after an edit realigns at the next anchor accepted
-by both versions or stops at the end of the owner run).
+**anchor-stabilized boundaries** (packing restarts at content-defined anchor blocks, so an
+early edit perturbs packing only to the next anchor — load-bearing for sectionless documents).
 **No overlap, ever**: overlap double-extracts (duplicate claims within one generation — the
 inflation D54 just killed), bloats P1 with near-duplicates, and its offset-arithmetic
 boundaries destroy D56 reuse; the E2 bundle's ±N neighbors provide cross-boundary context
@@ -2193,6 +2183,8 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
 
+> [D162](#d162-split-oversized-chunks-before-embedding) replaces semchunk with anchored packing and provider-fit cuts.
+
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
 > this entry, including prerelease upgrade policy and the RC-only compiler
@@ -2216,8 +2208,6 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
 > implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
 > (since the D98 RC 1 amendment, a relational one-hop join instead of SQL/PGQ).
-
-> [D162](#d162-split-oversized-chunks-before-embedding) replaces `semchunk` with anchored packing and provider-fit cuts.
 
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
@@ -3557,10 +3547,7 @@ second-order channel; it is not the D80 default.
 
 ## D80. Conventional embedding input is a versioned deterministic policy — conditional location headers, typed location facts, no default location LLM (amends D63 path; refines D56 vector reuse)
 
-> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> gates carry-forward on both versions at commit and keeps semantic search
-> ready for qualified request-limit-only changes. Shared changes must preserve
-> the requests of every other embedding consumer.
+> [D162](#d162-split-oversized-chunks-before-embedding) ships passage size ceilings with the release and limits carry-forward to unsplit grids.
 
 **Decision (2026-08-03).** The product path for chunk (passage) embeddings is **conventional
 embedders only** (`texts → vectors`), chosen for **interchangeability** under version-scoped
@@ -6396,7 +6383,7 @@ promising billed tokens or a fixed saving.
 
 ## D122. Share frozen source reference context between extraction chunks
 
-> [D162](#d162-split-oversized-chunks-before-embedding) limits cross-version reuse to unsplit versions on both sides.
+> [D162](#d162-split-oversized-chunks-before-embedding) limits cross-version reuse to unsplit grids on both sides.
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -6808,9 +6795,8 @@ way to become several documents.
    (a deterministic file card for recognized formats with no reading). Structured
    families are read fully only within hard bounds (200 rows, 20,000 characters).
 3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
-   structure searchable but not claim-extracted. Conversion validates that eligibility
-   changes only at block boundaries. E1 cuts there and schedules Selection for every
-   chunk in the extraction fan-out.
+   structure searchable but not claim-extracted. Convert validates block eligibility and
+   E1 packs and splits accordingly. E1 schedules Selection for every chunk in the fan-out.
    E2 freezes an empty result for ineligible chunks without a model call.
 4. Profiled tables are stored as normalized Parquet in a new **private store** (a
    third object-store root no mount, P3 or `hydrate` reads), and a new direct
@@ -7254,14 +7240,13 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 ## D140. Declared effective periods, section keys, and version-aware references
 
+> [D162](#d162-split-oversized-chunks-before-embedding) limits text-origin inheritance to unsplit grids on both sides.
+
 > **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
 > statement" is executed as a predicate of the eligibility (confirmation) step of D142's
 > nominate–confirm–continue loop, before the `k` cut, in one ranked-read snapshot. Scope,
 > occurrence selection, the evidence gate and `scope_pending` semantics are unchanged, except
 > that `scope_pending` gains `complete` (false when a replayed nomination stopped on a bound).
-
-> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
-> limits text-origin inheritance to unsplit versions on both sides.
 
 **Status:** accepted when merged. **Date:** 2026-09-30. **Refines:** D36, D55, D56,
 D79, D134 (in-entry notes mark each); D118 is unchanged and gains one adjudication
@@ -8771,24 +8756,16 @@ generations, retrieval and rendering use their existing code and identities.
 
 ## D162. Split oversized chunks before embedding
 
-**Status** Proposed. **Date** 2026-11-27.
+**Status:** Proposed. **Date:** 2026-11-27.
 
-Check the full D80 input under a qualified binding and split failing
-candidates losslessly under the existing chunker version. A version with
-any split piece is ineligible as a receiver or donor at E1/E2 reuse and D140
-text origin commit. Fitting grids retain legacy identities.
+Check the full D80 input against a release constant for the pinned binding.
+Split failing candidates losslessly under the existing chunker version.
+Exclude any grid containing a split piece from donating or receiving E1/E2
+results and D140 dates. Keep saved grids and work keys. Confirmed input
+rejections use typed terminal failures. Require offline request and full-row
+equality on frozen LoCoMo Full-v45 and BEAM.
 
-Fence replay and drain legacy E1 before enabling splits and fit checks.
-Skip blocked legacy E1 resets during D159 unarchive. Fence actual undos
-during later binding switches so eligible resets can commit after the switch.
-Check persisted rebuild and replay inputs against an incoming binding.
-Verify that shared limit changes preserve every other embedding consumer's
-requests. Publish qualified request-limit-only changes with semantic search ready.
-Confirmed input rejections are typed terminal failures. Require offline
-equality of legacy requests and full rows on frozen LoCoMo Full-v45 and BEAM.
-
-[Design](plan/designs/split_oversized_chunks_design.md) ·
-[Analysis](plan/analysis/split_oversized_chunks_analysis.md).
+[Design](plan/designs/split_oversized_chunks_design.md) · [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
 
 ## D163. Drive fact eligibility from its own evidence
 

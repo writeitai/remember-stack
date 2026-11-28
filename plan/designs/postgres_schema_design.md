@@ -502,7 +502,6 @@ CREATE TABLE processing_state (
   attempts        smallint NOT NULL DEFAULT 0, -- handler executions actually begun; delivery attempts and budget parking do not increment it
   max_attempts    smallint NOT NULL DEFAULT 3, -- total handler-attempt limit; starting point = initial + D12's two retries
   last_error      text,                        -- full traceback + cause chain for the most recent handler failure; failures never disappear
-  replay_blocked  boolean NOT NULL DEFAULT false, -- D162 marks legacy E1 dead letters at cutover
   payload         jsonb,                       -- open-ended handler input for DLQ inspection/replay; never route, due, retry, budget, or DLQ state
   enqueued_at     timestamptz NOT NULL DEFAULT now(),
   started_at      timestamptz,
@@ -513,7 +512,6 @@ CREATE TABLE processing_state (
   CHECK (attempts >= 0 AND max_attempts >= 1 AND attempts <= max_attempts),
   CHECK (status <> 'failed' OR attempts < max_attempts),
   CHECK (status <> 'running' OR lease_until IS NOT NULL),
-  CHECK (NOT replay_blocked OR status = 'dead_letter'),
   CHECK (
     (status = 'failed' AND defer_reason = 'retry_backoff') OR
     (status = 'pending' AND (defer_reason IS NULL OR defer_reason IN ('scheduled','budget'))) OR
@@ -617,11 +615,6 @@ COMMENT ON TABLE cost_ledger IS
   'Append-only LLM/embedding call attribution for D67 budgets. Idempotent per (processing_id,attempt,call_key), so multi-call handlers are complete and acknowledged-late retries cannot double-count. A batched call (D58) bills one row on the claiming processing row; batches never cross a document or lane, so lane and document accounting stay exact. Nullable diagnostic target fields do not weaken deduplication.';
 CREATE INDEX ix_cost_budget_window ON cost_ledger (deployment_id, stage, lane, occurred_at);
 ```
-
-The [D162 replay guard](split_oversized_chunks_design.md#4-rollout) skips fenced
-or permanently blocked E1 resets before the constraints run. Skipped rows are
-absent from `UPDATE ... RETURNING`, so D159 unarchive can restore testimony and
-wake eligible work in the same transaction.
 
 ### Post-head deployment bootstrap (D69)
 
@@ -1252,7 +1245,6 @@ CREATE TABLE document_versions (
   published_at    timestamptz,                 -- document's own date (resolves "last year"); world-time origin
   language        text,                        -- detected primary language (per version — it can change)
   source_shape    text,                        -- D80 typed filter grain: document | message_atom | thread | channel_export | connector-defined extension
-  has_split_chunks boolean NOT NULL DEFAULT false, -- sticky D162 reuse gate, committed with the grid
   current_representation_id uuid,              -- → document_representations (D65): the LIVE reading of this snapshot; swapped only after the new representation's conversion→E1→E2 chain completes (real FK added after that table)
   status          document_status NOT NULL DEFAULT 'ingesting', -- ingesting | converting | structuring | ready | failed | deleted
   error           text,
@@ -1661,16 +1653,17 @@ CREATE TABLE chunks (
   representation_id uuid NOT NULL,             -- LOGICAL FK → document_representations (D65): the reading whose block grid + document.md offsets this chunk is cut from — the basis coordinate on every occurrence
   section_id      uuid,                        -- LOGICAL FK → document_sections; section (role/path signal for E2)
   ordinal         integer NOT NULL,            -- position within the document
-  block_start     integer NOT NULL,            -- first intersected block ordinal, or preceding block for a gap-only piece
-  block_end       integer NOT NULL,            -- last intersected block ordinal (inclusive), or same as block_start for gap-only pieces
-  chunk_content_hash text NOT NULL,            -- ordered block hashes or D162 split hash
-  extraction_input_hash text NOT NULL,         -- stable Selection inputs including text_origin_at (E1 design §7)
+  span_kind       text NOT NULL DEFAULT 'whole', -- immutable: 'split' for a D162 piece
+  block_start     integer NOT NULL,            -- first intersected block ordinal or preceding block for a gap-only piece
+  block_end       integer NOT NULL,            -- last intersected block ordinal (inclusive) or same as block_start for a gap-only piece
+  chunk_content_hash text NOT NULL,            -- ordered block hash sequence or D162 split hash
+  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, the chunk's text_origin_at (D140 — not the version's own date), language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
-  text_origin_at  timestamptz,                 -- earliest eligible D140 origin or this version's own date, subject to the D162 version gate
-  reuse_identity_hash text,                    -- D140: date-free identity for the text-origin lookup (E1 design §7)
-  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5. Eligibility is uniform for nonblank text in D162 split pieces.
+  text_origin_at  timestamptz,                 -- immutable D140 origin from an eligible match, including the D162 grid gate, or this version's own source date
+  reuse_identity_hash text,                    -- D140: date-free identity (own + neighbour block hashes, non-date header facts, blockizer/structurer/extractor versions) for the text-origin lookup
+  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5. Eligibility is uniform for nonblank text in split pieces.
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
   -- stored here (D37); chunk_search holds normalized body + one current vector.
@@ -1687,7 +1680,7 @@ CREATE TABLE chunks (
   PRIMARY KEY (chunk_id, created_at)
 ) PARTITION BY RANGE (created_at);
 COMMENT ON TABLE chunks IS
-  'Section-bounded E1 retrieval units. Normalized search text and current embeddings live in private chunk_search (D94). Chunks hold offsets, section link, D80 location and policy stamps, version stamps, and D56 reuse keys. The D162 reuse gate is on document_versions. Monthly-partitioned, logical FKs (D23).';
+  'Section-bounded E1 units. Normalized search text and current vectors live in private chunk_search (D94). Chunks hold offsets, section and D80 stamps, D56 reuse keys and the immutable D162 span kind. Monthly-partitioned, logical FKs (D23).';
 CREATE INDEX ix_chunks_doc     ON chunks (deployment_id, doc_id);
 CREATE INDEX ix_chunks_version ON chunks (version_id);
 CREATE INDEX ix_chunks_reuse   ON chunks (deployment_id, doc_id, extraction_input_hash);  -- the D56 reuse lookup

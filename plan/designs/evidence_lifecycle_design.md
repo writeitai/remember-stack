@@ -354,46 +354,18 @@ across re-extraction by construction. "A new claim row exists for the same testi
 
 ## 6. Content-addressed reuse (D56) — cost proportional to the edit
 
-The chunk reuse rules below require both versions to pass the
-[D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate)
-at commit. A split-marked version is ineligible for new copies. Committed
-results replay by chunk ID.
-
 The efficiency ladder for the hourly watcher, cheapest exit first:
 
 1. **Connector metadata no-op** — unchanged revision/etag: no fetch.
-2. **Content-object no-op** — bytes hash to a known object: new version row, everything else
-   reused (and `UNIQUE` dedup means a copy in another folder reuses conversion too).
+2. **Content-object reuse** — an existing byte hash shares the stored source object.
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
-4. **Chunk-grain reuse.** Selection matches `extraction_input_hash`, which
-   covers the chunk's own and neighbouring same-section block hashes,
-   consumed converter origins, stable header facts and toolchain versions.
-   The header facts include the title, file name, source kind, text origin
-   time and language. Model output stays out of the key. D140 records
-   [text origin time](effective_time_and_section_references_design.md#5-reuse-across-versions-text-origin-time)
-   once per chunk, so unchanged inputs with an eligible match keep their
-   original date. That date also appears in the E2 header and in `asserted_at`
-   for fresh claims. [E1 reuse mechanics](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
-
-   Claimify matches the target's Selection hash, the ordered Selection
-   hashes of the preceding eight chunks and the reference-policy generation.
-   A matching result reattaches the same claim IDs when the evidence remaps.
-   [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
-
-   Passage vectors carry forward when chunk content hash, rendered
-   `embedding_text_hash`, input policy and embedder generation match.
-   [D80 reuse](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse).
-5. **Delta-only downstream.** Unchanged testimony and fact state need no
-   currency, count or K page updates.
-
-With stable packing, a paragraph edit can still change Selection inputs for
-same-section neighbours and invalidate Claimify across section boundaries.
-The cross-section Claimify window is a known Rule 4 gap. [Worked example](e1_chunks_design.md#1-the-three-layer-model).
-
-A length-changing edit can shift base packing up to the next anchor accepted
-by both versions or the end of the owner run. A structure change can move
-section ownership and repack unchanged text.
-[Anchor-stabilized packing](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58-d162).
+4. **Chunk-grain reuse.** Both grids must pass the [D162 gate](split_oversized_chunks_design.md#3-grid-wide-reuse-gate).
+   Selection matches its stable input hash. Claimify also matches the preceding eight Selection
+   hashes and the reference-policy generation. D140 inherits a date through its date-free key.
+   Passage vectors match content hash, rendered input hash, policy and embedder generation.
+   [E1 mechanics and edit example](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
+5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,
+   stale no K pages.
 
 The **occurrence record is exact** (Codex review F4): a thin `chunk_claims` map links every
 version-chunk to the claims it carries — written on fresh extraction *and* on reuse — so one

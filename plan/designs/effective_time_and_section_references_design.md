@@ -492,11 +492,8 @@ generations (D65 representations, D79 structure generations; sections are unique
 null. A duplicate key in one generation keeps the first occurrence and records a structure
 warning; the later headings get no key. Every read that resolves a key — section history,
 reference endpoints, first chunk ids — looks it up only in the version's current
-representation's current structure generation.
-
-Both readers resolve `first_chunk_ids` by half-open character span containment
-of the first block's start (`document_sections.char_start` for a keyed heading).
-[D162 chunk spans](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+representation's current structure generation. Both section-entry readers select the chunk whose
+half-open span contains the first block's start. [D162 spans](split_oversized_chunks_design.md#2-split-only-failing-candidates).
 
 The hash columns are nullable at the schema level. Sections created before D140 are backfilled
 by a maintenance job that recomputes, from each representation's stored `blocks.json` and the
@@ -545,9 +542,10 @@ reuse_identity_hash)`.
 **Rule, at chunk creation.** When E1 creates the chunks of a new version of lineage `L`:
 
 1. compute `reuse_identity_hash`;
-2. let `d` be the new version's own date, `source_modified_at or published_at`. A chunk of
-   `L` is an **eligible match** when both versions pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate),
-   it has the same `reuse_identity_hash`, belongs to a non-deleted version, and has a
+2. let `d` be the new version's own date, `source_modified_at or published_at` (the value E2
+   uses today). A chunk of `L` is an **eligible match** when both grids pass the
+   [D162 reuse gate](split_oversized_chunks_design.md#3-grid-wide-reuse-gate) and the chunk has the same
+   `reuse_identity_hash`, belongs to a non-deleted version, and has a
    known `text_origin_at` that is **not later than `d`**. If `d` is unknown there is no
    eligible match;
 3. with eligible matches, the new chunk's `text_origin_at` is the smallest of their
@@ -565,8 +563,8 @@ Because the parser, blockizer, structurer and extractor versions are part of the
 toolchain change is a reuse boundary exactly as D56/D65 define: a chunk under a new toolchain
 matches nothing and takes its own version's date.
 
-**Why this is correct.** An inherited origin can preserve the Selection key across versions.
-Each stage applies its own reuse rules. Relative expressions stay resolved against a date no
+**Why this is correct.** Inheriting an origin can preserve a chunk's Selection key.
+Relative expressions in that chunk resolve against a date no
 later than the version's own — the date of the earliest known version, among those not dated
 after it, that carried the text. That is a conservative estimate of when the words were
 written, not proof of it. The "not later than" condition makes back-filling safe: when a 2026

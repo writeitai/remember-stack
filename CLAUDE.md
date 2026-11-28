@@ -73,26 +73,24 @@ silently. When writing any design or decision:
 
 ## Rule 4 — A new version costs only its edit (D56)
 
-**The requirement (owner, binding).** For version pairs eligible under D162, paid embedding
-and extraction happen only where the document changed. Unchanged sections must reuse their
-embeddings and extracted claims. Rewording one paragraph of § 12 of a 200-section contract
-must reuse the embeddings and claims of § 1–11 and § 13–200.
+**The requirement (owner, binding).** For version pairs with eligible grids, paid work —
+embedding and extraction model calls — happens only where the document changed. Unchanged
+sections must reuse their embeddings and extracted claims. Example: rewording one paragraph
+of § 12 of a 200-section contract must not re-embed or re-extract § 1–11 or § 13–200.
 Extraction is the dominant ingestion cost, and this promise has been broken before by
 changes that looked unrelated, so check it on every change, in code, designs and reviews.
 
-Under the [D162 version-wide exception](plan/designs/split_oversized_chunks_design.md#3-version-wide-reuse-gate),
-a version that has produced any split piece is ineligible to receive or donate vectors,
-Selection results, Claimify results or D140 text-origin dates.
+A grid containing a split piece is ineligible to receive or donate vectors, Selection,
+Claimify or D140 text-origin dates. [D162 reuse gate](plan/designs/split_oversized_chunks_design.md#3-grid-wide-reuse-gate).
 
 **How the engine implements it today.** E1 deterministically re-packs every new
 representation into new chunk rows (fresh `chunk_id`s — that part is cheap); what carries
 over are content identities and the paid products keyed on them
 ([e1_chunks_design §4 and §7](plan/designs/e1_chunks_design.md)):
 
-- **Packing (D58).** Chunks are whole-block runs packed per deepest-owner section, so an
-  edit never moves chunk boundaries in another section. A length change can shift later
-  boundaries until the next anchor accepted by both versions or the end of the owner run.
-  A block qualifies as an anchor when `uint64(block_hash) mod anchor_modulus == 0` and at least
+- **Packing (D58).** E1 packs whole-block runs per deepest-owner section. Length edits can
+  shift boundaries to the next anchor accepted by both versions or the end of the owner run.
+  An anchor satisfies `uint64(block_hash) mod anchor_modulus == 0` after at least
   `anchor_min_gap_tokens` have accumulated since the last accepted anchor.
 - **Embeddings (D80).** A vector carries forward from an earlier version or an earlier
   processing generation of the same version of one
@@ -164,15 +162,15 @@ the owner's decision — do not describe them as solved):
   the new version's; an undated version inherits nothing, and nothing inherits from one.
 - **Prove it with a test.** A change that can affect ingestion keeps or extends
   `src/tests/workers/test_reuse_lifecycle.py` and `test_d140_text_origin_pg.py`, or adds a
-  test that ingests two versions of one lineage, with distinct source dates and stable names,
-  of a document with untouched sections before and after an edited multi-chunk section.
-  Use a pair eligible under D162 and count provider calls per stage (Selection, Claimify,
-  embedding). Chunks next to the edit legitimately get new Selection and origin identities.
-  Every untouched chunk outside the edited chunk's same-section neighbours must keep its
-  content, Selection and text-origin identities and reuse the same `claim_id`s through
-  `chunk_claims`. Every chunk whose embedding identity is unchanged causes no embedding call.
-  Cover a packing-boundary case and a D122 window case. Mark cases that hit a known gap above
-  as expected failures and name the gap.
+  test that ingests two versions of one lineage with unsplit grids, distinct dates and stable names,
+  of a document with untouched sections before and after an edited multi-chunk section. It
+  counts provider calls per stage (Selection, Claimify, embedding). Chunks next to the
+  edit legitimately get new Selection and origin identities; every untouched chunk outside
+  the edited chunk's same-section neighbours must keep its content, Selection and
+  text-origin identities and reuse the same `claim_id`s through `chunk_claims`, and every
+  chunk whose embedding identity is unchanged causes no embedding call. Cover a
+  packing-boundary case and a D122 window case. Cases that hit a known gap above are marked
+  expected-failure naming the gap, never silently weakened.
 - **Converters and connectors** must render unchanged content byte-identically across
   versions (deterministic output, exact whitespace), because the reuse keys and span
   remapping see their output.

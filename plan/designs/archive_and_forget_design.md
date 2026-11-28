@@ -88,23 +88,18 @@ undo a caller's archive; a changed version does (§2.3).
   `support_withdrawn` review that still applies. Reopening is a new recorded event (`reopened_unarchive`, with its
   time); belief-as-of reads take a fact's belief intervals from these close and reopen events,
   so a read inside the archive interval still sees the fact closed. A fact that something else
-  has changed since (closed for another reason, superseded) is left as it is. It resumes
-  eligible work the archive cut short and reuses completed work (D56).
-  The [D162 rollout guard](split_oversized_chunks_design.md#4-rollout) keeps
-  legacy E1 dead letters terminal during rollout and after permanent blocking.
-  During later [D80 maintenance](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse),
-  an actual undo returns a retryable refusal with the archive intact so
-  eligible resets can commit after the fence lifts. Calls for live documents
-  and source-only calls for caller archives still return a no-op.
+  has changed since (closed for another reason, superseded) is left as it is. For versions
+  whose processing the archive cut short, it enqueues the next stage that did not run;
+  completed work is reused (D56).
   Unarchive makes no model call except the profile refresh. Answer: `doc_id`,
   `claims_restored`, `facts_reopened`.
 - **Identical bytes re-sent** to a caller-archived lineage are a no-op (whatever is a no-op for
   a live document, D55); the document stays archived. A full resync never undoes an archive.
 - **A changed version** of an archived document (caller or source archive alike) is ordinary
-  ingest: the lineage is live again and can reuse work from eligible archived versions under
-  D56 and the [D162 version gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
-  A reused claim that becomes current again reopens a fact the archive closed for it, by the
-  same rule as unarchive.
+  ingest: the lineage is live again
+  and the new version is processed with D56 reuse, which may draw on the archived versions. A
+  reused claim that becomes current again reopens a fact the archive closed for it, by the
+  same rule as unarchive. Rule 4 therefore holds as for any live edit.
 - **A source archive is undone by the source.** When `archived_by = source` and the connector
   sees the file again, identical bytes act as unarchive and changed bytes as a changed version.
   Within one sync cycle a delete-and-recreate never archives at all (D135's cycle barrier).

@@ -196,9 +196,9 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    generation.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
-   are idempotent inserts in `cost_ledger`.
-4. **Input failures.** Isolate the rejected input when needed and terminally fail the job
-   for a confirmed rejection, keeping committed batches. [D162](split_oversized_chunks_design.md#5-terminal-failure).
+   are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
+4. **Input failures.** Isolate failed inputs as needed. A confirmed deterministic rejection
+   dead-letters the job through the existing terminal path. Keep committed batches. [D162](split_oversized_chunks_design.md#5-terminal-failure).
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
    vector/hash/current attestation and stamps the chunk authority row. There is
@@ -244,21 +244,14 @@ The DLQ **is** `processing_state` rows with `status='dead_letter'` (D12 — no s
 infrastructure). The operational surface over it is thin and deterministic:
 
 - **Inspect** — SQL views by (stage, error class, component version, age); the preserved
-  enqueue `payload` identifies the original handler input.
-- **Replay** — reset an eligible row to `pending`, clear its retry defer reason, choose `not_before`, raise
+  enqueue `payload` makes every dead letter self-describing and manually replayable.
+- **Replay** — reset the row to `pending`, clear its retry defer reason, choose `not_before`, raise
   `max_attempts` above the current `attempts` by the approved replay allowance, and re-announce
   its `processing_id`. Attempts never reset, so cost-ledger deduplication remains stable.
-  The idempotency key is unchanged, so committed work can replay. Bulk replay is the
-  same transition per row, scoped by version or error class. An explicit operator
+  Unconditionally safe: the idempotency key is unchanged, so a partially-succeeded earlier attempt
+  no-ops. Bulk replay is the same operation scoped by version or error class; an explicit operator
   transition may reroute it through the backfill lane when large. `payload` remains handler input
   for inspection, never the source of route, schedule, or retry state.
-- **D162 rollout and D80 maintenance** guard CHUNK and EMBED_CHUNK dead-letter
-  resets in PostgreSQL. On the incoming release, `remember ops replay` exits
-  nonzero with `work_replay_blocked` for a permanently blocked row or
-  `work_replay_fenced` for a temporary block that can be retried after
-  maintenance. Single and bulk replay preserve blocked rows and their errors
-  and announce only committed resets.
-  [Rollout](split_oversized_chunks_design.md#4-rollout).
 - **Poison detection** — the same target dead-lettering across ≥2 component versions is
   flagged for a human: that is a content pathology (a document that breaks the converter), not
   a transient, and no amount of retrying fixes it.
