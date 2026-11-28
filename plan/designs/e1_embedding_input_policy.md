@@ -27,7 +27,7 @@ frozen product constants, unless frozen inside a named
    ordered `texts → vectors` (plus generation metadata). Embedders must stay
    **interchangeable** under a version-scoped re-embed migration (model, dimension,
    distance metric, provider caps, and any query/document preprocessing are part of
-   the **embedder generation**, not silent globals).
+   the **embedder generation**). The [D162 hosted fit check](split_oversized_chunks_design.md#1-check-the-complete-embedding-input) is a local guard outside the generation.
 2. **Contextual embedding models** (document-native / late-chunking APIs that make
    a vector depend on undeclared surrounding context) are a **documented product
    non-goal**. Prior design text that described them as a fully designed alternate
@@ -272,8 +272,7 @@ produced from different text.
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
 Content-hash-only vector carry-forward is **insufficient** when embedding text
-includes location. Block-level **extraction** reuse (D56 A1–A3) remains
-content-addressed without LLM output in identity keys.
+includes location. Carry-forward requires both versions to pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
 
 **Maintenance cutover:** an incompatible model, dimension, or policy change
 makes semantic search unavailable while disposable vector state is rebuilt and

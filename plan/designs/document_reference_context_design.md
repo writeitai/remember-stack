@@ -78,15 +78,14 @@ results, its generation and stable source-input basis. Normalize temporary label
 to validated source descriptors before persistence; preserve exact text and
 range/origin information needed for occurrence remapping.
 
-Matching prior-version inputs reuse the frozen Selection output; retries never
-regenerate a committed response. Uncommitted concurrent calls may race, but only
+Retries replay committed responses. Uncommitted concurrent calls may race, but only
 one accepted result becomes authoritative through existing transaction/CAS
 patterns. Do not add a second queue or distributed cache. Associate results with
 each consuming chunk occurrence so position changes do not corrupt evidence.
 
 The Selection barrier uses the expected chunks of the immutable representation
 and pinned generations. Create Claimify work idempotently and transactionally
-once all results exist. Reused results count as complete. A terminal missing or
+once all results exist, including reused and empty ineligible results. A terminal missing or
 invalid Selection result cannot be silently treated as zero references. Existing
 failure/retry policy remains visible. Claim normalization begins only after the
 existing extraction-completion barrier, now covering Claimify.
@@ -108,8 +107,8 @@ document is unnecessarily broad. A fixed source region captures both positive
 and negative dependencies while bounding the spread of invalidation.
 
 Do not include absolute offsets, document-version IDs, temporary labels or freshly
-generated summaries in content identity. Identical stable inputs must reuse the
-same frozen Selection decision, not call the model to obtain new cards. For each
+generated summaries in content identity. Reuse matching Selection and Claimify results
+when both versions pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate). For each
 new occurrence remap all selected evidence into its allowed source units, including
 reference-card passages. Reject ambiguous repeated-text remapping; never take the
 first global substring match. Existing D56 same-claim-ID reuse and D119 occurrence

@@ -198,16 +198,16 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
 4. **Poison split.** On a batch provider failure that is not a total outage, split the batch
-   (halve until size 1) and retry; a single-chunk poison is typed fail/skip for that chunk,
-   not a document dead-letter of already-finished siblings.
+   (halve until size 1) and retry. On the hosted binding, [D162 terminal failures](split_oversized_chunks_design.md#5-terminal-failure) apply.
+   On other bindings, a single-chunk poison is typed fail/skip for that chunk.
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
-   vector/hash/current attestation and stamps the chunk authority row. There is
-   no cross-store gap. A crash after provider response but before commit may
-   repeat a billable call; the design does not claim exactly-once provider spend.
+   vector/hash/current attestation and stamps the chunk authority row. A vector copy also
+   includes the [D162 eligibility recheck](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
+   A crash after provider response but before commit may repeat a billable call.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
    stamp matching the **configured** `(policy_generation, embedder_generation)`
-   and input hash (or a closed typed skip: at minimum `empty_body`). Mixed or
+   and input hash (or a closed typed skip under the binding's failure rules). Mixed or
    stale attestation is not ready.
 
 K/P and other stages are unchanged by this subsection.

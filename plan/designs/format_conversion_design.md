@@ -216,15 +216,12 @@ text, every profile section, cards). Those ranges are chunked, embedded and sear
 
 The mechanism:
 
-1. **Eligibility changes only at block boundaries.** E1 chunks are runs of whole blocks (D57/D58).
-   Converters start every differently labelled section with a Markdown heading on its own line
-   after a blank line, which the blockizer treats as a block start; the convert stage validates
-   that no eligibility change falls inside a block and fails the conversion if one does.
-2. **E1 forces a chunk boundary** at every block where eligibility changes and stores
-   `chunks.extraction_eligible`, computed from the labelled ranges and the policy version.
-3. **E2 schedules Selection only for eligible chunks.** An ineligible chunk completes
-   deterministically with zero propositions and publishes no D122 reference cards; the Selection
-   barrier counts it complete.
+1. **Eligibility changes only at block boundaries.** Converters start differently labelled sections
+   with standalone Markdown headings after blank lines. Convert rejects changes inside blocks.
+2. **E1 cuts at block eligibility changes** and stores `chunks.extraction_eligible` for each final chunk.
+   [D162 cuts](split_oversized_chunks_design.md#2-split-only-failing-candidates) also use labels for nonblank gap text.
+3. **E1 schedules Selection for every chunk in the extraction fan-out.** For ineligible chunks,
+   E2 freezes empty results without a call. They count toward D122's barrier and preceding-eight window.
 4. **Reuse (D56):** the policy version joins Selection's reuse basis.
 
 ### 4.6 Row-level queries

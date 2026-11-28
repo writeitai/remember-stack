@@ -41,8 +41,8 @@ descriptions) when a deployment configures those routes.
 
 Search-only uses D133 §4.5's eligibility mechanism: converters label every range with a
 `derivation_kind`; the eligibility policy lists the kinds that are never claim-extracted; E1 cuts
-chunks where eligibility changes and E2 schedules Selection only for eligible chunks. The
-ineligible kinds are `code`, `config`, `log`, `other_text`, `large_text`, `profile_structure`,
+at eligibility changes and E2 freezes [empty Selection results](format_conversion_design.md#45-extraction-eligibility) for ineligible chunks.
+The ineligible kinds are `code`, `config`, `log`, `other_text`, `large_text`, `profile_structure`,
 `profile_sample`, `file_card` and `pdf_page_status`. Everything else a converter emits is prose.
 
 ## 3. Detection and routing

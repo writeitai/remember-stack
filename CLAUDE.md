@@ -73,7 +73,7 @@ silently. When writing any design or decision:
 
 ## Rule 4 — A new version costs only its edit (D56)
 
-**The requirement (owner, binding).** When a new version of a document arrives, paid work —
+**The requirement (owner, binding).** For [eligible version pairs](plan/designs/split_oversized_chunks_design.md#3-version-wide-reuse-gate), paid work —
 embedding and extraction model calls — happens only where the document changed. Unchanged
 sections must reuse their embeddings and extracted claims. Example: rewording one paragraph
 of § 12 of a 200-section contract must not re-embed or re-extract § 1–11 or § 13–200.
@@ -86,16 +86,16 @@ over are content identities and the paid products keyed on them
 ([e1_chunks_design §4 and §7](plan/designs/e1_chunks_design.md)):
 
 - **Packing (D58).** Chunks are whole-block runs packed per deepest-owner section, so an
-  edit never moves chunk boundaries in another section. Inside the edited section, a
-  length change can shift later boundaries until the next accepted content anchor (a block
-  whose hash satisfies `uint64(block_hash) mod anchor_modulus == 0`, at least
-  `anchor_min_gap_tokens` after the previous one) or the section's end.
-- **Embeddings (D80).** A vector carries forward from an earlier version or an earlier
-  processing generation of the same version of one
-  lineage when `chunk_content_hash`, `embedding_text_hash` (the rendered D80 input:
-  location header + body, so it depends on all D80 location facts: title, source kind and
-  shape, section title, path and role, chunk count, and message metadata), the policy
-  generation and the embedding model all match. Neighbours are not part of this key.
+  edit never moves chunk boundaries in another section. A length change can shift boundaries
+  to the next anchor accepted by both versions or the end of the owner run. An anchor satisfies
+  `uint64(block_hash) mod anchor_modulus == 0` after at least `anchor_min_gap_tokens` since the last anchor.
+- **Embeddings (D80).** A vector carries forward within a lineage from an earlier version
+  or processing generation of the same version when `chunk_content_hash`,
+  `embedding_text_hash`, the policy generation and the embedding model all match.
+  `embedding_text_hash` is the SHA-256 of the exact rendered D80 string, the normalized
+  body with an optional location header. Chunk count can change the header mode. D80
+  omits chunk ordinals and numeric section paths from the string. Neighbours are not
+  part of this key.
 - **Selection (D56, D140).** `extraction_input_hash` = own block hashes + previous/next
   *same-section* neighbour hashes + header facts (`header_title()`, `source_kind`, the
   chunk's text-origin date, `language`, `file_name`; plus the eligibility policy for
@@ -160,7 +160,7 @@ the owner's decision — do not describe them as solved):
   the new version's; an undated version inherits nothing, and nothing inherits from one.
 - **Prove it with a test.** A change that can affect ingestion keeps or extends
   `src/tests/workers/test_reuse_lifecycle.py` and `test_d140_text_origin_pg.py`, or adds a
-  test that ingests two versions of one lineage, with distinct source dates and stable names,
+  test that ingests two eligible versions of one lineage, with distinct source dates and stable names,
   of a document with untouched sections before and after an edited multi-chunk section. It
   counts provider calls per stage (Selection, Claimify, embedding). Chunks next to the
   edit legitimately get new Selection and origin identities; every untouched chunk outside

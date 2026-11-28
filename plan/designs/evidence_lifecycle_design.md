@@ -204,7 +204,7 @@ design's worked example arriving through one lineage instead of two documents.)
 **Ingest debouncing.** A file being actively edited (five saves in an hour) coalesces to one
 ingested version per stability window (ingest only after N quiet minutes — the D12 debounce
 discipline at the connector). A connector poll that finds an unchanged revision/etag is a
-no-op before any bytes move; unchanged bytes are a `content_hash` no-op as today.
+no-op before any bytes move. Keyless ingest uses the [D55 version check](effective_time_and_section_references_design.md#1-concepts).
 
 ## 3. Testimony currency (D54)
 
@@ -357,49 +357,13 @@ across re-extraction by construction. "A new claim row exists for the same testi
 The efficiency ladder for the hourly watcher, cheapest exit first:
 
 1. **Connector metadata no-op** — unchanged revision/etag: no fetch.
-2. **Content-object no-op** — bytes hash to a known object: new version row, everything else
-   reused (and `UNIQUE` dedup means a copy in another folder reuses conversion too).
+2. **Content-object reuse** — an existing byte hash shares the stored source object.
 3. **Conversion reuse** — same content object + same converter version: artifacts reused.
-4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
-   **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
-   block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
-   metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
-   extractor version + the
-   structurer version (a stable config string — a deliberate structurer bump is a
-   re-extraction boundary, since section roles feed Selection).
-   **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
-   non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
-   LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
-   discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
-   origin time of the earliest chunk of a non-deleted version of the lineage with the same
-   date-free reuse identity whose date is not later than this version's own date; a new or changed chunk takes its own version's
-   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
-   E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
-   version's own date instead would change every key whenever the source stamps a new
-   modification time — nearly every version — and no chunk would ever be reused. Unchanged
-   text keeps being read against the time it was written, which is also the `asserted_at` of
-   the claim it reuses.
-   A chunk whose key is already extracted for this lineage **reuses its claims**
-   (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
-   re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
-   embedding version) the same way. **The mechanics — block-hash diff alignment,
-   anchor-stabilized boundaries, the carry-forward rules — are bound in
-   `e1_chunks_design.md` §7 (D57–D58)**; this design owns the contract.
+4. **Chunk-grain reuse.** Both versions pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
+   Eligible pairs match separate keys for vectors, Selection, Claimify and D140 dates.
+   [Reuse mechanics](e1_chunks_design.md#7-reuse-mechanics-d56-bound-here-amendments-a1a3).
 5. **Delta-only downstream** — untouched chunks fire no currency transitions, move no counts,
    stale no K pages.
-
-Walkthrough: a 50-page Drive document gets a two-paragraph edit. The watcher fetches once;
-conversion produces the new Markdown; chunk hashing shows ~2 changed chunks; E2 runs on ~2
-chunks; reconciliation diffs and finds the handful of affected facts; everything else — ~148
-chunks' claims, embeddings, evidence links, K pages — carries forward untouched. **Cost ∝
-the edit, not the document.**
-
-Honest boundary: chunk-boundary shift. An edit that changes section structure can re-align
-chunk boundaries so unchanged text lands in differently-hashed chunks. Section-aware chunking
-(E1 splits on PageIndex sections) bounds the blast radius to the edited section; the reuse
-hit-rate on real edit patterns is spike 1, and boundary-stabilized (anchor) packing is **bound in
-`e1_chunks_design.md` §4** — the hit-rate spike measures its parameters, not whether it
-exists.
 
 The **occurrence record is exact** (Codex review F4): a thin `chunk_claims` map links every
 version-chunk to the claims it carries — written on fresh extraction *and* on reuse — so one
