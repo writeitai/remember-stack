@@ -445,7 +445,7 @@ class EmbedChunksHandler:
                             chunk=chunk,
                             rendered=rendered,
                         )
-            copied = self._catalog.copy_reused_embeddings(
+            completed = self._catalog.replay_or_copy_embeddings(
                 source=source,
                 require_nonzero=self._hosted_embedding,
                 candidates=tuple(
@@ -464,7 +464,7 @@ class EmbedChunksHandler:
                     for chunk, rendered in batch
                 ),
             )
-            pg_complete.update(copied)
+            pg_complete.update(completed)
         need_embed = tuple(
             pair for pair in need_embed if pair[0].chunk_id not in pg_complete
         )

@@ -9,7 +9,9 @@ CHUNK and EMBED_CHUNK apply the ceiling only for the hosted E1 passage binding
 `allow_fallbacks: false`, `zdr: true` and `data_collection: deny`. The binding also
 allows `order: ["nebius/bf16"]` alongside this allowlist because it selects the
 same sole endpoint. Self-host and custom bindings use their existing packing,
-embedding and failure paths. [Adapter routing](../../src/rememberstack/adapters/openrouter.py#L1005-L1053).
+embedding and failure paths. Match the normalized embedding request URL
+`https://openrouter.ai/api/v1/embeddings`. An explicit default HTTPS port or
+upper-case hostname resolves to the same endpoint. [Adapter routing](../../src/rememberstack/adapters/openrouter.py#L1005-L1053).
 
 Use the pinned tokenizer to count the normalized body, optional D80 header and separator, and model special tokens.
 The largest header plus one nonblank Unicode scalar must fit. The **16,384-token code constant**
@@ -60,7 +62,7 @@ For D140, also check the receiver's final grid awaiting insert.
 
 | Reused product | Existing lookup |
 |---|---|
-| E1 vectors | [`ChunkCatalog.carry_forward_sources`](../../src/rememberstack/spine/chunk_catalog.py#L323) |
+| E1 vectors | [`ChunkCatalog.replay_or_copy_embeddings`](../../src/rememberstack/spine/chunk_catalog.py#L299) |
 | E2 Selection | [`SelectionCatalog.prior`](../../src/rememberstack/spine/selection_catalog.py#L102-L138) |
 | E2 Claimify | [`ClaimCatalog.prior_extracted_chunk`](../../src/rememberstack/spine/claim_catalog.py#L62-L100) |
 | D140 dates | [`ChunkCatalog.text_origin_matches`](../../src/rememberstack/spine/chunk_catalog.py#L130) |
@@ -75,9 +77,12 @@ into `chunk_search` and `chunks` stamp share one transaction. A blocked donor tr
 another eligible lookup, and a blocked receiver runs fresh. Keep artifact reads and provider
 calls outside the locks.
 
-Replay committed results and dates by chunk ID under existing identity checks. Missing results
-for a split version run fresh under existing skip rules. New chunks in that version take its
-`source_modified_at` or `published_at` (`NULL` if undated). Eligible pairs keep keys, ranking and remapping.
+Replay committed results and dates by chunk ID under existing identity checks. E1 checks
+for a matching vector and stamp after taking the lineage lock. This covers a retry that
+committed after an older attempt read for replay, even if a split has since closed reuse.
+Missing results for a split version run fresh under existing skip rules. New chunks in that
+version take its `source_modified_at` or `published_at` (`NULL` if undated). Eligible pairs
+keep keys, ranking and remapping.
 
 ## 4. Rollout
 
@@ -97,7 +102,8 @@ the configured dimension.
 confirmed per-input size rejections dead-letter as `embedding.input_too_large`, other deterministic
 rejections as `embedding.input_rejected`. Apply the same codes to explicit input
 rejections inside error-only success responses. Record chunk ID, rendered hash and binding.
-Ambiguous 429s, outages and unusable responses take bounded retries. Keep committed batches and
+Capacity errors, including error-only HTTP 200 envelopes, take bounded retries. Outages and
+unusable responses use the existing retry budget. Keep committed batches and
 the saved grid. Use existing ledger operations and D159 unarchive.
 
 A keyless D55 ingest is a no-op if its bytes match the highest-numbered version and that

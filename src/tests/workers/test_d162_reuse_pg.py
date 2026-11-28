@@ -4,13 +4,16 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import UTC
 from pathlib import Path
+import re
 from threading import Barrier
+from threading import Event
 from time import monotonic
 from time import sleep
 from uuid import UUID
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import Connection
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
@@ -20,6 +23,8 @@ from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import hosted_embedding_ceiling
+from rememberstack.core.selection_references import GroundedCard
+from rememberstack.core.selection_references import GroundedPassage
 from rememberstack.model import ClaimedWork
 from rememberstack.model import DecisionRecord
 from rememberstack.model import DecisionType
@@ -29,6 +34,9 @@ from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import RunResultOutcome
 from rememberstack.model import SelectionResponse
+from rememberstack.model.conversion import SourceMapEntry
+from rememberstack.model.conversion import SourceRangeLocator
+from rememberstack.model.occurrence_provenance import RepresentationOccurrenceContext
 from rememberstack.spine import chunk_catalog
 from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import ClaimCatalog
@@ -42,7 +50,9 @@ from rememberstack.workers import E2_EXTRACTOR_VERSION
 from rememberstack.workers import E2Settings
 from rememberstack.workers import EmbedChunksHandler
 from rememberstack.workers import ExtractClaimsHandler
+from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import P1Settings
+from rememberstack.workers import Worker
 from tests.workers.test_d140_text_origin_pg import _observe
 from tests.workers.test_reuse_lifecycle import _DEPLOYMENT_ID
 from tests.workers.test_reuse_lifecycle import _PARAMS
@@ -364,6 +374,151 @@ def test_d162_empty_claimify_reuse_copies_and_stamps_only_eligible_sources(
         assert target["claimify_input_hash"] == "shared-input"
 
 
+def test_d162_claimify_clips_split_support_beyond_the_reference_window(
+    rig: _ReuseRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    producer_text = "Nova is the new service."
+    kept = "Nova is active."
+    child_text = "The child section interrupts the parent."
+    neighbor_text = "Nova requires a key."
+    card_text = "Use the manual for Nova."
+    document = (
+        f"# Registry\n\n{producer_text}\n\n# Status\n\n{kept}\n\n"
+        f"## Details\n\n{child_text}\n\n# Continuation\n\n{neighbor_text}\n\n"
+        f"# Manual\n\n{card_text}\n"
+    )
+    version = _observe(rig=rig, content=document, modified_at=_OLD)
+    for stage in (PipelineStage.CONVERT, PipelineStage.STRUCTURE, PipelineStage.CHUNK):
+        assert (
+            rig.worker.run_one(
+                deployment_id=_DEPLOYMENT_ID, stage=stage, lane=ProcessingLane.STEADY
+            ).outcome
+            is RunResultOutcome.SUCCEEDED
+        )
+    representation = _representation(rig, version)
+    rows = _rows(rig, version, _PARAMS)
+    producer, target, child, neighbor, card_support = (
+        next(row for row in rows if phrase in document[row.char_start : row.char_end])
+        for phrase in (producer_text, kept, child_text, neighbor_text, card_text)
+    )
+    assert target.ordinal + 1 == child.ordinal < neighbor.ordinal < card_support.ordinal
+    # Give each following passage the same owner as the chunk that can cite it.
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE chunks SET section_id=:owner, span_kind='split' WHERE chunk_id=:id"
+            ),
+            [
+                {"owner": target.section_id, "id": neighbor.chunk_id},
+                {"owner": producer.section_id, "id": card_support.chunk_id},
+            ],
+        )
+
+    card_start = document.index(card_text)
+    card = GroundedCard(
+        name="Nova",
+        aliases=(),
+        ordinal=0,
+        owner_chunk_id=producer.chunk_id,
+        owner_ordinal=producer.ordinal,
+        passages=(
+            GroundedPassage(
+                label="S1",
+                char_start=card_start,
+                char_end=card_start + len(card_text),
+                region="next",
+                text=card_text,
+            ),
+        ),
+    )
+    for row in rows:
+        if row.ordinal > target.ordinal:
+            break
+        candidates = [{"source_span": kept, "outcome": "keep"}] if row == target else []
+        rig.claim_catalog.selections.freeze(
+            deployment_id=_DEPLOYMENT_ID,
+            representation_id=representation,
+            chunk_id=row.chunk_id,
+            extractor_version=E2_EXTRACTOR_VERSION,
+            input_hash=row.extraction_input_hash,
+            selection=SelectionResponse.model_validate({"candidates": candidates}),
+            cards=(card,) if row == producer else (),
+            diagnostics=(),
+            truncated=False,
+        )
+
+    def reply(prompt: str, response_type: str) -> dict[str, object]:
+        assert response_type == "ClaimifyResponse"
+        origin = re.search(r"\[(S\d+)\] TARGET \(origin-eligible\)", prompt)
+        next_passage = re.search(
+            r"\[(S\d+)\] NEXT \(support-only\):\n[^\n]*\n" + re.escape(neighbor_text),
+            prompt,
+        )
+        card_passage = re.search(r'(S\d+): "' + re.escape(card_text) + '"', prompt)
+        assert origin and next_passage and card_passage
+        return {
+            "claims": [
+                {
+                    "claim_text": kept,
+                    "source_refs": [origin[1], next_passage[1], card_passage[1]],
+                    "entailment_self_verdict": True,
+                }
+            ]
+        }
+
+    handler = _extractor(rig, _PARAMS)
+    source_locator = SourceRangeLocator(
+        start_offset=100, end_offset=100 + len(document), precision="exact"
+    )
+    context = RepresentationOccurrenceContext(
+        derivation_ranges=(),
+        source_map=(
+            SourceMapEntry(
+                start=0,
+                end=len(document),
+                locators=(source_locator,),
+                linear_source_offsets=True,
+            ),
+        ),
+    )
+    monkeypatch.setattr(handler, "_load_occurrence_context", lambda **_: context)
+    monkeypatch.setattr(rig.provider, "_generate_router", reply)
+    handler.handle(
+        work=_work(
+            version,
+            representation,
+            PipelineStage.GROUND_CLAIMS,
+            E2_EXTRACTOR_VERSION,
+            chunk_id=target.chunk_id,
+        ),
+        meter=NoopCostMeter(),
+    )
+
+    with rig.engine.connect() as connection:
+        occurrence = connection.execute(
+            text(
+                "SELECT evidence_spans, source_locators FROM chunk_claims WHERE chunk_id=:id"
+            ),
+            {"id": target.chunk_id},
+        ).one()
+    spans = [
+        (document.index(phrase), document.index(phrase) + len(phrase))
+        for phrase in (kept, neighbor_text, card_text)
+    ]
+    assert occurrence.evidence_spans == [
+        {"char_start": start, "char_end": end} for start, end in spans
+    ]
+    assert occurrence.source_locators == [
+        source_locator.model_dump(mode="json"),
+        *(
+            SourceRangeLocator(
+                start_offset=100 + start, end_offset=100 + end, precision="exact"
+            ).model_dump(mode="json")
+            for start, end in spans[1:]
+        ),
+    ]
+
+
 def test_d162_copy_rolls_back_and_committed_replay_survives_split(
     rig: _ReuseRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -389,13 +544,66 @@ def test_d162_copy_rolls_back_and_committed_replay_survives_split(
         row["embedding_ref"] is None and row["search_text"] is None
         for row in _rows(rig, target, _PARAMS)
     )
-    embed.handle(work=work, meter=NoopCostMeter())
-    expected = _rows(rig, target, _PARAMS)
-    _pack_split(rig, target)
+    observed = Event()
+    resume = Event()
+    stale_engine = rig.engine.execution_options(isolation_level="REPEATABLE READ")
+    embed._catalog = ChunkCatalog(engine=stale_engine)
+    lock_lineage = chunk_catalog.lock_chunk_lineage
+
+    def pause_before_reuse_lock(
+        *, connection: Connection, deployment_id: UUID, doc_id: UUID, exclusive: bool
+    ) -> None:
+        if connection.engine is stale_engine and not exclusive:
+            observed.set()
+            assert resume.wait(timeout=10)
+        lock_lineage(
+            connection=connection,
+            deployment_id=deployment_id,
+            doc_id=doc_id,
+            exclusive=exclusive,
+        )
+
+    ledger = rig.worker._ledger
+    registry = HandlerRegistry()
+    registry.register(stage=PipelineStage.EMBED_CHUNK, handler=embed)
+    stale_worker = Worker(ledger=ledger, registry=registry)
+    route = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "stage": PipelineStage.EMBED_CHUNK,
+        "lane": ProcessingLane.STEADY,
+    }
     before = len(rig.provider.embedded_texts)
+    with monkeypatch.context() as stale_read, ThreadPoolExecutor(1) as executor:
+        stale_read.setattr(chunk_catalog, "lock_chunk_lineage", pause_before_reuse_lock)
+        stale = executor.submit(stale_worker.run_one, **route)
+        try:
+            assert observed.wait(timeout=10)
+            with rig.engine.begin() as connection:
+                connection.execute(
+                    text("""
+                    UPDATE processing_state SET lease_until=now() - interval '1s'
+                    WHERE stage='embed_chunk' AND status='running'
+                """)
+                )
+            (expired,) = ledger.reap_expired_leases(deployment_id=_DEPLOYMENT_ID)
+            assert expired.work.attempt == 1 and expired.requeued
+            assert rig.worker.run_one(**route).outcome is RunResultOutcome.SUCCEEDED
+            assert len(rig.provider.embedded_texts) == before + 1
+            expected = _rows(rig, target, _PARAMS)
+            assert all(row["embedding_ref"] and row["search_text"] for row in expected)
+            _pack_split(rig, target)
+            assert any(
+                row["span_kind"] == "split"
+                for row in _rows(rig, target, _OTHER_GENERATION)
+            )
+        finally:
+            resume.set()
+        assert stale.result(timeout=10).outcome is RunResultOutcome.LEASE_LOST
+
+    assert len(rig.provider.embedded_texts) == before + 1
     embed.handle(work=work, meter=NoopCostMeter())
     assert _rows(rig, target, _PARAMS) == expected
-    assert len(rig.provider.embedded_texts) == before
+    assert len(rig.provider.embedded_texts) == before + 1
     assert seed.version_id != target.version_id
 
 

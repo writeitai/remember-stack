@@ -1037,10 +1037,9 @@ class OpenRouterModelProvider:
 
     def uses_hosted_embedding_ceiling(self, *, model: str) -> bool:
         """Match the endpoint and sole host the D162 ceiling qualifies."""
-        if (
-            model != HOSTED_EMBEDDING_MODEL
-            or self._settings.base_url.rstrip("/") != "https://openrouter.ai/api/v1"
-        ):
+        if model != HOSTED_EMBEDDING_MODEL or self._client.build_request(
+            "POST", "/embeddings"
+        ).url != httpx.URL("https://openrouter.ai/api/v1/embeddings"):
             return False
         routing = self._embedding_provider_payload() or {}
         if routing.get("order") == [HOSTED_EMBEDDING_PROVIDER]:
@@ -1140,6 +1139,7 @@ class OpenRouterModelProvider:
         """
         for attempt in range(_IN_FLIGHT_BUDGET_RETRIES + 1):
             response = self._post_once(path=path, payload=payload)
+            body = None
             if classify_embedding_input:
                 body = (
                     _success_body(response=response, path=path, provider_host=None)
@@ -1151,7 +1151,7 @@ class OpenRouterModelProvider:
                     raise ProviderEmbeddingInputRejected(
                         code=rejection, status_code=response.status_code
                     )
-                if body is not None:
+                if body is not None and (body.get("data") or "error" not in body):
                     return body
             retry_after = _in_flight_budget_retry_after(response=response)
             if retry_after is not None and attempt < _IN_FLIGHT_BUDGET_RETRIES:
@@ -1184,6 +1184,8 @@ class OpenRouterModelProvider:
                     f"{response.text[:500]}",
                     status_code=response.status_code,
                 )
+            if body is not None:
+                return body
             return _success_body(response=response, path=path, provider_host=None)
         raise AssertionError("bounded OpenRouter POST retry loop did not return")
 

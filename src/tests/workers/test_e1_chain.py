@@ -19,6 +19,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters import openrouter
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters import PostgresP1Index
@@ -580,6 +581,87 @@ def test_d162_error_only_success_response_records_typed_dead_letter(
     assert f"chunk_id={chunk_id}" in error
     assert f"embedding_text_hash={embedding_text_hash(rendered)}" in error
     assert f"binding={HOSTED_EMBEDDING_BINDING}" in error
+
+
+@pytest.mark.parametrize("exhausts_adapter", (False, True))
+def test_d162_http_200_capacity_envelope_retries_and_completes(
+    rig: _E1Rig, monkeypatch: pytest.MonkeyPatch, exhausts_adapter: bool
+) -> None:
+    _saved_grid(rig, "Every traveler needs a receipt.")
+    adapter = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", embedding_provider="nebius/bf16", zdr=True
+        )
+    )
+    monkeypatch.setattr(openrouter.time, "sleep", lambda _: None)
+    capacity_replies = (
+        openrouter._IN_FLIGHT_BUDGET_RETRIES + 1 if exhausts_adapter else 1
+    )
+    submitted: list[bytes] = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        submitted.append(request.content)
+        if len(submitted) <= capacity_replies:
+            return httpx.Response(200, json={"error": {"code": 429}})
+        payload = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": payload["model"],
+                "data": [{"index": 0, "embedding": [1.0] * payload["dimensions"]}],
+                "usage": {"prompt_tokens": 10, "total_tokens": 10, "cost": 0},
+            },
+        )
+
+    adapter._client.close()
+    with httpx.Client(
+        base_url="https://openrouter.ai/api/v1", transport=httpx.MockTransport(reply)
+    ) as client:
+        adapter._client = client
+        monkeypatch.setattr(rig.provider, "embed", adapter.embed)
+        worker = _hosted_worker(rig)
+        if exhausts_adapter:
+            assert _run_hosted(worker) is RunResultOutcome.RETRY_SCHEDULED
+            assert len(submitted) == capacity_replies
+            with rig.engine.begin() as connection:
+                assert connection.execute(
+                    text("""
+                    SELECT attempts, defer_reason::text
+                    FROM processing_state WHERE stage='embed_chunk'
+                """)
+                ).one() == (1, "retry_backoff")
+                connection.execute(
+                    text("""
+                    UPDATE processing_state SET not_before=now() WHERE stage='embed_chunk'
+                """)
+                )
+        assert _run_hosted(worker) is RunResultOutcome.SUCCEEDED
+
+    assert len(submitted) == capacity_replies + 1
+    assert len(set(submitted)) == 1
+    with rig.engine.connect() as connection:
+        assert connection.execute(
+            text("""
+            SELECT status::text, attempts FROM processing_state WHERE stage='embed_chunk'
+        """)
+        ).one() == ("succeeded", 2 if exhausts_adapter else 1)
+        assert (
+            connection.execute(
+                text("""
+            SELECT count(*) FROM chunks JOIN chunk_search USING (chunk_id)
+            WHERE chunks.embedding_ref IS NOT NULL
+        """)
+            ).scalar_one()
+            == 1
+        )
+        assert (
+            connection.execute(
+                text("""
+            SELECT count(*) FROM cost_ledger WHERE stage='embed_chunk'
+        """)
+            ).scalar_one()
+            == 1
+        )
 
 
 @pytest.mark.parametrize(

@@ -83,8 +83,9 @@ When a stage fails on an item:
   was its last attempt. The `last_error` then starts with
   `lease expired`.
 
-OpenRouter throttling can retry inside the provider call. If it persists,
-the worker uses the stage's remaining attempts.
+OpenRouter capacity errors can retry inside the provider call, including
+error-only HTTP 200 responses. If capacity stays unavailable, the worker
+uses the stage's remaining attempts.
 
 With Qwen3-Embedding-8B pinned to OpenRouter's `nebius/bf16` route with zero
 data retention and fallbacks off, new chunk grids split passages that exceed

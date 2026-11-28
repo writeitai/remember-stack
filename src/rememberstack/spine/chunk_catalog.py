@@ -19,6 +19,7 @@ from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
 from rememberstack.model import ChunkSourceNotFoundError
 from rememberstack.model import EmbeddingUpdate
+from rememberstack.model import EvidenceSpan
 from rememberstack.model import TextOriginMatch
 from rememberstack.spine.chunk_reuse import lock_chunk_lineage
 from rememberstack.spine.chunk_reuse import read_committed
@@ -271,14 +272,38 @@ class ChunkCatalog:
             ).all()
         return tuple(UUID(str(row[0])) for row in rows)
 
-    def copy_reused_embeddings(
+    def split_windows_for_spans(
+        self,
+        *,
+        source: ChunkSource,
+        chunker_version: str,
+        spans: tuple[EvidenceSpan, ...],
+    ) -> tuple[tuple[int, int], ...]:
+        """Find split chunks in this grid that contain cited passages."""
+        if not spans:
+            return ()
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                _SELECT_CITED_SPLIT_WINDOWS,
+                {
+                    "deployment_id": source.deployment_id,
+                    "version_id": source.version_id,
+                    "representation_id": source.representation_id,
+                    "chunker_version": chunker_version,
+                    "starts": [span.char_start for span in spans],
+                    "ends": [span.char_end for span in spans],
+                },
+            )
+            return tuple((row.char_start, row.char_end) for row in rows)
+
+    def replay_or_copy_embeddings(
         self,
         *,
         source: ChunkSource,
         candidates: tuple[EmbeddingReuse, ...],
         require_nonzero: bool = False,
     ) -> set[UUID]:
-        """Copy attested vectors and stamp their target chunks in one transaction."""
+        """Replay stamped vectors or copy and stamp donors under the lineage lock."""
         if not candidates:
             return set()
         active = candidates[0].update
@@ -289,11 +314,30 @@ class ChunkCatalog:
                 doc_id=source.doc_id,
                 exclusive=False,
             )
-            carry = self.carry_forward_sources(
-                connection=connection, source=source, candidates=candidates
+            complete = set(
+                connection.execute(
+                    _SELECT_STAMPED_EMBEDDINGS,
+                    {
+                        "deployment_id": source.deployment_id,
+                        "policy_generation": active.policy_generation,
+                        "embedding_version": active.embedding_version,
+                        "chunk_ids": [item.update.chunk_id for item in candidates],
+                        "input_hashes": [
+                            item.update.embedding_text_hash for item in candidates
+                        ],
+                        "require_nonzero": require_nonzero,
+                    },
+                ).scalars()
             )
-            copied = set()
-            for candidate in candidates:
+            missing = tuple(
+                item for item in candidates if item.update.chunk_id not in complete
+            )
+            if not missing:
+                return complete
+            carry = self.carry_forward_sources(
+                connection=connection, source=source, candidates=missing
+            )
+            for candidate in missing:
                 update = candidate.update
                 donor = carry.get(
                     (candidate.chunk_content_hash, update.embedding_text_hash)
@@ -317,8 +361,8 @@ class ChunkCatalog:
                     connection.execute(
                         _UPDATE_EMBEDDING, update.model_dump(mode="json")
                     )
-                    copied.add(update.chunk_id)
-        return copied
+                    complete.add(update.chunk_id)
+        return complete
 
     def carry_forward_sources(
         self,
@@ -523,6 +567,24 @@ _SELECT_FOR_EXTRACT_WINDOW = text(
     """
 )
 
+_SELECT_STAMPED_EMBEDDINGS = text("""
+    SELECT c.chunk_id
+    FROM unnest(CAST(:chunk_ids AS uuid[]), CAST(:input_hashes AS text[]))
+         AS expected(chunk_id, embedding_text_hash)
+    JOIN chunks c ON c.chunk_id = expected.chunk_id
+    JOIN chunk_search p ON p.deployment_id = c.deployment_id AND p.chunk_id = c.chunk_id
+    WHERE c.deployment_id = :deployment_id
+      AND c.embedding_ref NOT LIKE 'skip:%'
+      AND c.policy_generation = :policy_generation
+      AND c.embedding_version = :embedding_version
+      AND c.embedding_text_hash = expected.embedding_text_hash
+      AND p.embedding_input_policy_version = c.policy_generation
+      AND p.embedding_model = c.embedding_version
+      AND p.embedding_text_hash = c.embedding_text_hash
+      AND p.embedding IS NOT NULL
+      AND (NOT :require_nonzero OR vector_norm(p.embedding) > 0)
+""")
+
 _SELECT_CARRY_FORWARD = text(
     f"""
     SELECT DISTINCT ON (c.chunk_content_hash, c.embedding_text_hash)
@@ -594,3 +656,16 @@ _SELECT_FOR_REFERENCE_WINDOW = text(
            ORDER BY c.ordinal""",
     )
 )
+
+_SELECT_CITED_SPLIT_WINDOWS = text("""
+    SELECT c.char_start, c.char_end
+    FROM chunks c
+    WHERE c.deployment_id = :deployment_id AND c.version_id = :version_id
+      AND c.representation_id = :representation_id
+      AND c.chunker_version = :chunker_version AND c.span_kind = 'split'
+      AND EXISTS (
+          SELECT 1 FROM unnest(CAST(:starts AS integer[]), CAST(:ends AS integer[]))
+               AS cited(char_start, char_end)
+          WHERE c.char_start <= cited.char_start AND cited.char_end <= c.char_end
+      )
+""")

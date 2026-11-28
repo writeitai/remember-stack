@@ -616,7 +616,6 @@ class ExtractClaimsHandler:
                 self._claimify_chunk(
                     source=source,
                     chunks=extract_chunks,
-                    reference_chunks=reference_chunks,
                     index=index,
                     document_md=document_md,
                     meter=meter,
@@ -885,7 +884,6 @@ class ExtractClaimsHandler:
         *,
         source: ChunkSource,
         chunks: tuple[ChunkForEmbedding, ...],
-        reference_chunks: tuple[ChunkForEmbedding, ...],
         index: int,
         document_md: str,
         meter: CostMeterPort,
@@ -1100,17 +1098,26 @@ class ExtractClaimsHandler:
         context = occurrence_context
         if context is None and source.conversion_uri is not None:
             context = self._load_occurrence_context(source=source)
+        split_windows = ()
+        if (
+            context is not None
+            and context.source_map
+            and any(entry.linear_source_offsets for entry in context.source_map)
+        ):
+            split_windows = self._chunk_catalog.split_windows_for_spans(
+                source=source,
+                chunker_version=self._chunker_version,
+                spans=tuple(
+                    dict.fromkeys(
+                        span for claim in accepted for span in claim.evidence_spans
+                    )
+                ),
+            )
         self._catalog.record_extraction(
             claims=accepted,
             decisions=tuple(decisions),
             occurrences=_occurrences_for_claims(
-                claims=accepted,
-                context=context,
-                split_windows=tuple(
-                    (window.char_start, window.char_end)
-                    for window in reference_chunks
-                    if window.span_kind == "split"
-                ),
+                claims=accepted, context=context, split_windows=split_windows
             ),
             claimify_input_hash=claimify_hash,
         )

@@ -68,9 +68,19 @@ def test_from_settings_keeps_no_state_on_local_disk_and_takes_engine_options() -
         profile.close()
 
 
-@pytest.mark.parametrize(("only", "hosted"), [(["nebius/bf16"], True), (None, False)])
-def test_d162_singleton_provider_order_preserves_a_hard_pin(
-    only: list[str] | None, hosted: bool, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("base_url", "only", "hosted"),
+    [
+        ("https://openrouter.ai/api/v1", ["nebius/bf16"], True),
+        ("https://openrouter.ai:443/api/v1", ["nebius/bf16"], True),
+        ("https://OPENROUTER.AI/api/v1/", ["nebius/bf16"], True),
+        ("https://openrouter.ai:8443/api/v1", ["nebius/bf16"], False),
+        ("https://router.example.invalid/api/v1", ["nebius/bf16"], False),
+        ("https://openrouter.ai/api/v1", None, False),
+    ],
+)
+def test_d162_ceiling_requires_the_normalized_endpoint_and_a_hard_pin(
+    base_url: str, only: list[str] | None, hosted: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("REMEMBERSTACK_P1_EMBEDDING_MODEL", "qwen/qwen3-embedding-8b")
     profile = SelfHostProfile.from_settings(
@@ -78,7 +88,7 @@ def test_d162_singleton_provider_order_preserves_a_hard_pin(
             _settings(),
             model_provider=OpenRouterSettings(
                 api_key="offline",
-                base_url="https://openrouter.ai/api/v1",
+                base_url=base_url,
                 embedding_provider_only=only,
                 embedding_provider_order=["nebius/bf16"],
                 zdr=True,

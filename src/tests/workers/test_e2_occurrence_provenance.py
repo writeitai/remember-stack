@@ -11,8 +11,6 @@ import pytest
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
-from rememberstack.core.selection_references import GroundedCard
-from rememberstack.core.selection_references import GroundedPassage
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimedWork
@@ -25,20 +23,16 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import SectionSpan
-from rememberstack.model import SelectionResponse
 from rememberstack.model.conversion import DerivationRange
 from rememberstack.model.conversion import ImageRegionLocator
 from rememberstack.model.conversion import NormalizedRegion
 from rememberstack.model.conversion import SourceMapEntry
-from rememberstack.model.conversion import SourceRangeLocator
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import ProvenanceMetadataMissingError
-from rememberstack.model.occurrence_provenance import RepresentationOccurrenceContext
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
-from rememberstack.spine.selection_catalog import FrozenSelection
 from rememberstack.workers import E2Settings
 from rememberstack.workers.e2 import ExtractClaimsHandler
 from tests.workers.e2_test_doubles import SelectionMemory
@@ -357,141 +351,6 @@ def test_fresh_extract_stamps_ocr_and_description_separately() -> None:
             assert claim.char_start == _OCR_START
         else:
             assert claim.char_start == _OBS_START
-
-
-def test_whole_claimify_target_clips_split_neighbor_and_card_support() -> None:
-    kept = "Nova is active."
-    neighbor_text = "Nova requires a key."
-    card_text = "for Nova."
-    document = f"Context {card_text}\n\n{kept}\n\n{neighbor_text} Keep notes."
-    card = _chunk().model_copy(
-        update={
-            "chunk_id": _PRIOR,
-            "span_kind": "split",
-            "section_path": "earlier",
-            "char_start": document.index(card_text),
-            "char_end": document.index("\n"),
-        }
-    )
-    target = _chunk().model_copy(
-        update={
-            "ordinal": 1,
-            "char_start": document.index(kept),
-            "char_end": document.index(kept) + len(kept),
-        }
-    )
-    neighbor = _chunk().model_copy(
-        update={
-            "chunk_id": uuid4(),
-            "ordinal": 2,
-            "span_kind": "split",
-            "char_start": document.index(neighbor_text),
-            "char_end": document.index(neighbor_text) + len(neighbor_text),
-        }
-    )
-    source_locator = SourceRangeLocator(
-        start_offset=100, end_offset=100 + len(document), precision="exact"
-    )
-    context = RepresentationOccurrenceContext(
-        derivation_ranges=(),
-        source_map=(
-            SourceMapEntry(
-                start=0,
-                end=len(document),
-                locators=(source_locator,),
-                linear_source_offsets=True,
-            ),
-        ),
-    )
-
-    def reply(prompt: str, _: str) -> dict[str, object]:
-        origin = re.search(r"\[(S\d+)\] TARGET \(origin-eligible\)", prompt)
-        next_passage = re.search(r"\[(S\d+)\] NEXT \(support-only\)", prompt)
-        card_passage = re.search(r'(S\d+): "for Nova\."', prompt)
-        assert origin and next_passage and card_passage
-        return {
-            "claims": [
-                {
-                    "claim_text": kept,
-                    "source_refs": [origin[1], next_passage[1], card_passage[1]],
-                    "entailment_self_verdict": True,
-                }
-            ]
-        }
-
-    catalog = _RecordingCatalog()
-    handler = _handler(
-        catalog=catalog,
-        store=_MemoryStore(objects=_with_blocks({})),
-        source=_source(),
-        provider=FakeModelProvider(generate_router=reply),
-    )
-    target_selection = FrozenSelection(
-        chunk_id=target.chunk_id,
-        input_hash="target",
-        selection=SelectionResponse.model_validate(
-            {"candidates": [{"source_span": kept, "outcome": "keep"}]}
-        ),
-        cards=(),
-        diagnostics=(),
-        truncated=False,
-    )
-    preceding = FrozenSelection(
-        chunk_id=card.chunk_id,
-        input_hash="card",
-        selection=SelectionResponse(candidates=()),
-        cards=(
-            GroundedCard(
-                name="Nova",
-                aliases=(),
-                ordinal=0,
-                owner_chunk_id=card.chunk_id,
-                owner_ordinal=0,
-                passages=(
-                    GroundedPassage(
-                        label="S1",
-                        char_start=card.char_start,
-                        char_end=card.char_end,
-                        region="target",
-                        text=card_text,
-                    ),
-                ),
-            ),
-        ),
-        diagnostics=(),
-        truncated=False,
-    )
-    handler._claimify_chunk(
-        source=_source(),
-        chunks=(target, neighbor),
-        reference_chunks=(card, target, neighbor),
-        index=0,
-        document_md=document,
-        meter=NoopCostMeter(),
-        occurrence_context=context,
-        target_frozen=target_selection,
-        preceding=(preceding,),
-        claimify_hash="claimify",
-    )
-    (claim,) = catalog.claims
-    assert claim.evidence_spans == tuple(
-        EvidenceSpan(char_start=part.char_start, char_end=part.char_end)
-        for part in (target, card, neighbor)
-    )
-    assert catalog.occurrences is not None
-    assert catalog.occurrences[claim.claim_id].source_locators == (
-        source_locator,
-        SourceRangeLocator(
-            start_offset=100 + card.char_start,
-            end_offset=100 + card.char_end,
-            precision="exact",
-        ),
-        SourceRangeLocator(
-            start_offset=100 + neighbor.char_start,
-            end_offset=100 + neighbor.char_end,
-            precision="exact",
-        ),
-    )
 
 
 def test_missing_conversion_manifest_does_not_persist_claims() -> None:
