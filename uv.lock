@@ -2214,7 +2214,7 @@ wheels = [
 
 [[package]]
 name = "remember"
-version = "0.22.4"
+version = "0.22.5"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
