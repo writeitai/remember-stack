@@ -2228,3 +2228,81 @@ def test_d159_upgrade_guards_a_preparing_named_upload() -> None:
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
     assert _head_revision(database_url=database_url) == "p9_60_0081"
+
+
+def test_d162_additive_span_kind_and_interrupted_partition_index() -> None:
+    """Old writes keep the default and an interrupted concurrent build can resume."""
+    from sqlalchemy.exc import DBAPIError
+
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_58_0079")
+    engine = create_engine(database_url)
+    legacy_insert = text("""
+        INSERT INTO chunks (
+            chunk_id, deployment_id, doc_id, version_id, representation_id,
+            ordinal, block_start, block_end, chunk_content_hash, extraction_input_hash,
+            char_start, char_end
+        ) VALUES (gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),
+                  gen_random_uuid(),gen_random_uuid(),0,0,0,'content','extraction',0,0)
+        RETURNING chunk_id
+    """)
+    try:
+        with engine.begin() as connection:
+            legacy = connection.execute(legacy_insert).scalar_one()
+        command.upgrade(config=config, revision="p9_59_0080")
+        with engine.begin() as writer:
+            after_column = writer.execute(legacy_insert).scalar_one()
+            leaf, oid = writer.execute(
+                text("""
+                SELECT tableoid::regclass::text, tableoid::oid
+                FROM chunks WHERE chunk_id=:id
+            """),
+                {"id": after_column},
+            ).one()
+            index = f"ix_chunks_split_version_{oid}"
+            quote = engine.dialect.identifier_preparer.quote
+            with engine.connect().execution_options(
+                isolation_level="AUTOCOMMIT"
+            ) as builder:
+                builder.exec_driver_sql("SET lock_timeout = '100ms'")
+                with pytest.raises(DBAPIError) as blocked:
+                    builder.exec_driver_sql(
+                        f"CREATE INDEX CONCURRENTLY {quote(index)} ON public.{quote(leaf)}"
+                        " (version_id) WHERE span_kind='split'"
+                    )
+                assert getattr(blocked.value.orig, "sqlstate", None) == "55P03"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT indisvalid FROM pg_index WHERE indexrelid=to_regclass(:name)"
+                    ),
+                    {"name": f"public.{index}"},
+                ).scalar_one()
+                is False
+            )
+        command.upgrade(config=config, revision="head")
+        with engine.begin() as connection:
+            after_index = connection.execute(legacy_insert).scalar_one()
+            assert (
+                connection.execute(
+                    text("""
+                SELECT count(*) FROM chunks WHERE chunk_id=ANY(:ids) AND span_kind='whole'
+               """),
+                    {"ids": [legacy, after_column, after_index]},
+                ).scalar_one()
+                == 3
+            )
+            assert (
+                connection.execute(
+                    text("""
+                SELECT i.indisvalid AND i.indisready
+                FROM pg_index i WHERE indexrelid='public.ix_chunks_split_version'::regclass
+            """)
+                ).scalar_one()
+                is True
+            )
+    finally:
+        engine.dispose()

@@ -6,9 +6,9 @@ configuration, logs, unrecognized text, the large-text head/tail profile,
 data-file profiles, file cards and PDF empty-page status. They are still chunked, embedded and
 found by search; E2 simply completes them without a Selection call.
 
-Eligibility changes only at block boundaries: a block labelled with both an
-eligible and an ineligible kind is a converter error, so E1 can cut chunks
-where eligibility changes and every chunk is wholly one or the other.
+Base packing cuts at block eligibility changes. A block labelled with both
+kinds is a converter error. D162 also checks labels in the gaps of a failing
+hosted candidate before cutting it into pieces.
 """
 
 from typing import Final

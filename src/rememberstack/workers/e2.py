@@ -1099,7 +1099,11 @@ class ExtractClaimsHandler:
         self._catalog.record_extraction(
             claims=accepted,
             decisions=tuple(decisions),
-            occurrences=_occurrences_for_claims(claims=accepted, context=context),
+            occurrences=_occurrences_for_claims(
+                claims=accepted,
+                context=context,
+                clip_exact_ranges=chunk.span_kind == "split",
+            ),
             claimify_input_hash=claimify_hash,
         )
 
@@ -2213,7 +2217,10 @@ def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
 
 
 def _occurrences_for_claims(
-    *, claims: tuple[ClaimRecord, ...], context: RepresentationOccurrenceContext | None
+    *,
+    claims: tuple[ClaimRecord, ...],
+    context: RepresentationOccurrenceContext | None,
+    clip_exact_ranges: bool = False,
 ) -> dict[UUID, OccurrenceProvenance] | None:
     """Resolve every supporting span against the target representation."""
     if context is None:
@@ -2226,6 +2233,7 @@ def _occurrences_for_claims(
             ),
             ranges=context.derivation_ranges,
             source_map=context.source_map,
+            clip_exact_ranges=clip_exact_ranges,
         )
         for claim in claims
     }

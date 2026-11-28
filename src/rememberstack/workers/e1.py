@@ -447,6 +447,7 @@ class EmbedChunksHandler:
                         )
             copied = self._catalog.copy_reused_embeddings(
                 source=source,
+                require_nonzero=self._hosted_embedding,
                 candidates=tuple(
                     EmbeddingReuse(
                         chunk_content_hash=chunk.chunk_content_hash,

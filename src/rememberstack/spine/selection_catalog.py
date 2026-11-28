@@ -14,6 +14,7 @@ from rememberstack.core.selection_references import card_payload
 from rememberstack.core.selection_references import CardDiagnostic
 from rememberstack.core.selection_references import GroundedCard
 from rememberstack.model import SelectionResponse
+from rememberstack.spine.chunk_reuse import read_committed
 from rememberstack.spine.chunk_reuse import require_reusable_chunks_on
 from rememberstack.spine.chunk_reuse import version_is_reusable
 
@@ -61,7 +62,6 @@ class SelectionCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the source-result store to the deployment database."""
         self._engine = engine
-        self._reuse_engine = engine.execution_options(isolation_level="READ COMMITTED")
 
     def load(self, *, chunk_id: UUID, extractor_version: str) -> FrozenSelection | None:
         """Load the authoritative result, including an explicitly empty response."""
@@ -164,8 +164,12 @@ class SelectionCatalog:
                 for d in diagnostics
             ],
         }
-        engine = self._engine if reused_from is None else self._reuse_engine
-        with engine.begin() as connection:
+        transaction = (
+            self._engine.begin()
+            if reused_from is None
+            else read_committed(self._engine)
+        )
+        with transaction as connection:
             require_extraction_sources_on(
                 connection=connection,
                 deployment_id=deployment_id,

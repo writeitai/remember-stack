@@ -26,6 +26,7 @@ from rememberstack.model import EvidenceSpan
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
+from rememberstack.spine.chunk_reuse import read_committed
 from rememberstack.spine.chunk_reuse import require_reusable_chunks_on
 from rememberstack.spine.chunk_reuse import version_is_reusable
 from rememberstack.spine.lifecycle import archive_reconciliation_id
@@ -40,7 +41,6 @@ class ClaimCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
-        self._reuse_engine = engine.execution_options(isolation_level="READ COMMITTED")
         self.selections = SelectionCatalog(engine=engine)
 
     def chunk_already_extracted(
@@ -143,12 +143,13 @@ class ClaimCatalog:
         anything (a retried attempt inserts nothing but the prior was not
         empty).
         """
-        with self._reuse_engine.begin() as connection:
-            require_extraction_sources_on(
-                connection=connection,
-                deployment_id=deployment_id,
-                chunk_ids=(chunk_id, prior_chunk_id),
-            )
+        with read_committed(self._engine) as connection:
+            if claimify_input_hash is not None:
+                require_extraction_sources_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    chunk_ids=(chunk_id, prior_chunk_id),
+                )
             prior_links = connection.execute(
                 _COUNT_CHUNK_CLAIMS, {"chunk_id": prior_chunk_id}
             ).scalar_one()
@@ -163,11 +164,11 @@ class ClaimCatalog:
                     if existing != claimify_input_hash:
                         raise ValueError("Claimify completion has different inputs")
                     return prior_links
-            require_reusable_chunks_on(
-                connection=connection,
-                deployment_id=deployment_id,
-                chunk_ids=(chunk_id, prior_chunk_id),
-            )
+                require_reusable_chunks_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    chunk_ids=(chunk_id, prior_chunk_id),
+                )
             if prior_links:
                 claim_ids = connection.execute(
                     _SELECT_DISTINCT_CHUNK_CLAIM_IDS, {"chunk_id": prior_chunk_id}

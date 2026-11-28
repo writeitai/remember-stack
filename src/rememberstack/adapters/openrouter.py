@@ -1061,12 +1061,14 @@ class OpenRouterModelProvider:
         provider = self._embedding_provider_payload()
         if provider is not None:
             payload["provider"] = provider
-        body = self._post(
-            path="/embeddings",
-            payload=payload,
-            classify_embedding_input=request.hosted_passage
-            and self.uses_hosted_embedding_ceiling(model=request.model),
-        )
+        if request.hosted_passage and self.uses_hosted_embedding_ceiling(
+            model=request.model
+        ):
+            body = self._post(
+                path="/embeddings", payload=payload, classify_embedding_input=True
+            )
+        else:
+            body = self._post(path="/embeddings", payload=payload)
         usage = _usage(
             body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
         )

@@ -21,6 +21,7 @@ from rememberstack.model import ChunkSourceNotFoundError
 from rememberstack.model import EmbeddingUpdate
 from rememberstack.model import TextOriginMatch
 from rememberstack.spine.chunk_reuse import lock_chunk_lineage
+from rememberstack.spine.chunk_reuse import read_committed
 from rememberstack.spine.chunk_reuse import version_is_reusable
 
 
@@ -39,7 +40,6 @@ class ChunkCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
-        self._grid_engine = engine.execution_options(isolation_level="READ COMMITTED")
 
     def chunk_source(self, *, representation_id: UUID) -> ChunkSource:
         """Load what the chunk stage needs about one representation."""
@@ -95,7 +95,7 @@ class ChunkCatalog:
         build_records: Callable[[dict[str, TextOriginMatch]], tuple[ChunkRecord, ...]],
     ) -> None:
         """Freeze a complete grid and its text origins under the lineage lock."""
-        with self._grid_engine.begin() as connection:
+        with read_committed(self._engine) as connection:
             lock_chunk_lineage(
                 connection=connection,
                 deployment_id=source.deployment_id,
@@ -272,13 +272,17 @@ class ChunkCatalog:
         return tuple(UUID(str(row[0])) for row in rows)
 
     def copy_reused_embeddings(
-        self, *, source: ChunkSource, candidates: tuple[EmbeddingReuse, ...]
+        self,
+        *,
+        source: ChunkSource,
+        candidates: tuple[EmbeddingReuse, ...],
+        require_nonzero: bool = False,
     ) -> set[UUID]:
         """Copy attested vectors and stamp their target chunks in one transaction."""
         if not candidates:
             return set()
         active = candidates[0].update
-        with self._grid_engine.begin() as connection:
+        with read_committed(self._engine) as connection:
             lock_chunk_lineage(
                 connection=connection,
                 deployment_id=source.deployment_id,
@@ -306,6 +310,7 @@ class ChunkCatalog:
                         "policy_generation": active.policy_generation,
                         "embedding_version": active.embedding_version,
                         "embedding_text_hash": update.embedding_text_hash,
+                        "require_nonzero": require_nonzero,
                     },
                 ).rowcount
                 if inserted:
@@ -552,6 +557,7 @@ _COPY_EMBEDDING = text("""
            embedding_input_policy_version, embedding_text_hash
     FROM chunk_search
     WHERE deployment_id=:deployment_id AND chunk_id=:donor AND embedding IS NOT NULL
+      AND (NOT :require_nonzero OR vector_norm(embedding) > 0)
       AND embedding_input_policy_version=:policy_generation
       AND embedding_model=:embedding_version AND embedding_text_hash=:embedding_text_hash
     ON CONFLICT (deployment_id, chunk_id) DO UPDATE SET

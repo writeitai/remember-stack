@@ -56,8 +56,9 @@ For D140, also check the receiver's final grid awaiting insert.
 | E2 Claimify | [`ClaimCatalog.prior_extracted_chunk`](../../src/rememberstack/spine/claim_catalog.py#L62-L100) |
 | D140 dates | [`ChunkCatalog.text_origin_matches`](../../src/rememberstack/spine/chunk_catalog.py#L82-L116) |
 
-CHUNK packs outside the lock. It locks the lineage row in `documents` exclusively, then
-replays a saved grid or resolves D140 dates and inserts the complete grid in one transaction.
+CHUNK packs outside the lock. In a `READ COMMITTED` transaction it locks the
+lineage row in `documents` exclusively. Statements issued after acquiring the
+lock replay a saved grid or resolve D140 dates and insert the complete grid.
 The gate takes effect at grid commit, even before the representation becomes current.
 E1/E2 reuse writers take a shared lock on that row, recheck both versions in a fresh
 `READ COMMITTED` statement and hold the lock through commit. The recheck, vector copy

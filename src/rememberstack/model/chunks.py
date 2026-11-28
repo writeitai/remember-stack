@@ -1,8 +1,8 @@
 """E1 chunk-layer values: packing inputs/outputs, catalog records, P1 rows (D58).
 
-Chunks are non-overlapping runs of whole blocks within one section; their
-identity is the ordered block-hash sequence, which is what makes reuse (D56)
-a sequence comparison instead of a semantic judgment.
+The base grid packs non-overlapping runs of whole blocks within each section.
+D162 can cut a hosted passage inside a block or gap. A whole chunk keeps its
+ordered block-hash identity, and a split chunk hashes its ordered fragments.
 """
 
 from typing import Annotated

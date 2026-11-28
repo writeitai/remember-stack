@@ -1,13 +1,24 @@
 """D162 lineage coordination and the shared immutable version predicate."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from uuid import UUID
 
 from sqlalchemy import Connection
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 
 class ChunkReuseBlocked(Exception):
     """A split grid committed before the proposed reuse could publish."""
+
+
+@contextmanager
+def read_committed(engine: Engine) -> Iterator[Connection]:
+    """Choose the isolation on this transaction before its first snapshot."""
+    with engine.begin() as connection:
+        connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        yield connection
 
 
 def version_is_reusable(version_sql: str) -> str:

@@ -11,6 +11,7 @@ import re
 from rememberstack.core.chunker import count_tokens
 from rememberstack.core.extraction_eligibility import INELIGIBLE_DERIVATION_KINDS
 from rememberstack.model import Block
+from rememberstack.model import BlockType
 from rememberstack.model import DerivationRange
 from rememberstack.model import PackedChunk
 from rememberstack.model.conversion import SourceMapEntry
@@ -107,9 +108,19 @@ def _split_candidate(
     block_ends = tuple(block.char_end for block in nonempty_blocks)
     all_ends = tuple(block.char_end for block in blocks)
     block_seams = (*block_starts, *block_ends)
-    recorded = recorded_seams[
-        bisect_right(recorded_seams, start) : bisect_left(recorded_seams, end)
-    ]
+    recorded = (
+        *recorded_seams[
+            bisect_right(recorded_seams, start) : bisect_left(recorded_seams, end)
+        ],
+        *(
+            row.end()
+            for block in nonempty_blocks
+            if block.type is BlockType.TABLE
+            for row in _LINES.finditer(
+                document_md, max(start, block.char_start), min(end, block.char_end)
+            )
+        ),
+    )
     pending = list(
         reversed(
             tuple(

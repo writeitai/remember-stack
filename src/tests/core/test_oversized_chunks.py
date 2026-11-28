@@ -196,24 +196,26 @@ def test_eligibility_gap_and_recorded_seam_cover_exact_bytes() -> None:
     def fits(chunk: PackedChunk, count: int) -> bool:
         return chunk.char_end - chunk.char_start <= 20
 
-    kwargs = dict(
-        packed=candidates,
-        oversized=frozenset({0}),
-        blocks=blocks,
-        eligibility=block_eligibility(blocks=blocks, ranges=ranges),
-        document_md=body,
-        ranges=ranges,
-        source_map=(
-            SourceMapEntry(
-                start=prose_start,
-                end=second_block_start,
-                locators=(PageLocator(page=1, precision="page"),),
+    def split() -> tuple[PackedChunk, ...]:
+        return split_oversized_chunks(
+            packed=candidates,
+            oversized=frozenset({0}),
+            blocks=blocks,
+            eligibility=block_eligibility(blocks=blocks, ranges=ranges),
+            document_md=body,
+            ranges=ranges,
+            source_map=(
+                SourceMapEntry(
+                    start=prose_start,
+                    end=second_block_start,
+                    locators=(PageLocator(page=1, precision="page"),),
+                ),
             ),
-        ),
-        fits=fits,
-    )
-    pieces = split_oversized_chunks(**kwargs)
-    assert pieces == split_oversized_chunks(**kwargs)
+            fits=fits,
+        )
+
+    pieces = split()
+    assert pieces == split()
     assert [
         (
             body[p.char_start : p.char_end],
@@ -290,3 +292,40 @@ def test_final_grid_rechecks_when_d80_gains_a_header() -> None:
         (20, 30),
         (30, 40),
     ]
+
+
+def test_split_evidence_clips_only_exact_linear_locators() -> None:
+    from rememberstack.model import EvidenceSpan
+    from rememberstack.model.conversion import SourceRangeLocator
+    from rememberstack.model.occurrence_provenance import (
+        resolve_spans_occurrence_provenance,
+    )
+
+    page = PageLocator(page=2, precision="page")
+    exact = SourceRangeLocator(start_offset=100, end_offset=120, precision="exact")
+    ranges = (
+        DerivationRange(
+            start=10,
+            end=30,
+            derivation_kind="passthrough",
+            evidence_mode="source_expression",
+        ),
+    )
+    mapped = (
+        SourceMapEntry(start=10, end=30, locators=(exact,)),
+        SourceMapEntry(start=10, end=30, locators=(page,)),
+        SourceMapEntry(
+            start=25, end=30, locators=(PageLocator(page=3, precision="page"),)
+        ),
+    )
+    resolved = resolve_spans_occurrence_provenance(
+        spans=(EvidenceSpan(char_start=13, char_end=18),),
+        ranges=ranges,
+        source_map=mapped,
+        clip_exact_ranges=True,
+    )
+    assert resolved.derivation_kind == "passthrough"
+    assert resolved.source_locators == (
+        SourceRangeLocator(start_offset=103, end_offset=108, precision="exact"),
+        page,
+    )
