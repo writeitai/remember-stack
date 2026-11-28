@@ -1947,6 +1947,12 @@ identity rules per source kind are a named spike.
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
 > this decision's cost promise did not hold. Everything else here remains binding.
 
+> **Reuse refinements.** [D80](plan/designs/e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse)
+> also matches rendered input and policy for passage vectors.
+> [D122](#d122-share-frozen-source-reference-context-between-extraction-chunks)
+> adds a preceding-eight Selection dependency to Claimify, so the original
+> edit example below understates the possible re-extraction.
+
 > **Proposed amendment.** [D162](#d162-split-oversized-chunks-before-embedding)
 > limits E1 and E2 result reuse to unsplit versions on both sides.
 
@@ -3553,7 +3559,8 @@ second-order channel; it is not the D80 default.
 
 > **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
 > gates carry-forward on both versions at commit and keeps semantic search
-> ready for qualified request-limit-only changes.
+> ready for qualified request-limit-only changes that preserve the query
+> request envelope.
 
 **Decision (2026-08-03).** The product path for chunk (passage) embeddings is **conventional
 embedders only** (`texts → vectors`), chosen for **interchangeability** under version-scoped
@@ -8771,10 +8778,11 @@ any split piece is ineligible as a receiver or donor at E1/E2 reuse and D140
 text origin commit. Fitting grids retain legacy identities.
 
 Fence replay and drain legacy E1 before enabling splits and fit checks.
-Skip blocked legacy E1 resets during D159 unarchive. Serialize unarchive
-with later binding switches so eligible resets commit with the undo.
+Skip blocked legacy E1 resets during D159 unarchive. Fence actual undos
+during later binding switches so eligible resets can commit after the switch.
 Check persisted rebuild and replay inputs against an incoming binding.
-Publish qualified request-limit-only changes with semantic search ready.
+Publish qualified request-limit-only changes with semantic search ready
+when they preserve the outgoing query request envelope.
 Confirmed input rejections are typed terminal failures. Require offline
 equality of legacy requests and full rows on frozen LoCoMo Full-v45 and BEAM.
 

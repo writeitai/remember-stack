@@ -44,12 +44,17 @@ chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  WHO
 | used for | reuse diff (D56), the grounding chain, edit locality | chunk boundaries, E2 role signal, P1 role filter, P3 placement | P1 index rows, E2 bundles, `claims.chunk_id` |
 | in identity/reuse keys? | yes | **never** (non-deterministic) | content hash (§4) |
 
-In an unsplit grid, someone edits paragraph `b5`. Only `b5`'s hash changes; the block diff aligns
-everything else; chunk `c2` (b4–b5) is the only chunk whose block sequence changed → it alone
-re-extracts and re-embeds; `c1/c3/c4/c5` carry forward with their claims, embeddings, and
-stored context untouched; reconciliation (D54) touches only the facts `c2` evidenced. A
-structurer re-run may redraw sections without threatening any of that — sections never
-participate in identity; they only decide where *future* packing may cut.
+Suppose an edit to paragraph `b5` changes its text and hash in this unsplit grid.
+Chunk boundaries, location fields and generations stay fixed. Only `c2`'s body
+changes.
+
+- **Embedding.** Only `c2` needs a new vector. The others carry forward when
+  their full rendered inputs and other identity fields match. [D80 reuse](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse).
+- **Selection.** `c2` has new text and `c3` has a changed same-section
+  neighbour. Both get new Selection inputs. `c1`, `c4` and `c5` keep theirs.
+- **Claimify.** The changed Selection hashes affect `c2` and `c3` and also
+  enter the previous-eight window of `c4` and `c5`. Claimify can rerun across
+  section boundaries even when Selection reuses its result. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 ## 2. Blocks and the blockizer (D57)
 
@@ -311,13 +316,12 @@ change.
 These rules apply when both versions pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
 
 - **A1 — block-hash diff alignment.** On a new document version: blockize, then align old and
-  new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain). A chunk
-  is **reusable iff its constituent block-hash sequence is unchanged**, regardless of where
-  it moved — offsets never participate.
+  new block sequences by LCS/diff over block hashes (`git diff` at paragraph grain).
+  Each stage checks its own reuse identity. Offsets stay out of those keys.
 - **A2 — anchor-stabilized packing** (§4) keeps the diff local for long/sectionless
   documents.
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
-  inputs are unchanged.** For **extraction**, reused chunks keep prior extraction outcomes
+  inputs are unchanged.** For **Selection**, reused chunks keep prior Selection outcomes
   when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
   under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
@@ -365,8 +369,9 @@ These rules apply when both versions pass the [D162 reuse gate](split_oversized_
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
-- A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
-  changed → the input hash changed) — correct by construction.
+- **Claimify reuse (D122).** Match the target's Selection hash, the preceding
+  eight Selection hashes in document order and the reference-policy generation.
+  Reuse keeps the claim IDs when the evidence remaps. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 ## 8. What reaches Postgres
 

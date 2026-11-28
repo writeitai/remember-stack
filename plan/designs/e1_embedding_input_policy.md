@@ -272,7 +272,7 @@ produced from different text.
 | Policy version changes | Use the cutover below. Re-render in-scope chunks and reuse exactly attested vectors or re-embed. |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
 | Embedder generation changes | Use the cutover below to re-embed (§7). |
-| Qualified request limits change by themselves | Check fit and publish under the cutover with semantic search ready. |
+| Qualified request limits change by themselves | Check passage fit and preserve the query request envelope for online publication. |
 | Summary-only regeneration | No render/embed |
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
@@ -287,12 +287,13 @@ clear the fence in short transactions. Let outgoing work and its handoffs
 settle under the outgoing binding.
 
 Serialize D159 unarchive, including source-driven undo, with this fence.
-Unarchive reads the fence under a shared lock held through commit, before
-touching archive or work rows. Fence installation waits for in-flight undo
-transactions. Their E1 resets join the outgoing drain. An active fence
-yields a retryable maintenance refusal with the archive intact. After
-publication or rollback, unarchive resets and wakes eligible work under
-the active binding.
+Read the fence under a shared lock held through commit. While fenced, check
+lineage state under its row lock before any writes. A live document still
+returns a no-op, as does a caller archive when `only_source=True`. An actual
+undo returns a retryable maintenance refusal with archive and work intact.
+Fence installation waits for earlier unarchive transactions, whose E1 resets
+join the outgoing drain. After publication or rollback, unarchive resets and
+wakes eligible work under the active binding.
 
 With the fence active, render every persisted chunk needed for rebuild or
 eligible replay after release, including completed grids and archived
@@ -304,12 +305,19 @@ refuse the switch and release the fence. Semantic search continues on the
 outgoing binding and vectors.
 [D162 fit check](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
 
-If only the qualified request limits change, publish them under the fence
-with the current vector attestations and semantic channels still ready, then
-release the fence. Changes that require new attestations, vectors or indexes
-take the affected semantic channels unready after fit passes. Rebuild as
-required, publish the incoming pair and release the fence after coverage,
-dimension, policy and hash checks pass. Discard temporary migration state.
+Publish a request-limit-only change under the fence with current vector
+attestations and semantic search ready if it is local to E1 or preserves the
+outgoing query request envelope. For a shared binding, the incoming
+per-input and whole-request limits on every reachable query route must still
+allow every semantic embedding request the outgoing binding allowed,
+including preprocessing and framing. If the envelope would shrink or
+compatibility is unknown, refuse the switch and keep the outgoing binding and
+vectors. Release the fence after publication or refusal.
+
+Changes that require new attestations, vectors or indexes take the affected
+semantic channels unready after fit passes. Rebuild as required, publish the
+incoming pair and release the fence after coverage, dimension, policy and hash
+checks pass. Discard temporary migration state.
 
 ---
 

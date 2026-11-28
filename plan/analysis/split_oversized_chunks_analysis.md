@@ -52,8 +52,12 @@ wakes only rows that moved to pending.
 During a later switch, skipping an eligible E1 reset loses it when the same
 transaction clears `archived_at`. Guarding the whole undo with the maintenance
 fence preserves that marker for retry and avoids a separate backlog of deferred
-resets. A source archive stays eligible for re-observation while it is archived.
+resets. The connector also calls source-only unarchive on fetched same-byte
+observations of live and caller-archived documents. Those calls already return
+zeros without resetting work and can still do so during maintenance. A source
+archive stays eligible for re-observation while it is archived.
 [Archive marker check](../../src/rememberstack/workers/reconcile.py#L1024-L1049) ·
+[Same-byte observation](../../src/rememberstack/workers/sync.py#L190-L197) ·
 [Source polling](../../src/rememberstack/spine/sync.py#L117-L130).
 
 A drained queue can still leave a successfully embedded 20,000-token chunk
@@ -62,10 +66,14 @@ handles and can invalidate extraction. One local pass over the persisted
 inputs under the cutover fence checks fit before search goes offline.
 [E1 render from saved spans](../../src/rememberstack/workers/e1.py#L262-L295).
 
-A batch item limit changes request grouping. The readiness check attests the
-model, dimension and input policy, so publishing a qualified limit can keep
-those vectors and readiness. Reserve unready maintenance for changes that
-require vector, attestation or index work.
+An E1-local batch item limit changes only passage request grouping. A shared
+provider limit also applies to semantic queries. Self-host uses the same
+embedder for both, and P1 readiness checks model, dimension and policy. A
+lower shared byte cap can therefore reject a query while every saved passage
+fits and P1 reports ready. Compare the framed query limits before publishing.
+Refusing a shrinking shared cap keeps queries working with the existing binding.
+[E1 provider](../../src/rememberstack/profiles/selfhost.py#L1878-L1887) ·
+[Query provider](../../src/rememberstack/profiles/selfhost.py#L1424-L1439) ·
 [P1 readiness check](../../src/rememberstack/adapters/postgres_p1.py#L2049-L2096).
 
 ## Benchmark sizing
@@ -73,10 +81,13 @@ require vector, attestation or index work.
 The author-reported Full-v45 audit found a 21,567-token OCR singleton
 (`conv-41/D19`) and a 22,337-token bound with headers before route framing.
 For BEAM 100K/1, render the 188 messages as `{role}: {content}` with blank
-lines between them. Blockize and enumerate singletons and contiguous runs
-of up to 400 whitespace tokens. The largest normalized body is 14,187 NFC
-UTF-8 bytes. Add 770 bytes for D80's 48 header code points (up to four
+lines between them. Blockize and enumerate every singleton and every
+contiguous run whose individual block whitespace-token counts sum to at
+most 400. Measure normalized NFC UTF-8 bytes over the complete span from
+the first block's start to the last block's end, including gaps. The largest
+body is 14,187 bytes. Add 770 bytes for D80's 48 header code points (up to four
 decomposition scalars and four bytes each) and two newlines, plus one end
 token. The byte-level tokenizer is bounded by 14,958 tokens before framing.
+[Base packer](../../src/rememberstack/core/chunker.py#L198-L238) ·
 [Pinned BEAM input](https://github.com/mohammadtavakoli78/BEAM/blob/5a64c992ba05b489b891221b7bcb6b763493dde5/chats/100K/1/chat.json) ·
 [Pinned tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
