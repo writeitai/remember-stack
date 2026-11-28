@@ -22,6 +22,18 @@ date for relative expressions.
 [E1 slots](../../src/rememberstack/workers/e1.py#L734-L765) ·
 [E2 windows](../../src/rememberstack/spine/chunk_catalog.py#L373-L419).
 
+An earlier representation can supply a donor while a new representation of
+that version is packing. Selection remaps between lookup and freeze, so a
+lookup filter can admit a copy after the split flag commits. All four paths
+stay within one lineage. Its existing row lock can cover the final check and
+publication without covering artifact or provider calls. E1 currently writes
+the search row before the authority stamp in separate transactions. Both
+stores use the same PostgreSQL engine, so a carried vector can commit with its
+stamp and leave no partial copy for recovery.
+[Selection reuse](../../src/rememberstack/workers/e2.py#L655-L695) ·
+[Vector commit](../../src/rememberstack/workers/e1.py#L515-L572) ·
+[Worker composition](../../src/rememberstack/profiles/selfhost.py#L1814-L1827).
+
 Legacy CHUNK can hand off a saved over-limit grid on retry. Operator replay
 can reopen a dead letter during the drain. The legacy passage builder leaves
 a gap-only window unlabelled beside a block-backed neighbour.
@@ -37,11 +49,24 @@ wakes only rows that moved to pending.
 [Reset statement](../../src/rememberstack/spine/lifecycle.py#L2024-L2053) ·
 [Unarchive transaction](../../src/rememberstack/workers/reconcile.py#L1024-L1064).
 
+During a later switch, skipping an eligible E1 reset loses it when the same
+transaction clears `archived_at`. Guarding the whole undo with the maintenance
+fence preserves that marker for retry and avoids a separate backlog of deferred
+resets. A source archive stays eligible for re-observation while it is archived.
+[Archive marker check](../../src/rememberstack/workers/reconcile.py#L1024-L1049) ·
+[Source polling](../../src/rememberstack/spine/sync.py#L117-L130).
+
 A drained queue can still leave a successfully embedded 20,000-token chunk
 that exceeds an incoming 16,384-token cap. Repacking would change chunk
 handles and can invalidate extraction. One local pass over the persisted
 inputs under the cutover fence checks fit before search goes offline.
 [E1 render from saved spans](../../src/rememberstack/workers/e1.py#L262-L295).
+
+A batch item limit changes request grouping. The readiness check attests the
+model, dimension and input policy, so publishing a qualified limit can keep
+those vectors and readiness. Reserve unready maintenance for changes that
+require vector, attestation or index work.
+[P1 readiness check](../../src/rememberstack/adapters/postgres_p1.py#L2049-L2096).
 
 ## Benchmark sizing
 

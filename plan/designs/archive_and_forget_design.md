@@ -90,8 +90,11 @@ undo a caller's archive; a changed version does (§2.3).
   so a read inside the archive interval still sees the fact closed. A fact that something else
   has changed since (closed for another reason, superseded) is left as it is. It resumes
   eligible work the archive cut short and reuses completed work (D56).
-  The [D162 replay guard](split_oversized_chunks_design.md#4-rollout) leaves fenced or
-  permanently blocked E1 dead letters terminal while the same transaction restores testimony.
+  The [D162 rollout guard](split_oversized_chunks_design.md#4-rollout) keeps
+  legacy E1 dead letters terminal during rollout and after permanent blocking.
+  During later [D80 maintenance](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse),
+  unarchive returns a retryable refusal with the archive intact so eligible
+  resets can commit with the undo after the fence lifts.
   Unarchive makes no model call except the profile refresh. Answer: `doc_id`,
   `claims_restored`, `facts_reopened`.
 - **Identical bytes re-sent** to a caller-archived lineage are a no-op (whatever is a no-op for

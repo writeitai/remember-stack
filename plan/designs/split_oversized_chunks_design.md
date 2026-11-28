@@ -58,12 +58,18 @@ eight Selection producers in final document order, including empty results.
 ## 3. Version-wide reuse gate
 
 `document_versions.has_split_chunks` starts false, including for legacy rows.
-CHUNK sets it if any piece in the final grid came from a split. Serialize
-D140 resolution and the atomic grid and flag write for the same version.
-Once true, it stays true across the version's generations and representations.
+CHUNK sets it in the grid transaction if the final grid contains a split.
+Once set, it stays true across the version's generations and representations.
 
-All four lookups require a false flag on both versions. Check the receiver
-using any pending CHUNK grid too. Filter donors before ranking matches.
+All four lookups require a false flag on both versions, accounting for the
+receiver's pending CHUNK grid. Filter donors before ranking. Use the lineage
+row in `documents` to serialize reuse with flag writes. Under an exclusive
+lock, CHUNK rechecks for a saved grid, resolves D140 origins and commits the
+grid and flag together. EMBED_CHUNK, Selection and Claimify take a shared
+lock, re-read both flags and hold the lock through publication. If a candidate
+fails the check, select an eligible donor or process fresh. Commit a carried
+vector and its authority stamps in one PostgreSQL transaction. Keep artifact
+reads and provider calls outside these locks.
 
 | Stage | Existing lookup to filter |
 |---|---|
@@ -72,11 +78,12 @@ using any pending CHUNK grid too. Filter donors before ranking matches.
 | E2 Claimify | [`ClaimCatalog.prior_extracted_chunk` / `_SELECT_PRIOR_EXTRACTED`](../../src/rememberstack/spine/claim_catalog.py#L425-L448), called by [`_reuse_prior_claimify`](../../src/rememberstack/workers/e2.py#L817-L841) |
 | D140 text origin | [`ChunkCatalog.text_origin_matches` / `_SELECT_TEXT_ORIGIN_MATCHES`](../../src/rememberstack/spine/chunk_catalog.py#L332-L346), called by [`ChunkHandler._text_origins`](../../src/rememberstack/workers/e1.py#L193-L217) |
 
-Every chunk of a split version runs fresh E1/E2 under existing skip rules
-and takes its version's `source_modified_at` or `published_at` (`NULL` if undated).
-Committed results replay by chunk ID. Unsplit versions keep today's keys,
-ranking and remapping, with byte-identical rows for equal inputs, allocations
-and eligible donors.
+Once a version is marked split, missing E1/E2 results are computed under
+existing skip rules. New chunks take that version's `source_modified_at` or
+`published_at` (`NULL` if undated). Committed results replay by chunk ID even
+after the flag is set. Unsplit versions keep today's keys, ranking and
+remapping, with byte-identical rows for equal inputs, allocations and eligible
+donors.
 
 ## 4. Rollout
 
@@ -87,7 +94,10 @@ callers and lanes. Serialize the fence with in-flight resets. A
 `BEFORE UPDATE` trigger skips the individual reset when the fence is active
 or the row is already `replay_blocked`. A skipped row is absent from
 `RETURNING`. This lets D159 unarchive restore testimony and wake eligible
-work in one transaction, including on the outgoing release.
+work in one transaction during the initial rollout, including on the outgoing
+release. Later binding switches
+[gate unarchive itself](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse)
+so its eligible E1 resets can commit with the undo.
 
 Use the outgoing workers and binding to drain all legacy jobs of both stages
 to terminal status, including delayed jobs, retries, leases, saved-grid CHUNK
@@ -145,11 +155,17 @@ The next version skips the split donor, taking an older eligible match or
 running fresh at its own date. Retain D56 packing and D122 coverage for
 ordinary edits.
 
+Race each reuse path against a split in a new representation of the donor
+or receiver. A flag set before publication requires an eligible fallback
+or fresh work. When reuse commits first, its result replays by chunk ID.
+Check that a refused copy leaves neither a P1 row nor a stamp before fallback.
+
 Rehearse cutover with an above-cap legacy grid, CHUNK retry after grid
-write and EMBED_CHUNK in backoff. Test replay on both sides of the fence,
-including from the outgoing CLI. Refusals preserve the row and announce no
-work. Test unarchive on the outgoing release with mixed cut-short work,
-once during the fence and once with the permanent block alone. Require
+write and EMBED_CHUNK in backoff. Exercise temporary and permanent replay
+blocks in both CLIs. The outgoing CLI exits with `internal_error`. The
+incoming CLI gives the [typed refusal](orchestration_design.md#6-dead-letter-operations).
+Both preserve the row and announce no work. Test outgoing unarchive with
+mixed cut-short work during the fence and with the permanent block alone. Require
 testimony restoration, wakes for eligible resets and unchanged blocked
 dead letters with no wake. Eligible post-cutover work can replay. Test typed
 rejection versus bounded retries, latest-byte no-op and successors on reverts
@@ -158,5 +174,10 @@ and new D140 keys.
 Rehearse a binding switch after all work settles. Use an incoming cap below
 a completed grid's input and, separately, below an input reached only by
 eligible replay. Require refusal with semantic search still serving and the
-outgoing vectors intact. A fitting binding completes D80 rebuild and
-verification.
+outgoing vectors intact. A fitting batch-item-limit change publishes the limit
+with semantic queries succeeding throughout and zero vector writes or rebuild
+calls. A fitting generation change completes D80 rebuild and verification.
+Race unarchive with the later fence. Resets committed before installation
+drain with outgoing work. A fenced undo preserves the archive and its E1
+dead letters. After either publication or rollback, retry the undo and
+require eligible resets and wakes in the testimony-restoration transaction.

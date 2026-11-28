@@ -354,8 +354,10 @@ across re-extraction by construction. "A new claim row exists for the same testi
 
 ## 6. Content-addressed reuse (D56) — cost proportional to the edit
 
-The chunk reuse rules below require both versions to pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
-A split version processes its whole grid fresh and supplies no E1/E2 results or D140 dates to later versions.
+The chunk reuse rules below require both versions to pass the
+[D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate)
+at commit. A split-marked version is ineligible for new copies. Committed
+results replay by chunk ID.
 
 The efficiency ladder for the hourly watcher, cheapest exit first:
 

@@ -25,9 +25,10 @@ frozen product constants, unless frozen inside a named
 
 1. **Conventional embedders only** as the product path: the embedder port accepts
    ordered `texts → vectors` (plus generation metadata). Embedders must stay
-   **interchangeable** under a version-scoped re-embed migration (model, dimension,
-   distance metric, provider caps, and any query/document preprocessing are part of
-   the **embedder generation**, not silent globals).
+   **interchangeable** under a version-scoped re-embed migration. The
+   **embedder generation** pins the model, dimension, distance metric and
+   vector-affecting settings, including query/document preprocessing. The
+   qualified binding pins request limits (§4.5).
 2. **Contextual embedding models** (document-native / late-chunking APIs that make
    a vector depend on undeclared surrounding context) are a **documented product
    non-goal**. Prior design text that described them as a fully designed alternate
@@ -248,7 +249,7 @@ unordered rule.
 
 | Name | Grain | Contents |
 |---|---|---|
-| **embedder_generation** | deployment / model config | model id, dimension, metric, provider params |
+| **embedder_generation** | deployment / model config | model id, dimension, metric, vector-affecting provider parameters |
 | **policy_generation** | deployment policy artifact | `embedding_input_policy_version` only |
 | **chunk embedding identity** | per chunk | `(chunk_id, policy_generation, embedding_text_hash, embedder_generation)` |
 
@@ -271,28 +272,44 @@ produced from different text.
 | Policy version changes | Use the cutover below. Re-render in-scope chunks and reuse exactly attested vectors or re-embed. |
 | Filter-only metadata (not in embedding text) | Update authority only; **no** re-embed |
 | Embedder generation changes | Use the cutover below to re-embed (§7). |
+| Qualified request limits change by themselves | Check fit and publish under the cutover with semantic search ready. |
 | Summary-only regeneration | No render/embed |
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
-Vector carry-forward requires both versions to pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
-Content-hash-only vector carry-forward is **insufficient** when embedding text
-includes location. Block-level **extraction** reuse (D56 A1–A3) remains
-content-addressed without LLM output in identity keys.
+Embedding and extraction carry-forward require both versions to pass the
+[D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate)
+at commit. Vector carry-forward matches the full render because the location
+header can change independently of the body.
 
-Before switching the qualified binding or input policy, fence new E1 admission
-and replay for the **maintenance cutover**. Let outgoing work and its handoffs
-settle under the outgoing binding. With the fence held, render every persisted
-chunk needed for rebuild or eligible replay, including chunks with completed
-jobs. Use the incoming policy and each saved grid's spans, order and count.
+Before switching the qualified binding or input policy, durably fence new E1
+admission and replay in PostgreSQL for the **maintenance cutover**. Set and
+clear the fence in short transactions. Let outgoing work and its handoffs
+settle under the outgoing binding.
+
+Serialize D159 unarchive, including source-driven undo, with this fence.
+Unarchive reads the fence under a shared lock held through commit, before
+touching archive or work rows. Fence installation waits for in-flight undo
+transactions. Their E1 resets join the outgoing drain. An active fence
+yields a retryable maintenance refusal with the archive intact. After
+publication or rollback, unarchive resets and wakes eligible work under
+the active binding.
+
+With the fence active, render every persisted chunk needed for rebuild or
+eligible replay after release, including completed grids and archived
+versions with eligible work. Use the incoming policy and each saved grid's
+spans, order and count.
 Check each non-skipped input locally against D162's input and singleton-request
 limits on every reachable route. If any input fails, report its chunk ID,
 refuse the switch and release the fence. Semantic search continues on the
 outgoing binding and vectors.
 [D162 fit check](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
 
-After the fit check passes, mark semantic search unready for the rebuild.
-Publish the incoming pair and release the fence after coverage, dimension,
-policy and hash checks pass. Discard temporary migration state after cutover.
+If only the qualified request limits change, publish them under the fence
+with the current vector attestations and semantic channels still ready, then
+release the fence. Changes that require new attestations, vectors or indexes
+take the affected semantic channels unready after fit passes. Rebuild as
+required, publish the incoming pair and release the fence after coverage,
+dimension, policy and hash checks pass. Discard temporary migration state.
 
 ---
 
@@ -388,9 +405,8 @@ That keeps short-message BM25 from being dominated by headers and matches
 “header returned separately from source body” in retrieval design.
 
 One active row is keyed by `(deployment_id, chunk_id)`. The
-[maintenance cutover](#45-migration-triggers-and-vector-reuse) checks fit
-before semantic search goes unready and verifies the rebuilt state before
-publishing the configuration.
+[maintenance cutover](#45-migration-triggers-and-vector-reuse) governs semantic
+readiness and publication.
 
 ---
 
@@ -411,7 +427,7 @@ A deployment may swap conventional embedders when:
 | Decision / design | Effect |
 |---|---|
 | D63 | Default remains conventional hosted/self-host embedders; **product path drops contextual alternate**; input policy replaces “per-chunk LLM prefix stage” |
-| D56 / A3 | Extraction reuse unchanged (no LLM in identity keys). **Vector** reuse requires embedding_text_hash + policy + embedder generation |
+| D56 / A3, D162 | Extraction keys exclude LLM output. Both versions must pass the [D162 gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate) at commit. Vector reuse also requires `embedding_text_hash`, policy and embedder generation. |
 | D58 | Claims = needles; chunks = passages; normalized joins apply role filters |
 | D79 | Summaries orientation-only; **not** default embedding text; **not** grounding |
 | D32 / E2 | Typed groundable location elements; free-form header out of union |
@@ -435,8 +451,8 @@ A deployment may swap conventional embedders when:
 5. **Reuse locality** — edit that moves a chunk’s section/channel changes
    embedding_text_hash; content-only body edit without location change reuses
    vector when hash matches.  
-6. **Two conventional embedders** — exercise
-   [fit refusal and successful rebuild](split_oversized_chunks_design.md#6-acceptance).
+6. **Binding cutover** — exercise
+   [fit refusal, online limit changes and successful rebuild](split_oversized_chunks_design.md#6-acceptance).
 7. **D159** — forget purges derived search state and location facts.
 
 ---

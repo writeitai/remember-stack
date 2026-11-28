@@ -3551,6 +3551,10 @@ second-order channel; it is not the D80 default.
 
 ## D80. Conventional embedding input is a versioned deterministic policy — conditional location headers, typed location facts, no default location LLM (amends D63 path; refines D56 vector reuse)
 
+> **Proposed refinement.** [D162](#d162-split-oversized-chunks-before-embedding)
+> gates carry-forward on both versions at commit and keeps semantic search
+> ready for qualified request-limit-only changes.
+
 **Decision (2026-08-03).** The product path for chunk (passage) embeddings is **conventional
 embedders only** (`texts → vectors`), chosen for **interchangeability** under version-scoped
 re-embed migration. **Contextual embedding models** (APIs that embed a span using undeclared
@@ -8762,16 +8766,17 @@ generations, retrieval and rendering use their existing code and identities.
 **Status** Proposed. **Date** 2026-11-27.
 
 Check the full D80 input under a qualified binding and split failing
-candidates losslessly under the existing chunker version. Any split piece
-excludes its whole version as both a receiver and donor for E1/E2 reuse
-and D140 text origin. Fitting grids retain legacy identities.
+candidates losslessly under the existing chunker version. A version with
+any split piece is ineligible as a receiver or donor at E1/E2 reuse and D140
+text origin commit. Fitting grids retain legacy identities.
 
 Fence replay and drain legacy E1 before enabling splits and fit checks.
-Skip blocked E1 resets so D159 unarchive can restore testimony and resume
-eligible work. Check persisted rebuild and replay inputs against an incoming
-binding before taking semantic search offline. Confirmed input rejections
-are typed terminal failures. Require offline equality of legacy requests
-and full rows on frozen LoCoMo Full-v45 and BEAM.
+Skip blocked legacy E1 resets during D159 unarchive. Serialize unarchive
+with later binding switches so eligible resets commit with the undo.
+Check persisted rebuild and replay inputs against an incoming binding.
+Publish qualified request-limit-only changes with semantic search ready.
+Confirmed input rejections are typed terminal failures. Require offline
+equality of legacy requests and full rows on frozen LoCoMo Full-v45 and BEAM.
 
 [Design](plan/designs/split_oversized_chunks_design.md) ·
 [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
