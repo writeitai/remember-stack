@@ -183,10 +183,6 @@ Tasks header cannot choose the attribution.
 
 ### embed_chunk durability (D80 — minimum contract)
 
-Validate the [D162 passage binding](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
-before the worker loop or named-task dispatch claims CHUNK or EMBED_CHUNK. A configuration
-refusal leaves the ledger row intact for delivery with a corrected binding.
-
 E1 passage embed is **not** one document-level “all strings then one provider call.” Normative
 input policy: `e1_embedding_input_policy.md` §6. Operational rules for implementers:
 
@@ -195,23 +191,23 @@ input policy: `e1_embedding_input_policy.md` §6. Operational rules for implemen
    stage). Pure prepare (location facts + render) may run in that job before provider calls;
    it does not require separate ledger rows.
 2. **Batching.** The handler partitions prepared chunks missing a successful stamp under the
-   configured `(policy_generation, embedder_generation)` into batches that fit the
-   [qualified binding's request limits](split_oversized_chunks_design.md#1-check-the-complete-embedding-input).
-   A batch **never crosses** document, representation, lane, or embedder generation.
+   configured `(policy_generation, embedder_generation)` into batches of size ≤ provider capability
+   (hypothesis 64–128). A batch **never crosses** document, representation, lane, or embedder
+   generation.
 3. **`call_key`.** Each provider embed call uses  
    `embed_chunks:{sorted_first_chunk_id}:{count}` within `(processing_id, attempt)` so retries
    are idempotent inserts in `cost_ledger` (stable when poison-split retries size-1 tails).
-4. **Input failures.** Isolate failed inputs as needed. A confirmed deterministic rejection
-   dead-letters the job through the existing terminal path. Keep committed batches. [D162](split_oversized_chunks_design.md#5-terminal-failure).
+4. **Poison split.** On a batch provider failure that is not a total outage, split the batch
+   (halve until size 1) and retry. On the hosted binding, [D162 terminal failures](split_oversized_chunks_design.md#5-terminal-failure) apply.
+   On other bindings, a single-chunk poison is typed fail/skip for that chunk.
 5. **Atomic PostgreSQL write.** For each successful batch, one PostgreSQL
    transaction upserts `chunk_search` by `(deployment_id, chunk_id)` with the
-   vector/hash/current attestation and stamps the chunk authority row. A vector
-   copy includes the [locked D162 eligibility recheck](split_oversized_chunks_design.md#3-version-wide-reuse-gate)
-   in that transaction. A crash after provider response but before commit may
-   repeat a billable call.
+   vector/hash/current attestation and stamps the chunk authority row. A vector copy also
+   includes the [D162 eligibility recheck](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
+   A crash after provider response but before commit may repeat a billable call.
 6. **Readiness.** Representation is embed-ready when every non-skipped chunk has a successful
    stamp matching the **configured** `(policy_generation, embedder_generation)`
-   and input hash, or an `empty_body` skip. Mixed or
+   and input hash (or a closed typed skip under the binding's failure rules). Mixed or
    stale attestation is not ready.
 
 K/P and other stages are unchanged by this subsection.

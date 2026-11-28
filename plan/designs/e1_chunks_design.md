@@ -18,7 +18,7 @@ Numbers are starting points to measure, not committed constants (CLAUDE.md).
 > **Reading this cold (CLAUDE.md Rule 1).** E0 converts every input to a clean Markdown
 > rendering (`document.md`) plus sidecars; **PageIndex** is the LLM-based structurer that
 > builds a per-document section tree (titles, roles like `results`/`references`, summaries);
-> **E1** packs whole-block candidates and checks them for provider fit (D162);
+> **E1** packs whole-block candidates and checks hosted inputs for fit (D162);
 > **E2** extracts claims from chunks; a claim's `source_span` must trace back through
 > `document.md` to the source (grounding, D32); **D56 reuse** requires that when a watched
 > document is edited, eligible versions reuse unchanged inputs (§7). "**Embedding
@@ -44,10 +44,9 @@ chunks      = [c1: b1–b3][c2: b4–b5][c3: b6–b7][c4: b8][c5: b9–b10]  FIT
 | used for | reuse diff (D56), the grounding chain, edit locality | chunk boundaries, E2 role signal, P1 role filter, P3 placement | P1 index rows, E2 bundles, `claims.chunk_id` |
 | in identity/reuse keys? | yes | Content, Selection and text-origin keys omit section metadata. [D80](e1_embedding_input_policy.md#45-migration-triggers-and-vector-reuse) can render the section title and role into the text hashed for vector reuse. | content hash (§4) |
 
-An edit to `b5` with stable spans, locations and generations changes only `c2`'s
-vector input. Selection reruns for `c2` and its same-section neighbour `c3`.
-The changed Selection hashes also enter the preceding-eight window of `c4`
-and `c5`, so Claimify can rerun across sections. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
+For an eligible version pair with stable locations and spans, editing `b5` re-embeds `c2` and reruns Selection for
+`c2` and its same-section neighbour `c3`. Their changed hashes can rerun Claimify across
+sections for `c4` and `c5`. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 ## 2. Blocks and the blockizer (D57)
 
@@ -155,7 +154,7 @@ output is therefore **normalized onto the block grid**:
 a deterministic post-step snaps every section boundary to a block boundary, and sections are
 *persisted as block ranges* (`blocks 14–31`), never raw char spans. Four reasons:
 
-1. **Packing stays within sections.** Whole-block candidates need block-aligned sections.
+1. **Packing stays within sections.** Whole-block packing needs block-aligned sections.
 2. **LLM output needs a deterministic normalization target.** PageIndex spans can overlap,
    gap, or drift; snapping is where they are sanitized into a well-formed partition (cover,
    nesting, no mid-block cuts). LLM proposes, a deterministic layer disposes — the system's
@@ -201,14 +200,11 @@ blocks ≈ paragraphs, and the machinery is uniform.
 ## 4. Non-overlapping chunks within sections (D58, D162)
 
 **Packing rules.** Pack whole blocks by whitespace-token budget within each section.
-An oversized block forms its own candidate. [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates)
-cuts candidates that fail fit. Character spans govern coverage, and block ordinals may repeat.
+Oversized blocks start as singletons. For the hosted binding, [D162](split_oversized_chunks_design.md#2-split-only-failing-candidates)
+splits oversized inputs losslessly. Character spans govern coverage, and block ordinals can repeat.
 
-- **Uniform extraction eligibility** (D133). Cut at eligibility changes between blocks.
-  Use gap labels as well for split pieces. Store eligibility in `chunks.extraction_eligible`.
-  E1 schedules Selection for every chunk in the extraction fan-out. E2 freezes an empty
-  result without a call for ineligible chunks, including split pieces. It counts toward the
-  [D122 barrier](document_reference_context_design.md#persistence-scheduling-and-retries) and keeps its slot in the preceding-eight window.
+- **Uniform extraction eligibility** (D133). [Eligibility cuts and Selection](format_conversion_design.md#45-extraction-eligibility)
+  govern `chunks.extraction_eligible`, including gap labels for split pieces.
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost
@@ -217,18 +213,16 @@ cuts candidates that fail fit. Character spans govern coverage, and block ordina
   destroying D56 reuse entirely. Where overlap has a real virtue (context continuity across a
   boundary), the E2 bundle already provides it explicitly (±N neighbor chunks) without paying
   identity or extraction costs.
-- **Anchor-stabilized boundaries** (A2). Force a boundary before a block when
-  `uint64(block_hash) mod M == 0` and at least `min_gap` tokens have accumulated since the last anchor.
-  Length edits can shift packing to the next anchor accepted by both versions or the end of
-  the owner run. The budget, `M` and `min_gap` are part of `chunker_version`.
+- **Anchor-stabilized boundaries** (A2). Cut before a block when `uint64(block_hash) mod M == 0`
+  and at least `min_gap` tokens have accumulated since the last anchor. Edits can shift packing to the next
+  common anchor or end of the owner run. The budget, `M` and `min_gap` join `chunker_version`.
 - **Determinism:** base candidates = f(blocks, sections, budget, anchors, `chunker_version`) — a
   chunker bump is a cheap repack of existing atoms (no re-conversion, no re-blockize), though
   it does re-key reuse (a deliberate version boundary, like any D7 version bump).
 - The **token budget** is an eval number, not an argument: recall@k per size class on the
   golden set (spike 1). Starting point: mid-hundreds of tokens.
 
-**Chunk identity.** Whole chunks hash their ordered block hashes. D162 pieces
-hash exact fragments and gaps with a split discriminator.
+**Chunk identity.** Whole chunks hash ordered block hashes. [Split pieces](split_oversized_chunks_design.md#2-split-only-failing-candidates) hash exact fragments and gaps.
 
 ## 5. Embedding granularity — multi-granularity by architecture, not tiny chunks (D58)
 
@@ -304,19 +298,15 @@ change.
 
 ## 7. Reuse mechanics (D56 bound here; amendments A1–A3)
 
-Carry-forward of E1/E2 results and D140 dates requires both versions to pass the
-[D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
+Both versions must pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate) before reusing E1/E2 results or D140 dates.
 
-- **A1 — repack and match by identity.** CHUNK packs the new representation and computes
-  chunk hashes, Selection keys and text-origin identities from its final grid. Each stage
-  looks up eligible prior results by its own key. Offsets locate spans for remapping and
-  stay out of reuse keys.
-- **A2 — anchor-stabilized packing** (§4) limits how far changed boundaries spread in long
-  sections.
+- **A1 — repack and match by identity.** CHUNK computes content, Selection and text-origin
+  hashes on the final grid. Each stage matches its own key. Offsets locate spans for remapping.
+- **A2 — anchor-stabilized packing** (§4) limits how far changed boundaries spread.
 - **A3 — Derived context is carried forward under replay discipline, not regenerated when
   inputs are unchanged.** For **Selection**, reused chunks keep prior Selection outcomes
   when `extraction_input_hash` matches; unchanged regions keep the prior version's structure
-  under `structurer_version`. The Selection identity excludes LLM output (D7 replay-not-recall).
+  under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
   facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
@@ -362,8 +352,7 @@ Carry-forward of E1/E2 results and D140 dates requires both versions to pass the
   The embed-delivery identity includes the chunker base generation; a base
   chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
-- **Claimify reuse (D122).** Match target and preceding-eight Selection hashes and the
-  reference-policy generation. Keep claim IDs when evidence remaps. [D122 reuse](document_reference_context_design.md#reuse-including-negative-dependencies).
+- **Claimify reuse.** Match the target, preceding-eight Selection hashes and reference policy. [D122](document_reference_context_design.md#reuse-including-negative-dependencies).
 
 ## 8. What reaches Postgres
 
@@ -393,7 +382,6 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
 | D54–D56 (lifecycle) | **completed**: the reuse mechanics deferred by lifecycle §6 are bound here (A1–A3); the D56 key is corrected to stable components only |
 | D8/D9/D48–D50/D94 (retrieval) | **composes**: claims = needle channel, chunks = passage channel; role and `source_shape` filters join normalized authority; one current search attestation, no copied generation scalars |
 | D63/D80 (embed path) | **D80 binds** conventional interchangeable embedders + embedding-input policy; contextual non-goal |
-| D162 | **bounds** the embedding input with lossless provider-fit cuts |
 | D7/D12/D33 | **followed**: blockizer/chunker versioned; embedding-text hashes are replayed state; all derivations deterministic or ledgered |
 
 ## 10. Spikes (measure before locking)
@@ -407,7 +395,7 @@ Blocks stay in `blocks.json`; the spine gets derived keys only (D37 discipline):
    corpus; the number that validates the whole D56 economy.
 5. **Structurer snap distortion** — how often PageIndex boundaries land mid-block (conversion
    quality signal); structurer re-run stability across versions.
-6. **Provider-fit cuts (D162)** — split frequency and retrieval recall, including dense tables.
+6. **Hosted split pieces (D162)** — frequency and retrieval recall, including dense tables.
 7. **E2 batch size** — quality vs cost of multi-chunk extraction calls (attention dilution in
    very long calls vs bundle-overhead savings).
 8. **Embedding-input-policy quality (D63/D80/D94)** — model default remains

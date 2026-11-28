@@ -1,159 +1,118 @@
 # Split oversized chunks before embedding (D162)
 
-**Status** Proposed. [Analysis](../analysis/split_oversized_chunks_analysis.md).
+**Status** Proposed. [Analysis and probe evidence](../analysis/split_oversized_chunks_analysis.md).
 
 ## 1. Check the complete embedding input
 
-CHUNK and EMBED_CHUNK share a release-qualified passage binding in the configured P1 vector
-space. It pins the model, dimensions, tokenizer, vocabulary, route framing and one route or a
-closed allowlist.
-Stock self-host, including Compose, sets one qualified hard pin on the E1 passage binding.
-Use the shared provider settings for other embedding, including queries, claims and facts.
-Passage routes must match a release-qualified binding and honor deployment-wide host and retention
-restrictions. OpenRouter provider order alone leaves marketplace fallback open. Qualify every
-reachable endpoint, including variants and fallbacks, at the binding's common limits.
+CHUNK and EMBED_CHUNK apply the ceiling only for the hosted E1 passage binding
+`qwen/qwen3-embedding-8b` through OpenRouter with `only: ["nebius/bf16"]`,
+`allow_fallbacks: false`, `zdr: true` and `data_collection: deny`. Self-host and custom
+bindings use their existing packing, embedding and failure paths. [Adapter routing](../../src/rememberstack/adapters/openrouter.py#L1001-L1046).
 
-Ship the per-input and aggregate token, byte and item limits as code constants. A different
-ceiling requires a release. Check the full D80 render (normalized body, any header and their
-separator) with each allowed route's framing. One nonblank Unicode scalar must fit with the
-largest header and framing. Hosted Qwen3-Embedding-8B on OpenRouter
-`nebius/bf16` starts qualification at **16,384 tokens**. The benchmark binding requires at
-least **22,528 tokens**.
-
-Validate the effective binding when composing workers for CHUNK or EMBED_CHUNK, before the
-worker loop or named-task dispatch can claim either stage. Surface an unqualified binding as
-a configuration error and leave queued work intact for delivery after correction.
-
-CHUNK checks the [base candidates](e1_chunks_design.md#4-non-overlapping-chunks-within-sections-d58-d162)
-for input and singleton-request fit. It keeps fitting spans and rechecks fit against final order and
-count because a split can change the header. EMBED_CHUNK checks the same fit before carry-forward or
-dispatch and subdivides ordered batches only as needed to fit request limits.
+Use the pinned tokenizer to count the normalized body, optional D80 header and separator, and model special tokens.
+The largest header plus one nonblank Unicode scalar must fit. The **16,384-token code constant**
+changes only with a release and stays outside work and embedding identities. CHUNK keeps fitting
+spans and rechecks after cuts because final order and count can change the header. EMBED_CHUNK
+checks before new carry-forward or dispatch. Keep ordered batching, attestations and same-chunk
+replay. [Pinned Qwen tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
 
 ## 2. Split only failing candidates
 
-Cut first at eligibility changes in nonblank text. Use E0 block eligibility and D133 gap labels.
-Unlabelled gaps are eligible. Attach separator whitespace to the preceding piece and leading
-whitespace to the first, preserving labels. For size cuts, prefer block seams, recorded structural
-seams (turn, page, table row), sentence, line, whitespace, then Unicode scalar boundaries.
-Take the legal seam nearest the midpoint in the first available tier, breaking ties at the earlier
-offset. Keep CRLF together and nonblank text on both sides. Repeat full fit checks and cuts.
-Concatenating pieces reproduces the candidate's exact bytes.
+For failing base candidates, cut first at nonblank eligibility changes using E0 blocks and
+D133 gap labels. Unlabelled gaps are eligible. Keep whitespace labels, attaching leading space
+to the first piece and separator whitespace to the preceding piece. For size cuts, prefer block
+seams, recorded turn/page/table-row seams, sentence, line, whitespace, then Unicode scalars.
+In the first legal tier, cut nearest the midpoint, breaking ties earlier. Keep CRLF together
+and nonblank text on both sides. Repeat until each piece fits and their exact bytes reassemble.
 
-Pieces use UUIDv4, consecutive document ordinals, exact half-open E0 spans within the same
-section, and legacy whitespace token counts. Store inclusive first and last intersected block
-ordinals, or the preceding block in both fields for a gap-only piece. Block ordinals may repeat.
-Clip source maps and converter origins. Section history and resolved document references find
-the chunk containing the first block's start, preserving version scope, representation and order.
+Assign UUIDv4 IDs, consecutive document ordinals, half-open E0 spans within the same section
+and legacy whitespace token counts. Record inclusive intersected block ordinals, using the
+preceding block for both fields on gap-only pieces. Clip source maps and converter origins.
+Section history and resolved references select the chunk containing the first block's start
+within the same version and representation, preserving order.
 
 Use existing key builders on the final grid. Hash exact ordered block fragments and gap bytes
 with a split discriminator. Selection and Claimify label nonblank gap-only windows by exact
-span even beside block-backed neighbours. Ground Claimify's kept propositions with exact spans and D80
-typed locations. D122 reads the preceding eight Selection producers in final order, including empty results.
-[Passage labels](../../src/rememberstack/core/source_passages.py#L124-L168) · [Producer order](../../src/rememberstack/workers/extraction_references.py#L56-L76).
+span, even beside block-backed neighbours. Ground kept propositions with exact spans and D80
+typed locations. D122 reads the preceding eight Selection producers in final order, counting
+empty results for ineligible pieces. [Passage labels](../../src/rememberstack/core/source_passages.py#L124-L168) · [Producer order](../../src/rememberstack/workers/extraction_references.py#L56-L76).
 
 ## 3. Version-wide reuse gate
 
-A grid is the set of chunks for one representation and chunker version. D65 lets one `version_id`
-own several representations. A saved row with immutable `span_kind = 'split'` excludes
-the version from both sides of E1/E2 reuse and D140 text-origin inheritance, across all
-representations and chunker versions. Intact candidates and legacy rows use `whole`.
-Use a partial index on `version_id` over split rows for the existence check.
+A grid contains the chunks for one representation and chunker version. Any immutable chunk row
+with `span_kind = 'split'` excludes its entire `version_id` as donor and receiver, across
+all representations and chunker versions. Intact and legacy rows use `whole`. Use a partial
+index on `version_id` over split rows. Check the receiver and filter donors before ranking.
+For D140, also check the receiver's final grid awaiting insert.
 
-Check the receiver and filter donors by `version_id` before ranking matches. For D140,
-also check the receiver's final grid awaiting insertion.
-
-| Stage | Existing lookup |
+| Reused product | Existing lookup |
 |---|---|
-| E1 vector carry-forward | [`ChunkCatalog.carry_forward_sources`](../../src/rememberstack/spine/chunk_catalog.py#L209-L243) |
+| E1 vectors | [`ChunkCatalog.carry_forward_sources`](../../src/rememberstack/spine/chunk_catalog.py#L209-L243) |
 | E2 Selection | [`SelectionCatalog.prior`](../../src/rememberstack/spine/selection_catalog.py#L102-L138) |
 | E2 Claimify | [`ClaimCatalog.prior_extracted_chunk`](../../src/rememberstack/spine/claim_catalog.py#L62-L100) |
-| D140 text origin | [`ChunkCatalog.text_origin_matches`](../../src/rememberstack/spine/chunk_catalog.py#L82-L116) |
+| D140 dates | [`ChunkCatalog.text_origin_matches`](../../src/rememberstack/spine/chunk_catalog.py#L82-L116) |
 
-CHUNK packs outside the lock. In one transaction it locks the lineage row in `documents`
-exclusively, then checks for a saved grid. Replay the saved grid or resolve D140 dates and
-insert the complete grid before commit. E1/E2 reuse writers take a shared lock on the same
-row, recheck both versions in a new `READ COMMITTED` statement and hold the lock through
-commit. For an E1 copy, the locked eligibility recheck, `chunk_search` upsert and `chunks`
-authority stamp share one PostgreSQL transaction. A blocked receiver runs fresh. A blocked
-donor triggers another eligible lookup. Keep artifact reads and provider calls outside
-these locks.
+CHUNK packs outside the lock. It locks the lineage row in `documents` exclusively, then
+replays a saved grid or resolves D140 dates and inserts the complete grid in one transaction.
+The gate takes effect at grid commit, even before the representation becomes current.
+E1/E2 reuse writers take a shared lock on that row, recheck both versions in a fresh
+`READ COMMITTED` statement and hold the lock through commit. The recheck, vector copy
+into `chunk_search` and `chunks` stamp share one transaction. A blocked donor triggers
+another eligible lookup, and a blocked receiver runs fresh. Keep artifact reads and provider
+calls outside the locks.
 
-The split takes effect when its grid commits, including before the representation becomes
-current. Replay committed results and dates by chunk ID under the existing identity checks.
-Missing results for a split version run fresh under existing skip rules. New chunks take
-their version's `source_modified_at` or `published_at` (`NULL` if undated). Eligible versions
-keep legacy keys, ranking and remapping, with identical rows for equal inputs, allocations
-and eligible donors.
+Replay committed results and dates by chunk ID under existing identity checks. Missing results
+for a split version run fresh under existing skip rules. New chunks in that version take its
+`source_modified_at` or `published_at` (`NULL` if undated). Eligible pairs keep keys, ranking and remapping.
 
 ## 4. Rollout
 
-Add `span_kind` and build its partial index online under [D160](packaging_distribution_design.md#61-migration-compatibility).
-Pause STRUCTURE claims and let legacy E1 attempts and handoffs settle. Retire outgoing CHUNK,
-EMBED_CHUNK, Selection, Claimify and both section-entry readers before enabling split writes and fit
-checks together. Resume claims under the validated passage binding. Keep the chunker version and
-work keys. Retries hand off saved grids as-is.
+Add `span_kind` and its partial index online under [D160](packaging_distribution_design.md#61-migration-compatibility). Pause STRUCTURE claims and let legacy
+E1 attempts and handoffs settle. Retire outgoing CHUNK, EMBED_CHUNK, Selection, Claimify and both
+section-entry readers before enabling split writes and fit checks together. Keep the chunker
+version and work keys. Retries hand off saved grids as-is.
 
 ## 5. Terminal failure
 
-Each nonblank input needs a finite, nonzero vector of the configured dimension. `empty_body`
-is the successful skip. Isolate failures as needed. Local fit failure or confirmed per-input size
-rejection dead-letters with `embedding.input_too_large`. Other confirmed deterministic rejections
-use `embedding.input_rejected`. Record chunk ID, rendered hash and binding in the existing terminal
-path. Throttling, ambiguous 429s, outages and unusable responses take bounded retries. Keep committed batches.
+For the hosted binding, require finite, nonzero vectors of the configured dimension.
+`empty_body` is the successful skip. Isolate failures as needed. Local fit failures and
+confirmed per-input size rejections dead-letter as `embedding.input_too_large`, other deterministic
+rejections as `embedding.input_rejected`. Record chunk ID, rendered hash and binding.
+Ambiguous 429s, outages and unusable responses take bounded retries. Keep committed batches and
+the saved grid. Use existing ledger operations and D159 unarchive.
 
-A failed oversized grid stays saved. A keyless D55 ingest is a no-op only if its bytes
-match the highest-numbered version and that version is non-deleted. Changed bytes
-(including a revert), re-ingest after deletion of the latest version, or a new D140 version
-key create a successor. D159 forget and re-add with `allow_forgotten=true` starts a fresh lineage.
-[Version registration](../../src/rememberstack/spine/document_catalog.py#L221-L250) ·
-[Latest-version lookup](../../src/rememberstack/spine/document_catalog.py#L1039-L1045) ·
-[D159 re-ingest](archive_and_forget_design.md#36-re-ingest-guard-and-adding-a-document-back).
+A keyless D55 ingest is a no-op if its bytes match the highest-numbered version and that
+version is non-deleted. Changed bytes, re-ingest after deletion of the latest version, or a
+new D140 key create a successor. D159 forget and re-add with `allow_forgotten=true` starts
+a fresh lineage. [Version registration](../../src/rememberstack/spine/document_catalog.py#L221-L250) · [D159 re-ingest](archive_and_forget_design.md#36-re-ingest-guard-and-adding-a-document-back).
 
 ## 6. Acceptance
 
-For each reachable endpoint, require valid vectors at the binding's singleton and batch limits.
-Verify end-to-end reject-on-overflow with truncation disabled and an explicit size rejection just
-beyond the endpoint's limits, including an overlong item in a batch. Alternatively, verify at
-the model boundary that every framed token of each input in the limit probes was consumed.
-Use billing counts and end-token probes as cross-checks. Require the vectors to distinguish
-equal-length pairs differing only at the first or last text token. Both prefix-only and
-suffix-only mocks must fail qualification. Record the evidence and probe results for the release.
+Full-v45 pinned plain `nebius`. BEAM 100K/1 used a self-hosted lab stack. Both bypass the hosted
+ceiling. [Published LoCoMo profile and revisions](../../benchmarks/locomo/README.md#published-results) · [Frozen bindings](../analysis/split_oversized_chunks_analysis.md).
+Replay frozen LoCoMo and BEAM E0 artifacts, bindings, donors, UUIDs and clocks offline.
+Clone the checkpoint after additive migration. Clear candidate target E1/E2 work, `chunks`,
+`chunk_search`, `selection_results` and Claimify state (target-owned claims, occurrence links,
+decisions and completion stamps). Match exact ordered requests, including routing and framing,
+to saved replies. Require zero splits and zero live calls. Compare all `chunks` and `chunk_search`
+columns and recomputed D122 order and stamps. Record fixture digests and the replay command.
 
-Verify stock self-host and Compose send the qualified pin on passage requests. Under identical
-shared settings and inputs, match the pre-D162 request sequences for queries (through both
-`QueryEngine` and SQL embedding), claims and facts. Compare ordered texts, model, dimensions,
-routing and framing.
+Test exact bytes, deterministic cuts, provenance, gap-only grounding, header growth and
+empty Selection without a call. Both section-entry readers keep fitting-grid IDs and order
+and resolve the piece containing the first block's start. Verify the hosted routing payload
+and preserve request and error parity on self-host and custom bindings.
 
-Through both the worker loop and named-task dispatch, reject open routing, order-only routing
-and allowlists containing an unqualified endpoint before claiming CHUNK or EMBED_CHUNK. Verify
-that status, attempts, backoff and last error match the queued row before dispatch. Correct the
-binding and complete the same queued work through each entry point.
+In a dated unsplit → split → unsplit lineage, put an intact sibling in a different chunker
+generation of the middle version. Test all four reuse paths on both sides with that sibling
+still current and matching inputs, including same-date E2 matches and empty results. Race
+reuse against a split on either side. Reuse that commits first must replay by chunk ID. If the
+split commits first, require an eligible donor or fresh work. Interrupt a vector copy between
+upsert and stamp and verify rollback of both tables. Count E1 and both E2 calls and check
+pending split dates and claim IDs. Retain ordinary-edit D56 and D122 coverage.
 
-Replay frozen LoCoMo Full-v45 and BEAM E0 artifacts, settings, donor state, UUIDs and
-clocks offline. Apply the additive schema to the frozen checkpoint and clone it. Clear
-target E1/E2 work, `chunks`, `chunk_search`, `selection_results` and Claimify state
-(target-owned claims, occurrence links, decisions and completion stamps) from the candidate.
-Repack and run E1/E2 to recompute D122 producer order. Require the same ordered requests,
-including routing and framing, and replay their saved replies. Require zero splits and zero
-live calls. Compare every `chunks` and `chunk_search` column, D122 producer order and stamps.
-Record fixture digests and the replay command.
+Race first writes for one grid. Rehearse above-cap replay, CHUNK retry after insertion and EMBED_CHUNK backoff.
+Test typed failures, retries and D55/D140 no-ops and successors, including a deleted latest version.
 
-Test deterministic cuts, exact bytes and provenance, gap-only grounding, header growth and D122
-order, including empty Selection for ineligible pieces without a call. Both section-entry readers
-retain fitting-grid IDs and order and return the piece containing the first block's start when split.
+## Follow-ups (not part of D162)
 
-In a dated lineage, test unsplit → split → unsplit with matching intact chunks and same-date E2
-matches, including empty results. Give the middle version an intact representation and a split
-sibling in a different chunker generation. The pending split must use the version's own D140
-date. After that grid commits, with the intact sibling still current, exercise all four reuse
-paths with intact grids of that version as donors and receivers. Race each reuse write
-against a split on either side. Require same-chunk replay for results committed first.
-When a split commits first, require an eligible donor or fresh work. Interrupt a PostgreSQL
-vector copy after the `chunk_search` upsert and before stamping `chunks`. Verify rollback
-leaves both tables in their pre-attempt state. Commit a split on either side before retry
-and require an eligible donor or fresh work.
-Count E1 and both E2 calls and check dates and claim IDs. Keep ordinary-edit D56 and D122 coverage.
-
-Race two first CHUNK writes for one grid and verify a single set of rows and IDs. Rehearse rollout
-with an above-cap saved grid, a CHUNK retry after grid write and EMBED_CHUNK in backoff. Test typed
-rejection versus retries and D55/D140 no-ops and successors, including a deleted latest version.
+Extend lossless splitting to other embedding bindings.

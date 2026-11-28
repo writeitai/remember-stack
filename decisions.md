@@ -1945,8 +1945,7 @@ identity rules per source kind are a named spike.
 > toolchain versions), else the new version's source time. It replaces both date header
 > facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
 > freshly extracted from the chunk. Otherwise every dated version missed every key and
-> this decision's cost promise did not hold.
-> [D162](#d162-split-oversized-chunks-before-embedding) requires eligible versions on both sides of reuse.
+> this decision's cost promise did not hold. [D162](#d162-split-oversized-chunks-before-embedding) gates both versions.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -1995,8 +1994,6 @@ speaker labels, model family). D57–D58 formalize the chunking-strategy design 
 
 ## D57. The block substrate — a deterministic blockizer owns identity; sections snap to the block grid
 
-> [D162](#d162-split-oversized-chunks-before-embedding) keeps the block substrate and allows cuts within blocks.
-
 **Decision.** Between conversion and everything else sits one deterministic layer: the
 **blockizer** (ours, versioned `blockizer_version`) derives the document's **block sequence**
 (paragraph-grain structural atoms: paragraphs, headings, list items, atomic tables, code
@@ -2034,11 +2031,12 @@ to the typed **`SourceLocator` union** (page / image region / time range / video
 version-pinned, precision-honest, integer milliseconds), fed by the converter's **source map**
 (the page map generalized). Blocks from time-coded media carry time-range locators the same
 way paper blocks carry pages. `e1_chunks_design.md` §2; `plan/designs/media_design.md` §4.
+[D162](#d162-split-oversized-chunks-before-embedding) also allows hosted chunk boundaries inside blocks.
 
 ## D58. Chunks are non-overlapping runs of whole blocks; retrieval is multi-granularity by architecture
 
 > [D162](#d162-split-oversized-chunks-before-embedding) replaces semchunk and the oversized-block fallback
-> with anchored base packing and lossless provider-fit cuts. Section ownership and non-overlap still apply.
+> with anchored packing and lossless cuts for the pinned hosted binding. Section ownership and non-overlap still apply.
 
 **Decision.** A chunk is an ordered run of **whole blocks within one section**, packed by
 semchunk (the imposed constraint, kept as the packer) to a measured token budget, with
@@ -2184,7 +2182,7 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 
 ## D61. Provider ports — the deployment substrate is pluggable; the imposed constraints become the reference deployment
 
-> [D162](#d162-split-oversized-chunks-before-embedding) replaces semchunk with anchored packing and provider-fit cuts.
+> [D162](#d162-split-oversized-chunks-before-embedding) replaces semchunk with anchored block packing.
 
 > **Partially superseded by [D157](#d157-postgresql-18-is-the-reference-server) (2026-11-14).**
 > PostgreSQL 18 replaces every PostgreSQL 19 runtime/image requirement in
@@ -3548,8 +3546,7 @@ second-order channel; it is not the D80 default.
 
 ## D80. Conventional embedding input is a versioned deterministic policy — conditional location headers, typed location facts, no default location LLM (amends D63 path; refines D56 vector reuse)
 
-> [D162](#d162-split-oversized-chunks-before-embedding) ships passage size ceilings with the release
-> and requires eligible versions on both sides of carry-forward.
+> [D162](#d162-split-oversized-chunks-before-embedding) adds a hosted input ceiling and gates vector reuse on both versions.
 
 **Decision (2026-08-03).** The product path for chunk (passage) embeddings is **conventional
 embedders only** (`texts → vectors`), chosen for **interchangeability** under version-scoped
@@ -6797,9 +6794,8 @@ way to become several documents.
    (a deterministic file card for recognized formats with no reading). Structured
    families are read fully only within hard bounds (200 rows, 20,000 characters).
 3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
-   structure searchable but not claim-extracted. Convert validates block eligibility and
-   E1 packs and splits accordingly. E1 schedules Selection for every chunk in the fan-out.
-   E2 freezes an empty result for ineligible chunks without a model call.
+   structure searchable but not claim-extracted. E1 cuts at block eligibility changes.
+   Ineligible chunks freeze empty Selection results without a model call. [D133 eligibility](plan/designs/format_conversion_design.md#45-extraction-eligibility).
 4. Profiled tables are stored as normalized Parquet in a new **private store** (a
    third object-store root no mount, P3 or `hydrate` reads), and a new direct
    primitive, **`data_query`**, runs one read-only SQL statement over them in DuckDB
@@ -8760,16 +8756,11 @@ generations, retrieval and rendering use their existing code and identities.
 
 **Status:** Proposed. **Date:** 2026-11-27.
 
-Check the full D80 input against the release-qualified binding's limits. Stock
-self-host pins a qualified route for E1 passage jobs. Qualification requires
-evidence of full input consumption. Validate the binding before claiming CHUNK
-or EMBED_CHUNK work.
-Split failing candidates losslessly under the existing chunker version.
-A saved split piece excludes its entire version from both sides of E1/E2 reuse
-and D140 text-origin inheritance. Commit vector copies and authority stamps
-together under the reuse lock. Keep saved grids and work keys.
-Confirmed input rejections use typed terminal failures. Require offline request
-and full-row equality on frozen LoCoMo Full-v45 and BEAM.
+Use a 16,384-token per-input constant for hosted OpenRouter Qwen3-Embedding-8B on
+`nebius/bf16` with fallbacks off and ZDR. Split oversized D80 inputs losslessly and keep
+saved grids and work keys. Typed terminal failures apply to that binding. An immutable
+split row excludes its entire version from both sides of E1/E2 reuse and D140 date
+inheritance. Require offline request and full-row equality on frozen LoCoMo Full-v45 and BEAM.
 
 [Design](plan/designs/split_oversized_chunks_design.md) · [Analysis](plan/analysis/split_oversized_chunks_analysis.md).
 

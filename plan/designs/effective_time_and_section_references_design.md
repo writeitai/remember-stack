@@ -33,7 +33,6 @@ mechanisms.
   version is one immutable *observation* of its bytes. A keyless ingest is a no-op when
   its bytes match the highest-numbered version and that version is non-deleted. A revert
   (A→B→A) creates a new version that shares the content object.
-  [Version registration](../../src/rememberstack/spine/document_catalog.py#L221-L250).
 - **Served version** — `documents.current_version_id`: the newest version whose
   representation has completed processing and that is not deleted
   (`document_catalog.py:642-666`, `lifecycle.py` repoint after deletion). It is *not* the
@@ -198,17 +197,17 @@ Consequences a reader should check against the example:
       equal the latest version's (two publisher editions with identical text are two versions
       sharing one content object; D55's byte no-op applies only to ingests that carry no new
       key).
-    - An existing key is an idempotent retry if it names the highest-numbered version,
-      that version is non-deleted, and the bytes match. The cursor may advance.
-    - Other uses of an existing key return `409 Conflict` naming the version that owns
-      the key. The caller uses the period API to put an older edition back into force,
-      or sends a new key or none to record a new observation of the same text.
-    - For a keyless ingest, apply the [D55 no-op rule](#1-concepts) to decide whether to
-      create a version.
+    - A key that **already names the latest version**, with the same bytes and a non-deleted
+      version, is an idempotent retry of that observation (the D55 no-op; the cursor may advance).
+    - Any other use of an existing key — different bytes, or a key naming an older version
+      (A→B→A) — is rejected with `409 Conflict` naming the version the key belongs to. To put
+      an older edition back into force, the caller uses the period API on that version; to
+      record a new observation of the same text, the caller sends a new key or none.
+    - Without a key, apply the [D55 no-op rule](#1-concepts) to decide whether to create a version.
   - A new version: the declaration is inserted in the version's creating transaction and, if
     the lineage was not periodised, a `declared` event is written.
-  - An idempotent ingest records the declaration on the existing version. Periods are
-    separate from snapshot metadata and extraction inputs.
+  - An idempotent ingest records the declaration on the existing version. A period is neither
+    snapshot metadata nor extraction input, so this never rewrites anything derived text depends on.
   - A declaration identical to a known one (same version, same start, same end) is a no-op. A
     declaration whose start equals a live declaration of **another** version of the lineage is
     rejected with `409 Conflict` and nothing is written.
@@ -489,8 +488,7 @@ generations (D65 representations, D79 structure generations; sections are unique
 null. A duplicate key in one generation keeps the first occurrence and records a structure
 warning; the later headings get no key. Every read that resolves a key — section history,
 reference endpoints, first chunk ids — looks it up only in the version's current
-representation's current structure generation. Both section-entry readers select the chunk whose
-half-open span contains the first block's start. [D162 spans](split_oversized_chunks_design.md#2-split-only-failing-candidates).
+representation's current structure generation. The [D162 span rule](split_oversized_chunks_design.md#2-split-only-failing-candidates) selects its first chunk.
 
 The hash columns are nullable at the schema level. Sections created before D140 are backfilled
 by a maintenance job that recomputes, from each representation's stored `blocks.json` and the
@@ -540,13 +538,13 @@ reuse_identity_hash)`.
 
 1. compute `reuse_identity_hash`;
 2. let `d` be the new version's own date, `source_modified_at or published_at` (the value E2
-   uses today). A chunk of `L` is an **eligible match** if its version is non-deleted,
-   both versions pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate),
-   and the chunk has the same `reuse_identity_hash` and a known `text_origin_at` that is
-   **not later than `d`**. If `d` is unknown there is no eligible match;
+   uses today). A chunk of `L` is an **eligible match** when it has the same
+   `reuse_identity_hash`, belongs to a version that is non-deleted at this moment, and has a
+   known `text_origin_at` that is **not later than `d`**. Both versions must also pass the
+   [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate). If `d` is unknown there is no eligible match;
 3. with eligible matches, the new chunk's `text_origin_at` is the smallest of their
-   `text_origin_at` (ties broken by `version_no`, then `ordinal`). Otherwise
-   `text_origin_at = d` (possibly `NULL`). E2 applies its own reuse lookups.
+   `text_origin_at` (ties broken by `version_no`, then `ordinal`). Otherwise `text_origin_at = d`
+   (possibly `NULL`, today's "date unknown"). E2 applies its own reuse lookups.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the
@@ -559,8 +557,7 @@ Because the parser, blockizer, structurer and extractor versions are part of the
 toolchain change is a reuse boundary exactly as D56/D65 define: a chunk under a new toolchain
 matches nothing and takes its own version's date.
 
-**Why this is correct.** Inheriting an origin can preserve a chunk's Selection key.
-Relative expressions in that chunk resolve against a date no
+**Why this is correct.** An inherited date can preserve a Selection key and keep relative expressions anchored to a date no
 later than the version's own — the date of the earliest known version, among those not dated
 after it, that carried the text. That is a conservative estimate of when the words were
 written, not proof of it. The "not later than" condition makes back-filling safe: when a 2026

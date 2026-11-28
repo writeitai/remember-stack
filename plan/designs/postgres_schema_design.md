@@ -1223,10 +1223,10 @@ COMMENT ON TABLE document_entity_bindings IS
 -- source_version_ref is the sole mutable cursor: it may advance on identical-byte revision
 -- churn so polling converges; it never changes snapshot time or derived meaning. One row per
 -- observation the connector chose to ingest (debounced — rapid edits coalesce). An unchanged
--- revision/etag can skip ingest. Keyless ingest creates no row when the bytes match the
--- highest-numbered version and that version is non-deleted. A version_key new to the lineage
--- always creates a version (D140). A revert (A→B→A) creates a new row sharing the content
--- object. Carries everything that is true OF A SNAPSHOT: artifact URIs,
+-- revision/etag can skip ingest. Keyless no-op requires matching bytes on the highest-numbered
+-- version and a null deleted_at. A new version_key always creates a version (D140).
+-- Bytes identical to an OLDER version (A→B→A) create a new row sharing the content object.
+-- Carries everything that is true OF A SNAPSHOT: artifact URIs,
 -- conversion/structure provenance, processing status.
 -- The version's source date is source_modified_at, else published_at. It feeds the E2 header and
 -- claims' asserted_at through each chunk's text_origin_at (D140) — equal to it for text new in
@@ -1641,8 +1641,7 @@ stored as derived metadata, not body text).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
--- chunks — section-bounded E1 units (D58, D162). Body = Markdown slice [char_start,char_end).
--- P1 is keyed by chunk_id. Large
+-- chunks — section-bounded E1 units (D58, D162). Slice [char_start,char_end) from Markdown. P1 is keyed by chunk_id. Large
 -- (tens of millions) ⇒ monthly partition by created_at; logical FKs (D23). Pruning: §12.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE chunks (

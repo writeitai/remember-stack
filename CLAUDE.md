@@ -73,26 +73,22 @@ silently. When writing any design or decision:
 
 ## Rule 4 — A new version costs only its edit (D56)
 
-**The requirement (owner, binding).** For version pairs eligible under D162, paid work —
+**The requirement (owner, binding).** For [eligible version pairs](plan/designs/split_oversized_chunks_design.md#3-version-wide-reuse-gate), paid work —
 embedding and extraction model calls — happens only where the document changed. Unchanged
 sections must reuse their embeddings and extracted claims. Example: rewording one paragraph
 of § 12 of a 200-section contract must not re-embed or re-extract § 1–11 or § 13–200.
 Extraction is the dominant ingestion cost, and this promise has been broken before by
 changes that looked unrelated, so check it on every change, in code, designs and reviews.
 
-A version with a split piece in any representation or chunker generation is ineligible
-to receive or donate vectors, Selection, Claimify or D140 text-origin dates.
-[D162 reuse gate](plan/designs/split_oversized_chunks_design.md#3-version-wide-reuse-gate).
-
 **How the engine implements it today.** E1 deterministically re-packs every new
 representation into new chunk rows (fresh `chunk_id`s — that part is cheap); what carries
 over are content identities and the paid products keyed on them
 ([e1_chunks_design §4 and §7](plan/designs/e1_chunks_design.md)):
 
-- **Packing (D58).** E1 packs whole-block runs per deepest-owner section. Length edits can
-  shift boundaries to the next anchor accepted by both versions or the end of the owner run.
-  An anchor satisfies `uint64(block_hash) mod anchor_modulus == 0` after at least
-  `anchor_min_gap_tokens` have accumulated since the last accepted anchor.
+- **Packing (D58).** Chunks are whole-block runs packed per deepest-owner section, so an
+  edit never moves chunk boundaries in another section. A length change can shift boundaries
+  to the next anchor accepted by both versions or the end of the owner run. An anchor satisfies
+  `uint64(block_hash) mod anchor_modulus == 0` after at least `anchor_min_gap_tokens` since the last anchor.
 - **Embeddings (D80).** A vector carries forward from an earlier version or an earlier
   processing generation of the same version of one
   lineage when `chunk_content_hash`, `embedding_text_hash` (the rendered D80 input:
@@ -163,8 +159,8 @@ the owner's decision — do not describe them as solved):
   the new version's; an undated version inherits nothing, and nothing inherits from one.
 - **Prove it with a test.** A change that can affect ingestion keeps or extends
   `src/tests/workers/test_reuse_lifecycle.py` and `test_d140_text_origin_pg.py`, or adds a
-  test that ingests two eligible versions of one lineage with distinct dates, stable names,
-  and untouched sections before and after an edited multi-chunk section. It
+  test that ingests two eligible versions of one lineage, with distinct source dates and stable names,
+  of a document with untouched sections before and after an edited multi-chunk section. It
   counts provider calls per stage (Selection, Claimify, embedding). Chunks next to the
   edit legitimately get new Selection and origin identities; every untouched chunk outside
   the edited chunk's same-section neighbours must keep its content, Selection and

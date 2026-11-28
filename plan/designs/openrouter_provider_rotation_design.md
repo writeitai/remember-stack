@@ -229,10 +229,6 @@ call that carries customer content can be held to both.
   Unlike chat, the allowlist alone allows fallback within it,
   because an embedding batch pinned to one failing host would dead-letter the
   stage; chat gets the same in-set failover from its local rotation.
-  These shared settings route query, claim and fact embedding. E1 passage jobs use their own
-  [D162 binding](split_oversized_chunks_design.md#1-check-the-complete-embedding-input), subject
-  to deployment-wide host and retention restrictions. Every reachable passage endpoint must
-  qualify for the release's common limits.
 - The image-description converter posts pixels through its own client and
   settings, so it has its own flag, `ImageDescriptionSettings.zdr` (env
   `REMEMBERSTACK_IMAGE_DESCRIPTION_ZDR`). When true, every description attempt,

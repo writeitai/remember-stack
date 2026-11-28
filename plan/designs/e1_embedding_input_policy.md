@@ -26,9 +26,8 @@ frozen product constants, unless frozen inside a named
 1. **Conventional embedders only** as the product path: the embedder port accepts
    ordered `texts → vectors` (plus generation metadata). Embedders must stay
    **interchangeable** under a version-scoped re-embed migration (model, dimension,
-   distance metric, vector-affecting provider settings, and query/document preprocessing
-   are part of the **embedder generation**). [D162 passage ceilings](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
-   ship as release constants. A ceiling-only change preserves vector attestations.
+   distance metric, provider caps, and any query/document preprocessing are part of
+   the **embedder generation**). The [D162 hosted fit check](split_oversized_chunks_design.md#1-check-the-complete-embedding-input) is a local guard outside the generation.
 2. **Contextual embedding models** (document-native / late-chunking APIs that make
    a vector depend on undeclared surrounding context) are a **documented product
    non-goal**. Prior design text that described them as a fully designed alternate
@@ -246,7 +245,7 @@ unordered rule.
 
 | Name | Grain | Contents |
 |---|---|---|
-| **embedder_generation** | deployment / model config | model id, dimension, metric, vector-affecting provider params |
+| **embedder_generation** | deployment / model config | model id, dimension, metric, provider params |
 | **policy_generation** | deployment policy artifact | `embedding_input_policy_version` only |
 | **chunk embedding identity** | per chunk | `(chunk_id, policy_generation, embedding_text_hash, embedder_generation)` |
 
@@ -273,16 +272,13 @@ produced from different text.
 | `document_stats` / frozen policy constants change | New policy version (same row as policy change) |
 
 Content-hash-only vector carry-forward is **insufficient** when embedding text
-includes location. Vector and extraction carry-forward require both versions to pass
-the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
+includes location. Carry-forward requires both versions to pass the [D162 reuse gate](split_oversized_chunks_design.md#3-version-wide-reuse-gate).
 
 **Maintenance cutover:** an incompatible model, dimension, or policy change
 makes semantic search unavailable while disposable vector state is rebuilt and
 verified. Temporary migration state is allowed; two permanent searchable
 generations are not. The configured pair is published only after coverage,
 dimension, policy, and hash checks pass.
-A rebuild uses saved spans and requires a [release-qualified binding](split_oversized_chunks_design.md#1-check-the-complete-embedding-input)
-that fits their rendered inputs.
 
 ---
 
@@ -346,7 +342,7 @@ pack chunks
   batch recovery rules: **orchestration design § embed_chunk (D80)** below —
   single home for call keys and crash recovery.
 - **Document readiness:** all in-scope chunks have prepare stamps and successful
-  embed matching the configured current state, or an `empty_body` skip. [D162 failures](split_oversized_chunks_design.md#5-terminal-failure).
+  embed matching the configured current state (or typed skips).
 
 This replaces document-level “generate all location strings then one giant embed
 then write” as the binding execution shape.
@@ -401,7 +397,7 @@ A deployment may swap conventional embedders when:
 | Decision / design | Effect |
 |---|---|
 | D63 | Default remains conventional hosted/self-host embedders; **product path drops contextual alternate**; input policy replaces “per-chunk LLM prefix stage” |
-| D56 / A3, D162 | Carry-forward requires eligible versions on both sides. **Vector** reuse requires embedding_text_hash + policy + embedder generation |
+| D56 / A3 | Extraction reuse unchanged (no LLM in identity keys). **Vector** reuse requires embedding_text_hash + policy + embedder generation |
 | D58 | Claims = needles; chunks = passages; normalized joins apply role filters |
 | D79 | Summaries orientation-only; **not** default embedding text; **not** grounding |
 | D32 / E2 | Typed groundable location elements; free-form header out of union |

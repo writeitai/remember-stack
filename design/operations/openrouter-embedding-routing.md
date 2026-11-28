@@ -10,17 +10,13 @@
 **Retrieved:** OpenRouter model endpoints API,
 `GET /api/v1/models/qwen/qwen3-embedding-8b/endpoints`, 2026-08-06.
 
-Under [D162](../../plan/designs/split_oversized_chunks_design.md#1-check-the-complete-embedding-input),
-E1 passage jobs have a release-qualified pin or closed allowlist that honors deployment-wide
-host and retention restrictions. The shared settings below govern query, claim and fact embedding.
-
 ---
 
 ## Goal
 
 Bound **price** by preferring the cheapest hosts of the **same** embedding
-model. Shared-provider failover on 429/5xx helps queries, claim embedding and
-fact embedding survive a single-host outage.
+model, while allowing OpenRouter to **fail over** on 429/5xx so a single host
+outage does not dead-letter `embed_chunk` / `embed_claim` / fact embedding.
 
 Unrestricted “no `provider` object” routing is rejected for production smokes:
 marketplace defaults can shift traffic toward higher-priced hosts without
@@ -60,7 +56,7 @@ REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER=
 REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=
 ```
 
-Each request using the shared embedding route then sends
+Each embedding request then sends
 `{"only": ["nebius", "deepinfra"], "allow_fallbacks": true, "data_collection": "deny", "zdr": true}`:
 OpenRouter picks between the two hosts and fails over only between them, and
 `zdr`/`data_collection` filter every candidate, fallbacks included. SiliconFlow
@@ -134,7 +130,7 @@ Use `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius` (only) only for:
 - Incident isolation when a specific host must be excluded via account
   settings and a single remaining host is intentional.
 
-The shared provider normally uses a shortlist for multi-hour ingest drains.
+Hard pin is **not** the default for multi-hour ingest drains.
 
 ---
 
