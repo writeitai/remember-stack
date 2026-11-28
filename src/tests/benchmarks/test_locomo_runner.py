@@ -84,6 +84,7 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
+from rememberstack.spine.query_space import load_manifest
 from tests.benchmarks.corpus_support import publications
 from tests.benchmarks.corpus_support import write_corpus
 
@@ -1608,7 +1609,7 @@ def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(
 @pytest.mark.parametrize(
     ("drift_kind", "message"),
     (
-        ("manifest", "query surface"),
+        ("d163_manifest", "query surface"),
         ("operations", "canonical four-operation surface"),
         ("layers", "processing layers are not all enabled"),
     ),
@@ -1626,10 +1627,15 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
     def drifted_surface(request: httpx.Request) -> httpx.Response:
         if (
             not clean_surface
-            and drift_kind == "manifest"
+            and drift_kind == "d163_manifest"
             and request.url.path == "/query/space"
         ):
-            return httpx.Response(200, json={"surface_manifest_hash": "0" * 64})
+            return httpx.Response(
+                200,
+                json={
+                    "surface_manifest_hash": load_manifest()["surface_manifest_hash"]
+                },
+            )
         if (
             not clean_surface
             and drift_kind == "operations"

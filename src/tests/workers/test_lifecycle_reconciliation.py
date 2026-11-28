@@ -2252,8 +2252,9 @@ def test_a_version_removed_while_archived_leaves_the_predecessor_to_unarchive(
     )
 
 
+@pytest.mark.parametrize("review_status", ["pending", "deferred"])
 def test_a_moot_review_no_longer_marks_a_shared_fact_withdrawn(
-    rig: _LifecycleRig,
+    rig: _LifecycleRig, review_status: str
 ) -> None:
     """A support review on an archived document's claim stops marking a fact
     another document still supports as withdrawn in the SQL views."""
@@ -2265,7 +2266,9 @@ def test_a_moot_review_no_longer_marks_a_shared_fact_withdrawn(
         "SELECT claim_id FROM claims WHERE doc_id = :d", d=gone.doc_id
     )
     assert isinstance(fact_id, UUID) and isinstance(claim_id, UUID)
-    rig.review.flag_support_withdrawn(
+    from rememberstack.spine.retrieval_eligibility import fact_eligibility_ctes
+
+    review_id = rig.review.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
         fact_kind="relation",
         fact_id=fact_id,
@@ -2276,14 +2279,35 @@ def test_a_moot_review_no_longer_marks_a_shared_fact_withdrawn(
         "SELECT support_state_current FROM v_memory_fact_source_qualified"
         " WHERE fact_id = :f"
     )
-    assert rig.scalar(state, f=fact_id) == "withdrawn"
+    native_state = (
+        "WITH "
+        + fact_eligibility_ctes(
+            candidates_sql="SELECT 'relation' AS fact_kind, CAST(:f AS uuid) AS fact_id",
+            presentation="support",
+        )
+        + " SELECT support_state_current FROM eligible_facts"
+    )
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE review_queue SET status=:status WHERE review_id=:id"),
+            {"status": review_status, "id": review_id},
+        )
+
+    def assert_states(expected: str) -> None:
+        assert rig.scalar(state, f=fact_id) == expected
+        assert (
+            rig.scalar(native_state, f=fact_id, deployment_id=_DEPLOYMENT_ID)
+            == expected
+        )
+
+    assert_states("withdrawn")
 
     _archive(rig, gone.doc_id)
 
     assert rig.relation()["invalidated_at"] is None
-    assert rig.scalar(state, f=fact_id) == "current"
+    assert_states("current")
     _unarchive(rig, gone.doc_id)
-    assert rig.scalar(state, f=fact_id) == "withdrawn"
+    assert_states("withdrawn")
 
 
 def test_an_earlier_cycle_leaves_a_pending_source_archive_to_its_own_cascade(

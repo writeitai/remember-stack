@@ -660,6 +660,77 @@ def test_capture_helpers_refuse_any_other_schema_head(live_tree: LiveTree) -> No
             )
 
 
+def test_d163_collector_handoff(
+    live_tree: LiveTree, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The old helpers refuse admission after the first real DDL commit."""
+    from alembic import command
+
+    from rememberstack.spine import storage_capture_catalog
+    from rememberstack.spine import storage_capture_guard
+    from tests.spine.test_d163_eligibility_pg import migration_config
+
+    state = live_tree
+    engine = state.roles.engine
+    config = migration_config(engine)
+    dsn = engine.url.set(drivername="postgresql").render_as_string(hide_password=False)
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        owner = admin.execute("""
+            SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid=to_regprocedure(
+              'rememberstack_capture_internal.guard_relation_allocation(bigint)')
+        """).fetchone()
+        assert owner is not None
+
+        def install() -> None:
+            install_native_relation_guard(
+                connection=admin,
+                definer_role=owner[0],
+                collector_role=state.roles.collector,
+            )
+            install_native_capture_catalog(
+                connection=admin,
+                definer_role=owner[0],
+                collector_role=state.roles.collector,
+            )
+
+        command.downgrade(config=config, revision="p9_55_0076")
+        try:
+            # D163 changes only the schema-head literals in these shipped helpers.
+            with monkeypatch.context() as old:
+                for module in (storage_capture_guard, storage_capture_catalog):
+                    old.setattr(
+                        module,
+                        "_BODY",
+                        module._BODY.replace("p9_58_0079", "p9_55_0076"),
+                    )
+                install()
+            command.upgrade(config=config, revision="p9_56_0077")
+            with state.roles.connect() as collector:
+                with pytest.raises(
+                    psycopg.errors.ObjectNotInPrerequisiteState,
+                    match="native_guard_schema",
+                ):
+                    collector.execute(
+                        "SELECT rememberstack_capture_internal.guard_relation_allocation("
+                        "floor(extract(epoch FROM clock_timestamp())*1000000)::bigint+9000000)"
+                    )
+                collector.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                with pytest.raises(
+                    psycopg.errors.ObjectNotInPrerequisiteState,
+                    match="native_catalog_scope",
+                ):
+                    collector.execute(
+                        "SELECT rememberstack_capture_internal.read_capture_catalog('bind','','',1)"
+                    )
+                collector.execute("ROLLBACK")
+        finally:
+            command.upgrade(config=config, revision="head")
+            install()
+        admin.execute("VACUUM (ANALYZE) pg_class, pg_namespace, pg_proc, pg_extension")
+    catalog, request, _ = state.capture()
+    assert list(catalog.capture_once(request=request).iter_page_bytes())
+
+
 def test_corpus_catalog_keeps_original_view_across_pages(
     live_tree: LiveTree, monkeypatch: pytest.MonkeyPatch
 ) -> None:

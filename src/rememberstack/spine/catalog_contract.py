@@ -361,6 +361,7 @@ def lane_is_valid(*, stage: str, lane: str | None) -> bool:
 EXPECTED_VIEWS: Final = (
     "v_cost_receipts",
     "v_graph_survivor",
+    "v_memory_claim_history_by_id",
     "v_memory_entity_survivor",
     "v_memory_evidence_lineage_live",
     "v_memory_fact_claim_live",
@@ -412,6 +413,7 @@ DECISION_OBJECTS: Final = {
     "D68": ("deployments", "ix_entities_name_trgm"),
     "D69": ("relations", "v_memory_entity_survivor"),
     "D159": ("forgets", "ix_forgets_content"),
+    "D163": ("v_memory_claim_history_by_id", "v_memory_entity_survivor"),
     "D79": ("document_structure_generations", "document_skeleton_checks"),
     "D91": (
         "surface_cost_ledger",

@@ -48,6 +48,7 @@ _ABILITY_QUERIES: Final[dict[str, tuple[str, ...]]] = {
     "information_extraction": ("first sprint ends March", "sprint end date timeline"),
 }
 
+_OPEN_QUERY_MAX_ROWS: Final = 40
 _OPEN_QUERY_SQL: Final[tuple[tuple[str, str], ...]] = (
     (
         "facts_predicates",
@@ -519,7 +520,9 @@ def retrieve_full_plane(
 
     for label, sql in _OPEN_QUERY_SQL:
         try:
-            result = client.query_sql(sql=sql, max_rows=40, timeout_s=12.0)
+            result = client.query_sql(
+                sql=sql, max_rows=_OPEN_QUERY_MAX_ROWS, timeout_s=12.0
+            )
             _ingest_sql_result(bundle, label=label, result=result)
         except AnswerAgentError as error:
             bundle.errors.append(str(error))

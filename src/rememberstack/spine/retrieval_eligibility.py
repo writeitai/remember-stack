@@ -1,4 +1,4 @@
-"""Statement-local D153 eligibility for bounded native retrieval.
+"""Statement-local eligibility for bounded native retrieval.
 
 Only engine-owned SQL fragments enter these builders. Public source views own
 source coordinates; the fact helper owns source/presentation truth. Membership
@@ -6,6 +6,11 @@ is shared inside a statement, never cached across requests or snapshots.
 """
 
 from typing import Literal
+
+from rememberstack.core.text_scope import fact_evidence_relation
+from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
+    FACT_SOURCE_ARCHIVE_DDL,
+)
 
 
 def visible_entities_cte(
@@ -169,62 +174,188 @@ def claim_entity_filter() -> str:
     """
 
 
+def _fact_has_visible_source(*, kind: Literal["relation", "observation"]) -> str:
+    """Bind a fact's raw links before either branch of historical claim membership."""
+    table, identifier = fact_evidence_relation(fact_kind=kind)
+    # Keep deployment and document as filters on the chunk ID probe. With
+    # sparse statistics the optimizer can otherwise favor a document index.
+    return f"""
+      EXISTS (
+        SELECT 1
+        FROM LATERAL (
+          SELECT raw.deployment_id, raw.claim_id, raw.doc_id
+          FROM {table} AS raw
+          WHERE raw.deployment_id = stored.deployment_id AND raw.{identifier} = stored.{identifier}
+          OFFSET 0
+        ) AS evidence
+        WHERE EXISTS (
+          SELECT 1 FROM public.v_memory_claim_history_by_id AS history
+          WHERE history.deployment_id = evidence.deployment_id
+            AND history.claim_id = evidence.claim_id AND history.doc_id = evidence.doc_id
+          OFFSET 0
+        ) OR EXISTS (
+          SELECT 1
+          FROM LATERAL (
+            SELECT c.deployment_id, c.claim_id, c.doc_id
+            FROM public.claims AS c
+            JOIN memory_v1.documents_live AS doc
+              ON doc.deployment_id = c.deployment_id AND doc.doc_id = c.doc_id
+            WHERE c.deployment_id = evidence.deployment_id
+              AND c.claim_id = evidence.claim_id AND c.doc_id = evidence.doc_id
+              AND c.is_current_testimony
+            OFFSET 0
+          ) AS claim
+          WHERE EXISTS (
+            SELECT 1 FROM public.document_version_scope AS mode_row
+            WHERE mode_row.deployment_id = claim.deployment_id
+              AND mode_row.doc_id = claim.doc_id AND mode_row.periodised
+            OFFSET 0
+          ) AND NOT EXISTS (
+            SELECT 1 FROM public.v_memory_claim_history_by_id AS origin
+            WHERE origin.deployment_id = claim.deployment_id
+              AND origin.claim_id = claim.claim_id AND origin.doc_id = claim.doc_id
+            OFFSET 0
+          ) AND EXISTS (
+            SELECT 1
+            FROM LATERAL (
+              SELECT cc.deployment_id, cc.chunk_id FROM public.chunk_claims AS cc
+              WHERE cc.deployment_id = claim.deployment_id AND cc.claim_id = claim.claim_id
+              OFFSET 0
+            ) AS occurrence
+            CROSS JOIN LATERAL (
+              SELECT ch.deployment_id, ch.version_id, ch.representation_id
+              FROM public.chunks AS ch
+              WHERE ch.chunk_id = occurrence.chunk_id
+                AND ch.deployment_id IS NOT DISTINCT FROM occurrence.deployment_id
+                AND ch.doc_id IS NOT DISTINCT FROM claim.doc_id
+              OFFSET 0
+            ) AS chunk
+            CROSS JOIN LATERAL (
+              SELECT 1 FROM public.document_versions AS version
+              WHERE version.deployment_id = chunk.deployment_id
+                AND version.version_id = chunk.version_id
+                AND version.current_representation_id = chunk.representation_id
+                AND version.deleted_at IS NULL
+              OFFSET 0
+            ) AS version
+            CROSS JOIN LATERAL (
+              SELECT 1 FROM public.document_representations AS reading
+              WHERE reading.deployment_id = chunk.deployment_id
+                AND reading.representation_id = chunk.representation_id
+                AND reading.status = 'ready'
+              OFFSET 0
+            ) AS ready
+          )
+        )
+      )
+    """
+
+
+def _fact_survivor_lookup(*, endpoint: Literal["subject", "object"]) -> str:
+    return f"""
+    CROSS JOIN LATERAL (
+        SELECT survivor.survivor_entity_id FROM public.v_memory_entity_survivor AS survivor
+        WHERE survivor.deployment_id = stored.deployment_id
+          AND survivor.entity_id = stored.{endpoint}_entity_id
+        OFFSET 0
+    ) AS {endpoint}
+    """
+
+
+def _fact_source_arm(*, kind: Literal["relation", "observation"]) -> str:
+    table = "relations" if kind == "relation" else "observations"
+    identifier = f"{kind}_id"
+    predicate = "stored.predicate" if kind == "relation" else "NULL::text"
+    object_id = "object.survivor_entity_id" if kind == "relation" else "NULL::uuid"
+    object_lookup = (
+        _fact_survivor_lookup(endpoint="object") if kind == "relation" else ""
+    )
+    return f"""
+    SELECT candidate.deployment_id, '{kind}'::text AS fact_kind, candidate.fact_id,
+           candidate.subject_entity_id, candidate.predicate, candidate.object_entity_id,
+           candidate.valid_from, candidate.valid_until, candidate.ingested_at,
+           candidate.invalidated_at, candidate.contradiction_group, candidate.confidence,
+           candidate.valid_precision
+    FROM requested_facts AS requested
+    CROSS JOIN LATERAL (
+        SELECT stored.deployment_id, stored.{identifier} AS fact_id,
+               subject.survivor_entity_id AS subject_entity_id, {predicate} AS predicate,
+               {object_id} AS object_entity_id,
+               stored.valid_from, stored.valid_until, stored.ingested_at,
+               stored.invalidated_at, stored.contradiction_group, stored.confidence,
+               stored.valid_precision::text AS valid_precision
+        FROM public.{table} AS stored
+        {_fact_survivor_lookup(endpoint="subject")}
+        {object_lookup}
+        WHERE requested.fact_kind = '{kind}' AND stored.deployment_id = :deployment_id
+          AND stored.{identifier} = requested.fact_id
+          AND {_fact_has_visible_source(kind=kind)}
+        OFFSET 0
+    ) AS candidate
+    """
+
+
+# Use the deployed D159 review expression and D54 count join verbatim. They
+# refer only to the qualified fact key and can be projected after eligibility.
+_FACT_SUPPORT_STATE = (
+    FACT_SOURCE_ARCHIVE_DDL.split("counts.contradicts,\n", 1)[1]
+    .split(",\n  fact.valid_precision\n", 1)[0]
+    .strip()
+)
+_FACT_LINEAGE_COUNTS = (
+    "LEFT JOIN LATERAL"
+    + FACT_SOURCE_ARCHIVE_DDL.rsplit("\nLEFT JOIN LATERAL", 1)[1].split(";", 1)[0]
+)
+
+
+def _fact_presentation(*, presentation: Literal["keys", "support", "full"]) -> str:
+    qualified = """
+    FROM fact_sources AS fact JOIN fact_eligible_keys AS eligible
+      ON eligible.fact_kind = fact.fact_kind AND eligible.fact_id = fact.fact_id
+    """
+    if presentation == "keys":
+        return "SELECT fact.* " + qualified
+    if presentation == "support":
+        return (
+            f"SELECT fact.*, {_FACT_SUPPORT_STATE} AS support_state_current {qualified}"
+        )
+    return f"""
+    SELECT fact.deployment_id, fact.fact_kind, fact.fact_id,
+           fact.subject_entity_id, fact.predicate, fact.object_entity_id,
+           labels.statement, labels.fact_label, fact.valid_from, fact.valid_until,
+           fact.ingested_at, fact.invalidated_at, fact.contradiction_group, fact.confidence,
+           counts.supports AS evidence_count_current, counts.contradicts AS contradict_count_current,
+           {_FACT_SUPPORT_STATE} AS support_state_current, fact.valid_precision
+    {qualified}
+    CROSS JOIN LATERAL (
+        SELECT NULL::text AS statement, r.fact_label FROM public.relations AS r
+        WHERE fact.fact_kind = 'relation' AND r.deployment_id = fact.deployment_id
+          AND r.relation_id = fact.fact_id
+        UNION ALL
+        SELECT o.statement, o.obs_label FROM public.observations AS o
+        WHERE fact.fact_kind = 'observation' AND o.deployment_id = fact.deployment_id
+          AND o.observation_id = fact.fact_id
+        OFFSET 0
+    ) AS labels
+    {_FACT_LINEAGE_COUNTS}
+    """
+
+
 def fact_eligibility_ctes(
     *, candidates_sql: str, presentation: Literal["keys", "support", "full"] = "full"
 ) -> str:
-    """Share endpoint qualification for internal candidate (fact_kind, fact_id) SQL.
+    """Qualify each fact key once by its source and resolved, visible endpoints.
 
-    The endpoint conjunction is identical to the immutable D153 fact wrapper.
-    Source/history/count logic remains exclusively in the private helper. Only
-    identity/endpoint columns materialize before eligibility; presentation is
-    hydrated through per-ID lookups afterwards, with unrequested counts prunable.
+    Match the public fact wrapper's source and endpoint rules with bounded
+    probes. Only key, endpoint and filter fields materialize before hydration.
     """
-    fields = (
-        "deployment_id",
-        "fact_kind",
-        "fact_id",
-        "subject_entity_id",
-        "object_entity_id",
-        "predicate",
-        "valid_from",
-        "valid_until",
-        "ingested_at",
-        "invalidated_at",
-        "contradiction_group",
-        "confidence",
-        "valid_precision",
-    )
-    if presentation == "support":
-        fields += ("support_state_current",)
-    columns = ", ".join("fact." + field for field in fields)
-    source_columns = ", ".join("source." + field for field in fields)
-    hydration = (
-        "SELECT source.* FROM fact_sources source JOIN fact_eligible_keys eligible"
-        " ON eligible.fact_kind=source.fact_kind AND eligible.fact_id=source.fact_id"
-        if presentation != "full"
-        else """
-        SELECT presentation.* FROM fact_eligible_keys eligible
-        CROSS JOIN LATERAL (
-            SELECT fact.* FROM public.v_memory_fact_source_qualified fact
-            WHERE fact.deployment_id = :deployment_id
-              AND fact.fact_kind = eligible.fact_kind
-              AND fact.fact_id = eligible.fact_id
-            OFFSET 0
-        ) presentation
-        """
-    )
     return f"""
-    fact_sources AS MATERIALIZED (
-        SELECT {source_columns}
-        FROM (SELECT DISTINCT fact_kind,fact_id FROM ({candidates_sql}) input) requested
-        CROSS JOIN LATERAL (
-            SELECT {columns}
-            FROM public.v_memory_fact_source_qualified AS fact
-            WHERE fact.deployment_id = :deployment_id
-              AND fact.fact_kind = requested.fact_kind
-              AND fact.fact_id = requested.fact_id
-            OFFSET 0
-        ) source
+    requested_facts AS MATERIALIZED (
+        SELECT DISTINCT fact_kind, fact_id FROM ({candidates_sql}) AS input
+    ), fact_sources AS MATERIALIZED (
+        {_fact_source_arm(kind="relation")}
+        UNION ALL
+        {_fact_source_arm(kind="observation")}
     ), fact_endpoint_ids AS MATERIALIZED (
         SELECT subject_entity_id AS entity_id FROM fact_sources
         UNION SELECT object_entity_id FROM fact_sources WHERE object_entity_id IS NOT NULL
@@ -243,5 +374,5 @@ def fact_eligibility_ctes(
             SELECT 1 FROM fact_visible_endpoints object
             WHERE object.entity_id = source.object_entity_id
         )
-    ), eligible_facts AS NOT MATERIALIZED ({hydration})
+    ), eligible_facts AS NOT MATERIALIZED ({_fact_presentation(presentation=presentation)})
     """

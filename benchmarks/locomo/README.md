@@ -219,9 +219,10 @@ uv run --extra benchmark python -m benchmarks.locomo prepare \
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v47` is the one
-current-system protocol, and every later stage reads that immutable choice from
-`run.json`. Do not run remote stages until reviewing
+eight-question smoke plan. `--protocol` is prepare-only. Every later stage
+reads the immutable `full-v47` choice from `run.json`. Full-v47 requires the
+pre-D163 query-surface manifest. A deployment serving the D163 manifest fails
+the surface check before benchmark execution. Review
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
 
 The run contains its own `image-inputs/` copy. Its index and every original and

@@ -119,6 +119,15 @@ from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
 from rememberstack.spine.migrations.versions.p9_55_0076_archive import (
     FACT_SOURCE_ARCHIVE_DDL,
 )
+from rememberstack.spine.migrations.versions.p9_56_0077_keyed_memory_survivor import (
+    MEMORY_SURVIVOR_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_57_0078_graph_survivor_projection import (
+    GRAPH_SURVIVOR_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_58_0079_claim_history_by_id import (
+    CLAIM_HISTORY_BY_ID_DDL,
+)
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
 from rememberstack.spine.query_space.catalog import QUERY_SPACE_SCHEMA
@@ -132,6 +141,7 @@ AUTHORIZATION_HELPER_VIEWS: Final = (
     *COORDINATE_AUTHORIZATION_HELPER_VIEWS,
     *FACT_AUTHORITY_HELPER_VIEWS,
     *D153_HELPER_VIEWS,
+    "v_memory_claim_history_by_id",
 )
 """Every private helper whose semantics affect a public query-space relation."""
 
@@ -237,6 +247,9 @@ def _authored_parts() -> tuple[
         DOCUMENTS_INVENTORY_DDL,
         CROSSREFS_ARCHIVE_DDL,
         FACT_SOURCE_ARCHIVE_DDL,
+        MEMORY_SURVIVOR_DDL,
+        GRAPH_SURVIVOR_DDL,
+        CLAIM_HISTORY_BY_ID_DDL,
     ):
         statements.extend(_statements(sql=block))
         for view, column, comment in view_column_comments(sql=block):

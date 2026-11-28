@@ -281,7 +281,7 @@ def test_scoped_fact_nomination_uses_indexed_reverse_survivor_expansion() -> Non
     parameters = connection.execute.call_args_list[-1].args[1]
     assert "redirect.merged_into = scoped.entity_id" in ranked_sql
     assert "AND merged_into IS NULL" in ranked_sql
-    assert "public.v_memory_fact_source_qualified" in ranked_sql
+    assert "public.v_memory_claim_history_by_id" in ranked_sql
     assert "memory_v1.entities_current" in ranked_sql
     assert "AS coverage" in ranked_sql
     executed = [str(call.args[0]) for call in connection.execute.call_args_list]

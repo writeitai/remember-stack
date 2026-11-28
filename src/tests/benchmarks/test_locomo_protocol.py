@@ -327,9 +327,11 @@ def test_protocol_pins_the_shipping_normalizer_generation() -> None:
     )
 
 
-def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
+def test_full_v47_keeps_its_manifest_pin_and_complete_read_plane() -> None:
+    assert EXPECTED_SURFACE_MANIFEST_HASH == (
+        "8e526b54aca2bbac954a0b008156ff1ccb7bf498a9e1b384bd450ccd81b6301d"
+    )
     manifest = load_manifest()
-    assert EXPECTED_SURFACE_MANIFEST_HASH == manifest["surface_manifest_hash"]
     assured = assured_tool_catalog()
     assert tuple(tool.name for tool in assured) == (
         "claims_and_sources_context",

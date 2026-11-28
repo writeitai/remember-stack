@@ -10,7 +10,7 @@ record why the existing document index must change. This amends D142/D149's
 physical execution and D23's unsupported UUID-derived pruning assumption;
 eligibility, ranking, finite budgets and D56 reuse semantics remain intact.
 
-> **Proposed D163 amendment (2026-11-27).** §§4.3, 6.1 and 9.1 specify
+> **D163 amendment (2026-11-27).** §§4.3, 6.1 and 9.1 specify
 > evidence-first fact eligibility and stored-endpoint survivor lookups.
 > [D163](../../decisions.md#d163-drive-fact-eligibility-from-its-own-evidence) ·
 > [Hosted evidence](../analysis/evidence_driven_fact_eligibility_20261127.md)
@@ -417,7 +417,7 @@ versions or replaced readings. The carried arm uses the same keyed origin
 check inside `NOT EXISTS (... OFFSET 0)`. It requires current testimony in
 a periodised live document and an occurrence in a non-deleted version's current
 ready reading. Bind the occurrence by deployment and claim ID, then its chunk
-by deployment and chunk ID with `ch.doc_id = claim.doc_id` inside the probe.
+by deployment and chunk ID with a matching document inside the probe.
 [Deployed history](../../src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py#L258) ·
 [Deployed carried membership](../../src/rememberstack/spine/migrations/versions/p9_48_0069_shared_eligibility.py#L174)
 
@@ -428,8 +428,12 @@ lookup. The view exposes the seed's deployment and entity ID directly.
 At each redirect, use a fenced point lookup on the seed deployment and
 the previous row's `merged_into` ID. Recursive `UNION` deduplicates
 `(entity_id, merged_into)` pairs, and only a row with `merged_into IS NULL`
-yields a survivor. Missing seeds, dangling targets, cycles and foreign
-hops yield no survivor. `v_graph_survivor` projects this same walk in its
+yields a survivor. The recursive term reads at most one input row per
+iteration. A walk starts with one seed, and its unique redirect target can
+produce at most one row for the next iteration. Making that bound explicit
+keeps the planner from costing each iteration as multiple point lookups.
+Missing seeds, dangling targets, cycles and foreign hops yield no survivor.
+`v_graph_survivor` projects this same walk in its
 existing two-column shape. Apply the shared `entities_current` check to the
 resolved endpoints as above.
 
@@ -470,7 +474,11 @@ metadata only.
 
 Use the existing indexes under normal join planning. A fact ID selects one
 evidence hash leaf. `ix_chunkclaims_claim` and the `chunks_pkey` prefix
-can probe each retained range leaf for a known claim or chunk ID. For a
+can probe each retained range leaf for a known claim or chunk ID. Enforce
+the deployment and any document comparison inside each chunk probe with
+`IS NOT DISTINCT FROM` on the non-null coordinates. This leaves `chunk_id`
+as the index search key even when sparse statistics cost a deployment or
+document index as a point lookup. For a
 fact with `E` evidence rows and `O` matching occurrences, a stance probe
 uses at most `E × P_occ + O × P_chunk` such probes, where each `P` is
 that table's retained leaf count. The base `claims` key is unpartitioned.
@@ -492,7 +500,7 @@ Register the new helper in `AUTHORIZATION_HELPER_VIEWS`, revoke PUBLIC and all
 query-role grants, and assign `rememberstack_view_owner`. Its AST becomes a
 hashed dependency; it is absent from public discovery/reachability.
 
-A scope below the unchanged 50,000 raw-row budget may still have expensive
+A scope within the 50,000 raw-row budget may still have expensive
 source qualification or many distinct
 endpoints. It must finish within the configured operation deadline or return
 the existing explicit deadline boundary. This change neither recalibrates
@@ -527,7 +535,7 @@ thresholds or adding a new public exact-search mode is outside this change.
 ## 6. Implementation contracts and migration
 
 The original D153 migration contract records the transition from
-`p9_46_0067`. The proposed D163 migration uses §6.1.
+`p9_46_0067`. The D163 migration uses §6.1.
 
 - Add simple typed SQL builders at the engine-owned core/spine boundary.
   Source/presentation authority is the new private helper; only the small
@@ -768,8 +776,10 @@ or copy error.
 Run `alembic upgrade p9_55_0076` on each PostgreSQL 18 fixture. Verify the
 recorded revision and the required `pg_partman` parent names, control columns
 and intervals. Connect as its `rememberstack_query_<database>` login and read
-`memory_v1.facts_visible_history` successfully. Prepare the hosted-shaped
-fixture at the same head.
+`memory_v1.facts_visible_history` successfully. For preflight and sandbox
+reads, verify that the login sees the live backend of the session that checked
+the revision. Physical copies can have the same database name and system
+identifier. Prepare the hosted-shaped fixture at the same head.
 [Partition catalog check](../../src/rememberstack/spine/catalog_contract.py#L621-L638) ·
 [Retained-store evidence](../analysis/evidence_driven_fact_eligibility_20261127.md#retained-store-oracle)
 
@@ -785,8 +795,13 @@ Require empty `EXCEPT ALL` differences in both directions so duplicate rows coun
 Compare `(fact_kind, fact_id)` at each eligible cut, including broad batch
 confirmation and agreement between stages on the same inputs. Include
 `distance` in scoped and keyed nomination and `coverage` when entity-scoped.
-Compare every final confirmation column, including `coverage` and
-`nomination_rank`. Require the same ordered top `k` with the normal limits.
+Compare every SQL column from each batch of native final confirmation before
+`facts_context` applies its result cap. Include `coverage` and `nomination_rank`.
+Require the same ordered top `k` with the normal limits.
+For each native read, compare the contradiction member SQL rows before the
+member cap. Compare the co-members in response order and the reported
+`returned` and `total` counts for each selected fact. Exercise groups of both
+fact kinds with eligible and out-of-scope members.
 Run the baseline to completion with a recorded diagnostic timeout if needed.
 
 - Include observations and relations with multiple qualifying evidence links.
@@ -837,22 +852,55 @@ for both stored relation endpoints. Report planning, buffers and leaf work.
 
 Run uninstrumented SQL including planning and native `facts_context`
 under the existing budgets (`k=50`, candidate depth 200, at least 40 warm
-samples per stratum). Record p50/p95 and completion. These are qualification
-targets for warm single-reader p95.
+samples per stratum). Run standalone batches through P1's ranked-read connection
+and record its effective JIT and parallel-worker settings. Record p50/p95 and
+completion. These are qualification targets for warm single-reader p95.
 
 | Store | P1 confirmation | Native wall time |
 | --- | --- | --- |
-| Hosted shape, 804 observation and 535 relation inputs | ≤1 s per batch | ≤5 s |
+| Hosted shape, 812 chunks and ten range leaves, 804 observation and 535 relation inputs | ≤1 s per batch | ≤5 s |
 | 300k and 3M chunks, ten range leaves, fixed candidate evidence | ≤2 s | ≤10 s for broad and bounded scoped reads |
 | 120 monthly leaves plus default, same candidates and evidence | ≤5 s | Existing operation deadline |
 
-Require completion and exercise the 50,000-raw-row scoped boundary.
+Before timing, count the case deployment's chunks and check the actual leaves
+of both `chunks` and `chunk_claims`. The ten-leaf runs use nine monthly leaves
+and the default. Verify that the 120-month run matches a ten-leaf reference
+in chunk count, candidate IDs and their evidence links and claim occurrences.
+Each batch must resolve to the declared number of distinct facts of its kind
+with nonzero embeddings for the case model and fact input policy. Require an
+eligible fact with supporting evidence in each batch and an eligible fact in
+the native scoped read before timing.
+
+Measure a scope with 50,000 raw fact rows and many distinct visible endpoints.
+Count those endpoints after source and endpoint qualification and require the
+native read to complete. Count the raw facts before qualification, including
+facts attached to entities absorbed by the requested survivors. Add one raw
+fact to that scope and require the `entity_scope_too_broad` response at 50,001.
 For the shared view dependency, check broad `claims_visible_history`,
 `claims_live`, `facts_current`, `fact_claim_evidence_live` and `evidence_lineage`
-reads without ID filters. Keep baseline rows, work and completion comparable
-under the existing sandbox deadline as corpus size, evidence fanout and
-partitions grow independently. Include both BEAM fact queries, keeping the
-typed error for `label` and timing `fact_label AS label`.
+reads without ID filters. Also run the BEAM predicate counts, corrected
+`fact_label AS label` sample and live-claim sample with their trailing
+`LIMIT` removed and their ordering clauses intact. Run these diagnostic reads
+as the query login in one repeatable-read snapshot per copy of the same frozen
+store. Bind the installed `facts_current` statement clock to `case.evaluated_at`
+for both releases. This fixes both which facts qualify and the reported time
+in the broad fact read and supplies the same fact source to BEAM.
+
+Compare the complete results with every output column using `EXCEPT ALL`
+in both directions. Each duplicate contributes to its row's count, and
+row order is irrelevant. Two predicates tied for the last place of the
+shipped 25-row aggregate can appear in either order and either can be cut
+off. The complete result includes both and proves equality of the candidates
+available to the limited query.
+
+Record executed plans and typed completion for the broad statements under
+the existing interactive sandbox limits as corpus size, evidence fanout and
+partitions grow independently. A paired timeout records matching deadline
+behavior. Full row equivalence requires the complete diagnostic export.
+Time the shipped BEAM predicate aggregate and the corrected fact sample with
+their limits. Use the query login's effective JIT settings and pace interactive
+requests under the rolling quotas. Report admission failures and time only
+executed queries.
 [BEAM SQL](../../benchmarks/rs_harness_beam/answer_agent.py#L51-L68)
 
 **Migration check.** On a populated store, run `alembic upgrade head` and
@@ -860,6 +908,8 @@ typed error for `label` and timing `fact_label AS label`.
 while the previous manifest is authoritative. After every DDL commit, run an
 active customer saved query on `facts_visible_history` through the
 previous-release API and require its expected rows and the previous hash.
+Run the previous-release one-hop read through the graph role after every
+DDL commit in both directions and require its expected rows.
 
 In each direction, hold a reader's lock on `v_memory_entity_survivor` and
 require its replacement to report `55P03` at the three-second lock timeout.
