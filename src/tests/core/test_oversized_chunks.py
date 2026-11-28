@@ -15,8 +15,12 @@ from rememberstack.core.embedding_input_policy import LocationFacts
 from rememberstack.core.embedding_input_policy import render_embedding_input
 from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.hosted_embedding_ceiling import hosted_embedding_fits
+from rememberstack.core.hosted_embedding_ceiling import (
+    HOSTED_EMBEDDING_REQUEST_TOKEN_BUDGET,
+)
 from rememberstack.core.hosted_embedding_ceiling import HOSTED_EMBEDDING_TOKEN_CEILING
 from rememberstack.core.hosted_embedding_ceiling import hosted_embedding_tokens
+from rememberstack.core.hosted_embedding_ceiling import hosted_request_batches
 from rememberstack.core.oversized_chunks import _size_cut
 from rememberstack.core.oversized_chunks import split_oversized_chunks
 from rememberstack.core.source_passages import build_passage_catalog
@@ -499,3 +503,38 @@ def test_split_evidence_clips_only_exact_linear_locators() -> None:
         envelope,
         page,
     )
+
+
+def _text_of_tokens(target: int) -> str:
+    """Return text whose hosted token count is exactly ``target``."""
+    unit = "alpha "
+    text = unit * target
+    while hosted_embedding_tokens(text) > target:
+        text = text[: -len(unit)]
+    assert hosted_embedding_tokens(text) == target
+    return text
+
+
+def test_hosted_request_batches_respect_the_request_token_budget() -> None:
+    near_ceiling = _text_of_tokens(HOSTED_EMBEDDING_TOKEN_CEILING)
+    small = _text_of_tokens(50)
+    items = [near_ceiling, near_ceiling, small, near_ceiling, small]
+
+    batches = hosted_request_batches(items, max_items=64, text=lambda item: item)
+
+    assert [item for batch in batches for item in batch] == items
+    for batch in batches:
+        total = sum(hosted_embedding_tokens(item) for item in batch)
+        assert total <= HOSTED_EMBEDDING_REQUEST_TOKEN_BUDGET
+    # Two inputs at the ceiling fill one request; the rest fit the next one.
+    assert [len(batch) for batch in batches] == [2, 3]
+
+
+def test_hosted_request_batches_keep_the_item_cap_and_send_lone_inputs() -> None:
+    small = _text_of_tokens(10)
+    batches = hosted_request_batches([small] * 5, max_items=2, text=lambda i: i)
+    assert [len(batch) for batch in batches] == [2, 2, 1]
+    no_items: list[str] = []
+    assert hosted_request_batches(no_items, max_items=64, text=lambda i: i) == []
+    # The budget admits any single input that fits the per-input ceiling.
+    assert HOSTED_EMBEDDING_REQUEST_TOKEN_BUDGET >= HOSTED_EMBEDDING_TOKEN_CEILING

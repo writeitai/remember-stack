@@ -20,6 +20,15 @@ spans and rechecks them after cuts because the final chunk count can change the 
 EMBED_CHUNK checks before new carry-forward or dispatch. Keep ordered batching, attestations
 and same-chunk replay. [Pinned Qwen tokenizer](https://huggingface.co/Qwen/Qwen3-Embedding-8B/blob/1d8ad4ca9b3dd8059ad90a75d4983776a23d44af/tokenizer.json).
 
+**Request budget (amendment, 2026-11-28).** The hosted endpoint also rejects a whole request above a
+total token size with a non-retryable HTTP 429. In a live probe, 64 inputs totalling 49,137 tokens were
+accepted and six inputs totalling about 69k tokens were rejected on every attempt. On the hosted binding,
+EMBED_CHUNK therefore splits its ordered provider requests so that each holds at most
+`embed_batch_size` inputs and at most **32,768 tokens** in total, counted with the same pinned
+tokenizer. This is a second code constant. It is at least the per-input ceiling, so every fitting input
+can be sent on its own. Batching changes only which inputs share a request, never an input's text,
+vector or identity. Other bindings keep count-only batches.
+
 ## 2. Split only failing candidates
 
 For failing base candidates, cut first at nonblank eligibility changes using E0 blocks and
