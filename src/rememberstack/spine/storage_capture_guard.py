@@ -50,8 +50,16 @@ _EXTENSIONS = (
     "unaccent=1.1",
     "vector=0.8.6",
 )
-_CATALOGS = ("pg_class", "pg_namespace", "pg_proc", "pg_extension")
+_CATALOGS = ("pg_class", "pg_namespace", "pg_proc", "pg_extension", "pg_inherits")
 _POSITIVE = Annotated[int, Field(strict=True, gt=0)]
+
+_PARTITION_TOPOLOGY_SETTING = "rememberstack.capture_partition_topology"
+_PARTITION_TOPOLOGY = """
+SELECT encode(sha256(convert_to(COALESCE(jsonb_agg(
+  jsonb_build_array(inhrelid, inhparent, inhseqno, inhdetachpending)
+  ORDER BY inhrelid, inhseqno), '[]'::jsonb)::text, 'UTF8')), 'hex')
+FROM pg_catalog.pg_inherits
+"""
 
 
 class _NativeRecord(BaseModel):
@@ -139,8 +147,14 @@ BEGIN
                                         WHERE datname=current_database())) THEN
     RAISE EXCEPTION USING ERRCODE='55P03', MESSAGE='native_guard_busy';
   END IF;
-  LOCK TABLE pg_catalog.pg_class, pg_catalog.pg_namespace,
-             pg_catalog.pg_proc, pg_catalog.pg_extension IN SHARE MODE NOWAIT;
+  -- ANALYZE briefly writes pg_class after sampling. Its short catalog lock
+  -- can finish within the existing native lock timeout.
+  LOCK TABLE pg_catalog.pg_class IN SHARE MODE;
+  LOCK TABLE pg_catalog.pg_namespace, pg_catalog.pg_proc, pg_catalog.pg_extension,
+             pg_catalog.pg_inherits IN SHARE MODE NOWAIT;
+  -- An already-written inheritance change can still commit under the catalog
+  -- lock. Pin its visible state and check for such a commit after the cut.
+  PERFORM set_config('__PARTITION_TOPOLOGY_SETTING__', (__PARTITION_TOPOLOGY__), true);
   IF (SELECT count(*) FROM public.alembic_version) <> 1
      OR (SELECT version_num FROM public.alembic_version) <> 'p9_58_0079' THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_guard_schema';
@@ -168,7 +182,7 @@ BEGIN
        JOIN pg_class c ON c.oid=h.inhrelid
        JOIN pg_namespace cn ON cn.oid=c.relnamespace
        WHERE (pn.nspname='public' OR cn.nspname='public')
-         AND (pn.nspname<>'public' OR cn.nspname<>'public'))
+         AND (pn.nspname<>'public' OR cn.nspname<>'public' OR h.inhdetachpending))
      OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
                WHERE n.nspname='public' AND c.relkind='f') THEN
     RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_guard_relation_scope';
@@ -190,7 +204,8 @@ BEGIN
     IF r.relpersistence <> 'p' OR (r.relkind <> 'p' AND r.amname <> 'heap') THEN
       RAISE EXCEPTION USING ERRCODE='55000', MESSAGE='native_guard_table_format';
     END IF;
-    EXECUTE format('LOCK TABLE ONLY %I.%I IN SHARE MODE NOWAIT',r.nspname,r.relname);
+    EXECUTE format('LOCK TABLE ONLY %I.%I IN %s MODE NOWAIT',r.nspname,r.relname,
+                   CASE WHEN r.relkind = 'p' THEN 'ACCESS SHARE' ELSE 'SHARE' END);
     IF r.reltoastrelid <> 0 THEN
       SELECT o.option_value INTO option_value FROM pg_class t
         CROSS JOIN LATERAL pg_options_to_table(t.reloptions) o
@@ -280,6 +295,14 @@ END
 """
 
 
+def native_partition_topology_unchanged(*, connection: psycopg.Connection) -> bool:
+    """Check the guard's original inheritance edges before releasing its locks."""
+    return connection.execute(
+        "SELECT current_setting(%s, true) = (" + _PARTITION_TOPOLOGY + ")",
+        (_PARTITION_TOPOLOGY_SETTING,),
+    ).fetchone() == (True,)
+
+
 def install_native_relation_guard(
     *, connection: psycopg.Connection, definer_role: str, collector_role: str
 ) -> None:
@@ -353,12 +376,15 @@ def install_native_relation_guard(
                 "__EXTENSIONS__", sql.Literal(list(_EXTENSIONS)).as_string(connection)
             )
             .replace("__COLLECTOR__", sql.Literal(collector_role).as_string(connection))
+            .replace("__PARTITION_TOPOLOGY_SETTING__", _PARTITION_TOPOLOGY_SETTING)
+            .replace("__PARTITION_TOPOLOGY__", _PARTITION_TOPOLOGY)
         )
         function = sql.Identifier(_SCHEMA, _FUNCTION)
         connection.execute(
             sql.SQL(
                 "CREATE OR REPLACE FUNCTION {}(deadline_unix_us bigint) RETURNS jsonb "
-                "LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp AS {}"
+                "LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,pg_temp "
+                "SET rememberstack.partition_parent_analyze_compatible=on AS {}"
             ).format(function, sql.Literal(body))
         )
         connection.execute(

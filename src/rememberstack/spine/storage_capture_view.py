@@ -43,6 +43,9 @@ from rememberstack.spine.storage_capture_catalog import NativeReferencePage
 from rememberstack.spine.storage_capture_catalog import NativeStorageConfiguration
 from rememberstack.spine.storage_capture_catalog import NativeStoreReference
 from rememberstack.spine.storage_capture_catalog import NativeTerminalPage
+from rememberstack.spine.storage_capture_guard import (
+    native_partition_topology_unchanged,
+)
 from rememberstack.spine.storage_capture_guard import NativeRelationGuardSample
 
 _GUARD_FUNCTION = "rememberstack_capture_internal.guard_relation_allocation"
@@ -333,6 +336,8 @@ class NativeStorageCaptureCatalog:
                     error_us=error_us,
                     deadline=deadline,
                 )
+            if not native_partition_topology_unchanged(connection=guard):
+                raise NativeStorageCaptureRefused("native_partition_topology_changed")
             guard.execute("ROLLBACK")
             released = _read_clock(connection=guard)
             _check_clock_step(previous=checked, current=released, error_us=error_us)

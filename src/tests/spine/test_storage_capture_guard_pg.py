@@ -214,6 +214,11 @@ def test_actual_collector_samples_complete_relation_forks_and_blocks_maintenance
         native_scope.connect(role=native_scope.collector_role) as collector,
         native_scope.connect(role=native_scope.runtime_role) as runtime,
     ):
+        assert admin.execute(
+            "SELECT 'rememberstack.partition_parent_analyze_compatible=on' = ANY(proconfig) "
+            "FROM pg_catalog.pg_proc WHERE oid = %s::regprocedure",
+            (f"{_FUNCTION}(bigint)",),
+        ).fetchone() == (True,)
         before = _toast_metadata(admin=admin)
         collector.execute("BEGIN")
         try:
